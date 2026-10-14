@@ -2694,7 +2694,8 @@ def test_a_round_button_opens_the_panel_and_expands_lazily(page, live_server):
     button = page.locator("#log button.round-button")
     expect(button).to_have_count(1)
     expect(button).to_have_text("{ }")
-    expect(button).to_have_attribute("title", "round 1: request and response")
+    button.hover()
+    expect(button).to_have_attribute("title", "turn 1, round 1")
     expect(button).to_have_attribute("data-round", "1")
     expect(button).to_have_attribute("aria-controls", "round-panel")
     expect(button).to_have_attribute("aria-expanded", "false")
@@ -2778,6 +2779,78 @@ def test_a_two_round_turn_puts_each_button_on_its_own_output(page, live_server):
     expect(page.locator("#log .round-button")).to_have_count(2)
     expect(page.locator("#log .bubble.request")).to_have_count(0)
     expect(page.locator("#log .ending")).to_have_count(0)
+
+
+def test_a_round_buttons_title_names_its_turn_and_round(page, live_server):
+    _open(page, live_server(seed=_request_seed(messages=_TOOL_TURN, rounds=[{}, {}])))
+    tool = page.locator("#log > .bubble.tool")
+    answer = page.locator("#log > .bubble.assistant")
+    tool.hover()
+    tool.locator(".round-button").hover()
+    expect(tool.locator(".round-button")).to_have_attribute("title", "turn 1, round 1")
+    expect(tool.locator(".round-button")).to_have_attribute("aria-label", "turn 1, round 1")
+    answer.hover()
+    answer.locator(".round-button").hover()
+    expect(answer.locator(".round-button")).to_have_attribute("title", "turn 1, round 2")
+
+
+def _opacity(locator):
+    return float(locator.evaluate("e => getComputedStyle(e).opacity"))
+
+
+def test_turn_badge_round_button_and_tool_metric_reveal_on_hover(page, live_server):
+    _open(page, live_server(seed=_request_seed(messages=_TOOL_TURN, rounds=[{}, {}])))
+    page.mouse.move(0, 0)
+    user = page.locator("#log > .bubble.user")
+    tool = page.locator("#log > .bubble.tool")
+    answer = page.locator("#log > .bubble.assistant")
+    quiet = {
+        "badge": user.locator(".turn-badge"),
+        "tool button": tool.locator(".round-button"),
+        "answer button": answer.locator(".round-button"),
+        "metric": tool.locator("> .fold-header .fold-metric"),
+    }
+    page.wait_for_timeout(300)
+    for name, target in quiet.items():
+        assert _opacity(target) == 0, name
+    for card, names in ((user, ["badge"]), (tool, ["tool button", "metric"]), (answer, ["answer button"])):
+        card.hover()
+        page.wait_for_timeout(300)
+        for name in names:
+            assert _opacity(quiet[name]) == 1, name
+        page.mouse.move(0, 0)
+        page.wait_for_timeout(300)
+
+
+def test_a_warn_round_button_stays_visible_without_hover(page, live_server):
+    ending = {"ended_by": "wrap_up", "round": 1, "max_iterations": 10}
+    _open(page, live_server(seed=_request_seed(messages=_TOOL_TURN, rounds=[{}, {}], ending=ending)))
+    page.mouse.move(0, 0)
+    page.wait_for_timeout(300)
+    assert _opacity(page.locator("#log > .bubble.assistant .round-button")) == 1
+    assert _opacity(page.locator("#log > .bubble.tool .round-button")) == 0
+
+
+def _right(locator):
+    box = locator.bounding_box()
+    return box["x"] + box["width"]
+
+
+def test_the_right_edge_reads_info_buttons_timestamp_in_one_column(page, live_server):
+    stamped = [{**message, "timestamp": "2026-08-10T00:00:00"} for message in _TOOL_TURN]
+    _open(page, live_server(seed=_request_seed(messages=stamped, rounds=[{}, {}])))
+    tool = page.locator("#log > .bubble.tool")
+    answer = page.locator("#log > .bubble.assistant")
+    tool_ts = tool.locator(".fold-ts")
+    answer_ts = answer.locator(".bubble-ts")
+    assert abs(_right(tool_ts) - _right(answer_ts)) <= 2
+    assert _right(tool.locator(".round-button")) <= tool_ts.bounding_box()["x"] + 0.5
+    assert _right(answer.locator(".round-button")) <= answer_ts.bounding_box()["x"] + 0.5
+    assert (
+        _right(tool.locator("> .fold-header .fold-metric")) <= tool.locator(".round-button").bounding_box()["x"] + 0.5
+    )
+    meta = answer.locator(".bubble-meta")
+    assert abs(_right(meta) - _right(answer_ts)) <= 2
 
 
 def test_the_panel_opens_selects_swaps_and_closes(page, live_server):
