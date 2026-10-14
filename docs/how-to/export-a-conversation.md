@@ -62,7 +62,7 @@ A turn's block also shows the system prompt each agent ran under, as a `**System
 heading and a fenced block, but only where it is news: the first time that agent appears in the
 conversation, and again whenever it differs from that agent's previous one. The entry agent and each
 sub-agent are tracked separately, so a sub-agent's prompt is never compared against the entry agent's.
-Prompts come from the recorded request payloads, so a turn whose payload was not captured shows none.
+Prompts come from the recorded request payloads, so a turn whose payload was not captured shows none, and each is capped like any payload unless you pass `--full`. A turn shows each agent's prompt from its first readable call, so a change between rounds of one turn is not shown. The web download and the assistant's `export_conversation` file include them too.
 
 ## One turn, in full
 
@@ -148,7 +148,7 @@ about a run rather than a file about it. Ask in plain words:
 > and what did it return?
 
 The assistant finds the conversation (`list_conversations` or `search_conversations`), exports it, and
-gets back a path plus how long the file is. What happens next depends on the length, and that is the
+gets back a path plus how long the file is. The file includes each agent's system prompt (at its first occurrence and whenever it changes, capped like any payload unless `full`), since the export is the artifact an evaluation reads. What happens next depends on the length, and that is the
 part worth understanding.
 
 **A path, not the transcript.** The tool answers with a file path on purpose. `read_file` returns 2,000

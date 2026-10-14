@@ -1179,3 +1179,14 @@ def test_turn_markdown_rejects_a_turn_out_of_range(tmp_path):
         render_turn_markdown(_two_turn_session(tmp_path), 5, payloads_path=tmp_path)
     with pytest.raises(ValueError, match="no turns"):
         render_turn_markdown(_session([], {}), 1, payloads_path=tmp_path)
+
+
+def test_turn_markdown_fences_a_response_containing_backticks_and_tolerates_odd_types(tmp_path):
+    from kokua.transcript_export import render_turn_markdown
+
+    session = _two_turn_session(tmp_path)
+    calls = session.metadata["requests"]["2"]["calls"]
+    calls[1]["response_ref"] = _save(tmp_path, {"text": "```py\nx\n```", "thinking": 7, "tool_calls": None})
+    out = render_turn_markdown(session, 2, payloads_path=tmp_path)
+    assert "````\n```py\nx\n```\n````" in out
+    assert "\n7\n" in out

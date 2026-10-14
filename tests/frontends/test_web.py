@@ -3313,3 +3313,38 @@ def test_an_unsafe_download_name_is_ignored(tmp_path, name):
     assert response.status_code == 200
     assert "content-disposition" not in response.headers
     assert response.headers["content-type"].startswith("text/plain")
+
+
+def test_the_web_export_includes_each_agents_system_prompt(tmp_path):
+    """The download renders the same document `kokua export` does, system prompts included."""
+    import json
+
+    from aimu.sessions import TinyDBSessionStore
+    from starlette.testclient import TestClient
+
+    from kokua import payloads
+
+    config = _config(tmp_path)
+    app = build_app(config, client_factory=lambda cid: MockAsyncModelClient(["the reply"]))
+    with TestClient(app).websocket_connect("/ws") as ws:
+        _drain_until(ws, "conversations")
+        ws.send_text("a question")
+        _drain_until(ws, "done")
+        convs = _drain_until(ws, "conversations")
+        active_id = next(i["id"] for i in convs["items"] if i["active"])
+        store = TinyDBSessionStore(str(config.sessions_path))
+        session = store.get(active_id)
+        reference = payloads.save_text(config.payloads_path, json.dumps({"system": "be exact", "messages": []}))
+        session.metadata["requests"] = {
+            "0": {
+                "entry_run_id": "e",
+                "calls": [{"run_id": "e", "agent": "assistant", "round": 0, "payload_ref": reference}],
+                "endings": [],
+            }
+        }
+        store.save(session)
+        ws.send_text(json.dumps({"type": "export", "id": active_id}))
+        frame = _drain_until(ws, "download")
+    written = (config.downloads_path / frame["name"]).read_text(encoding="utf-8")
+    assert "**System prompt (assistant):**" in written
+    assert "be exact" in written

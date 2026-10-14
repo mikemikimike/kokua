@@ -210,7 +210,7 @@ async def _export_conversation(
     session = assistant.resolve_conversation(conversation_id)
     if session is None:
         raise ValueError(f"no conversation found matching {conversation_id!r} to export")
-    markdown = render_markdown(session, max_payload_chars=DEFAULT_MAX_PAYLOAD_CHARS)
+    markdown = render_markdown(session, max_payload_chars=DEFAULT_MAX_PAYLOAD_CHARS, payloads_path=config.payloads_path)
     title = session.metadata.get("title") or derive_title(session.messages) or ""
     name = _export_filename(session.key, title)
     # The download route serves out of this directory and expects it to already exist (it 404s

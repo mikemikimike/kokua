@@ -169,6 +169,11 @@ def render_markdown(
     test fixture, or config not yet loaded) can render without one. Passing it only matters when
     ``max_payload_chars`` is ``None``; short of that, a spilled response is only ever previewed and
     noted, never read back, so there is nothing to fetch it for.
+
+    ``payloads_path`` also lets each turn show the system prompts its calls were sent, read from the
+    recorded request payloads. A turn shows each agent's prompt from that agent's first readable call
+    in the turn, so a prompt that changes between rounds of the same turn is not shown; with no
+    ``payloads_path`` no system prompt is shown at all.
     """
     lines = _render_header(session)
     if not session.messages:
@@ -802,11 +807,15 @@ def _call_heading_lines(call: dict) -> list[str]:
 def _response_lines(response: Any) -> list[str]:
     parts = []
     if response.get("text"):
-        parts += ["Text:", "", _fenced(response["text"])]
+        parts += ["Text:", "", _fenced(str(response["text"]))]
     if response.get("thinking"):
-        parts += ["Reasoning:", "", _fenced(response["thinking"])]
+        parts += ["Reasoning:", "", _fenced(str(response["thinking"]))]
     if response.get("tool_calls"):
-        parts += ["Tool calls:", "", _fenced(json.dumps(response["tool_calls"], indent=2, ensure_ascii=False), "json")]
+        parts += [
+            "Tool calls:",
+            "",
+            _fenced(json.dumps(response["tool_calls"], indent=2, ensure_ascii=False, default=str), "json"),
+        ]
     return parts or ["_empty response_"]
 
 

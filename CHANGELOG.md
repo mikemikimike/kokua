@@ -50,8 +50,8 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.34.0 or newer
 
 - **System prompts in the export, and `kokua export --turn N`.** The conversation export now shows each
   agent's system prompt the first time it appears and again whenever it changes, read from the recorded
-  request payloads (never the payloads themselves; the web download, which has no payload folder, shows
-  none). `kokua export <id> --turn N` writes one turn alone: the user's message, then every model call it
+  request payloads (never the payloads themselves), in every route: the command, the web download, and
+  `export_conversation`. `kokua export <id> --turn N` writes one turn alone: the user's message, then every model call it
   made grouped by run with the request exactly as sent, the response, and how each loop ended, to
   `<id>.turn-N.md`. A payload that is missing reads `_not captured_`; a turn out of range exits 2 naming
   the valid range.
