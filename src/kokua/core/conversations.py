@@ -451,6 +451,13 @@ class ConversationBook:
         session = self._store.get(conversation_id)
         return turn_end(session.messages, user_index, mid_turn=mid_turn_indices(session.metadata)) is not None
 
+    def saved_turn(self, conversation_id: str, user_index: int) -> tuple[bool, Optional[int]]:
+        """:meth:`branchable` and the turn's ordinal from one read of the store, which is a whole-file
+        parse. The ordinal is ``None`` for a message that is not a turn's opening one."""
+        session = self._store.get(conversation_id)
+        branchable = turn_end(session.messages, user_index, mid_turn=mid_turn_indices(session.metadata)) is not None
+        return branchable, turn_numbers(session.messages, session.metadata).get(user_index)
+
     def branch(self, conversation_id: str, user_index: int) -> str:
         """Fork a conversation at one of its turns into a new one, switch to it, and return its id.
 

@@ -3319,7 +3319,7 @@ async def test_a_turn_shows_its_entry_request_and_a_sub_agents_request_and_endin
     request = next(a for a in appended if a["kind"] == "request")
     assert set(request) == {
         "kind", "round", "payload_ref", "payload_chars", "message_count", "tool_count",
-        "endpoint", "stop_reason", "error", "agent",
+        "endpoint", "model", "stop_reason", "error", "agent",
     }  # fmt: skip
     assert request["agent"] == "researcher" and request["stop_reason"] == "stop"
     recorded = assistant._store.get(assistant._active_id).metadata["subagent"]["0"]
@@ -3331,3 +3331,55 @@ async def test_a_turn_shows_its_entry_request_and_a_sub_agents_request_and_endin
     assert any(e["run_id"] == "critic-1" for e in record["endings"])  # but it is still recorded
     entry_calls = [c for c in record["calls"] if c["parent_run_id"] is None]
     assert {c["run_id"] for c in entry_calls} <= {record["entry_run_id"], None}
+
+
+class _BareChannel(FakeChannel):
+    """A channel that renders neither turn numbers nor saved-turn frames."""
+
+    send_turn = None
+
+
+async def _store_reads_during_one_turn(tmp_path, channel) -> int:
+    assistant = await Assistant.create(_config(tmp_path), channel, client=MockAsyncModelClient(["sure"]))
+    reads = 0
+    original_get = assistant._store.get
+
+    def counting_get(conversation_id):
+        nonlocal reads
+        reads += 1
+        return original_get(conversation_id)
+
+    assistant._store.get = counting_get
+    await assistant._handle(ChannelMessage(text="hello", channel="fake"), conversation_id=assistant._active_id)
+    return reads
+
+
+async def test_a_turn_reads_the_store_for_its_number_only_when_the_channel_shows_it(tmp_path):
+    """A whole-file parse before the first token, for a number the web channel discards, is the cost this
+    pins: the number is computed only for a channel that renders it, and a saved-turn frame costs one
+    further read, not two."""
+    bare = await _store_reads_during_one_turn(tmp_path / "bare", _BareChannel())
+    numbered = await _store_reads_during_one_turn(tmp_path / "numbered", FakeChannel())
+    saved = await _store_reads_during_one_turn(tmp_path / "saved", _TurnSavedChannel())
+
+    assert numbered - bare == 1
+    assert saved - numbered == 1
+
+
+async def test_a_record_with_no_run_id_is_not_the_entry_run_of_a_turn_with_no_named_entry(tmp_path):
+    """A workflow-shaped turn names no entry run, and an unparented record whose run id is also None must
+    not be mistaken for one by that equality alone."""
+    from kokua.core.requests import TurnRequests, current_requests
+
+    channel = SubagentCapturingChannel()
+    assistant = await Assistant.create(_config(tmp_path), channel, client=MockAsyncModelClient(["x"]))
+    token = current_requests.set(TurnRequests(payloads_path=tmp_path / "payloads", capture=False, entry_run_id=None))
+    try:
+        record = {"run_id": None, "parent_run_id": None, "round": 0, "agent": "assistant"}
+        assistant._turns._notify_request("request", record)
+        assistant._turns._notify_request("ending", {**record, "ended_by": "answered", "max_iterations": 5})
+        await asyncio.sleep(0)
+    finally:
+        current_requests.reset(token)
+
+    assert channel.request_frames == [] and channel.ending_frames == []

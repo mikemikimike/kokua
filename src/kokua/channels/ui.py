@@ -170,6 +170,17 @@ class ChannelUI:
         if self._turn_saved is not None:
             await self._turn_saved(conversation_id, message_index, token=token, turn=turn)
 
+    @property
+    def shows_saved_turn(self) -> bool:
+        """Whether the channel takes a saved-turn frame, so a caller can skip the store read that builds it."""
+        return self._turn_saved is not None
+
+    @property
+    def shows_turn(self) -> bool:
+        """Whether the channel renders a turn number, so a caller can skip the store read that computes it
+        for a channel that would discard it."""
+        return self._turn is not None
+
     async def show_turn(self, number: int) -> None:
         """Announce which turn of the conversation is starting, before its reply streams. A no-op for a
         channel with no ``send_turn``: the terminal channel defines one that prints ``[turn N]``, and a

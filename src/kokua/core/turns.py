@@ -435,7 +435,16 @@ def _new_run_id(agent_name: Optional[str]) -> str:
 
 
 def _card_request_entry(record: dict) -> dict:
-    keys = ("round", "payload_ref", "payload_chars", "message_count", "tool_count", "endpoint", "stop_reason")
+    keys = (
+        "round",
+        "payload_ref",
+        "payload_chars",
+        "message_count",
+        "tool_count",
+        "endpoint",
+        "model",
+        "stop_reason",
+    )
     return {"kind": "request", **{key: record[key] for key in keys}, "error": record["error"], "agent": record["agent"]}
 
 
@@ -492,7 +501,11 @@ class TurnRunner:
         frames are scheduled; each task copies the current context, which is what carries the turn's
         ``streaming_conversation`` (background muting) and ``subagent_events`` (recording)."""
         requests = current_requests.get()
-        is_entry = requests is not None and record["run_id"] == requests.entry_run_id
+        # A record counts as the entry's only when the turn named one: a workflow-shaped turn names none, and
+        # a record with no run id would otherwise match that None.
+        is_entry = (
+            requests is not None and requests.entry_run_id is not None and record["run_id"] == requests.entry_run_id
+        )
         in_card = record["parent_run_id"] is not None
         if not is_entry and not in_card:
             return  # a critic's run, or any run of a turn with no named entry: recorded, not shown live
@@ -611,8 +624,9 @@ class TurnRunner:
                     # turn by now (each persists before releasing it) and this turn's own message is not
                     # in it yet; the number is therefore one past what is stored, and `_persist` reads
                     # the same count back from the stored transcript once this turn is in it.
-                    session = self._book.get(conversation_id)
-                    await self._ui.show_turn(1 + len(turn_numbers(session.messages, session.metadata)))
+                    if self._ui.shows_turn:
+                        session = self._book.get(conversation_id)
+                        await self._ui.show_turn(1 + len(turn_numbers(session.messages, session.metadata)))
                     if workflow is not None:
                         ctx = self._workflow_context(agent, msg, workflow)
                         runner = workflow.build(ctx)
@@ -1515,8 +1529,8 @@ class TurnRunner:
         """Snapshot the turn onto its session, refreshing the sidebar if a title was just derived, and
         publish where the turn starts so a front end can offer an action on it.
 
-        The publication is deliberately after the write and reads the *stored* transcript through
-        ``branchable``: a front end offering to branch a turn must never be offered one the store does
+        The publication is deliberately after the write and reads the *stored* transcript, once, through
+        ``saved_turn``: a front end offering to branch a turn must never be offered one the store does
         not hold, and an index that names no user turn there (an unattended run whose only user-role
         message was a loop injection, or a turn that committed none at all) is no turn to act on.
 
@@ -1534,7 +1548,7 @@ class TurnRunner:
             # After the push, not instead of it: the truncated title shows now and the generated one
             # replaces it (with a push of its own) whenever the model answers.
             self._spawn_title(conversation_id)
-        if self._book.branchable(conversation_id, user_index):
-            session = self._book.get(conversation_id)
-            turn = turn_numbers(session.messages, session.metadata).get(user_index)
-            await self._ui.turn_saved(conversation_id, user_index, token=token, turn=turn)
+        if self._ui.shows_saved_turn:
+            branchable, turn = self._book.saved_turn(conversation_id, user_index)
+            if branchable:
+                await self._ui.turn_saved(conversation_id, user_index, token=token, turn=turn)

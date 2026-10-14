@@ -65,7 +65,7 @@ class TurnRequests:
         self._notify = notify
         self._calls: list[dict] = []
         self._endings: list[dict] = []
-        # Per run, the calls whose request has arrived but whose answer has not, oldest first.
+        # Per run, the calls whose request has arrived but whose answer has not, newest last (an answer closes the newest).
         self._open: dict[Optional[str], list[dict]] = {}
         self._write_failure_logged = False
         self._serialization_failure_logged = False
