@@ -514,3 +514,23 @@ def test_export_output_flag_still_wins_over_the_fidelity_name(monkeypatch, tmp_p
 
     assert capsys.readouterr().out.strip() == str(target)
     assert target.exists()
+
+
+def test_export_turn_prints_the_per_turn_document(monkeypatch, tmp_path, capsys):
+    _seeded_home(monkeypatch, tmp_path, _TWO_MESSAGES)
+    _run_main(monkeypatch, ["export", "latest", "--turn", "1", "-o", "-"], expect_exit=0)
+    out = capsys.readouterr().out
+    assert out.startswith("# A run: turn 1")
+    assert "what is it" in out
+
+
+def test_export_turn_out_of_range_exits_two_with_the_range(monkeypatch, tmp_path, capsys):
+    _seeded_home(monkeypatch, tmp_path, _TWO_MESSAGES)
+    _run_main(monkeypatch, ["export", "latest", "--turn", "9"], expect_exit=2)
+    assert "turns 1 to 1" in capsys.readouterr().err
+
+
+def test_export_turn_default_path_ends_in_turn_suffix(monkeypatch, tmp_path, capsys):
+    _seeded_home(monkeypatch, tmp_path, _TWO_MESSAGES)
+    _run_main(monkeypatch, ["export", "latest", "--turn", "1", "--full"], expect_exit=0)
+    assert capsys.readouterr().out.strip().endswith(".turn-1.md")

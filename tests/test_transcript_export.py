@@ -1027,3 +1027,155 @@ def test_turn_headings_skip_a_mid_turn_message():
     )
     out = render_markdown(session)
     assert "## Turn 1" in out and "## Turn 2" in out and "## Turn 3" not in out
+
+
+def test_system_prompt_of_reads_both_payload_shapes():
+    from kokua.transcript_export import system_prompt_of
+
+    assert system_prompt_of({"system": "be brief", "messages": []}) == "be brief"
+    assert system_prompt_of({"system": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]}) == "a\n\nb"
+    assert (
+        system_prompt_of({"messages": [{"role": "system", "content": "be kind"}, {"role": "user", "content": "x"}]})
+        == "be kind"
+    )
+    assert system_prompt_of({"prompt": "raw"}) is None
+
+
+def _call(run_id, agent, round_, payload_ref, **extra):
+    call = {
+        "run_id": run_id,
+        "parent_run_id": None,
+        "agent": agent,
+        "round": round_,
+        "provider": "anthropic",
+        "endpoint": "https://api.example/v1/messages",
+        "model": "m",
+        "payload_ref": payload_ref,
+        "stop_reason": "end_turn",
+        "response_ref": None,
+        "error": None,
+    }
+    call.update(extra)
+    return call
+
+
+def _save(tmp_path, payload):
+    import json
+
+    from kokua import payloads
+
+    return payloads.save_text(tmp_path, json.dumps(payload))
+
+
+def test_system_prompts_appear_when_first_seen_and_when_changed(tmp_path):
+    first = _save(tmp_path, {"system": "be brief", "messages": []})
+    changed = _save(tmp_path, {"system": "be verbose", "messages": []})
+    messages = []
+    requests = {}
+    for turn, ref in enumerate([first, first, changed]):
+        requests[str(len(messages))] = {
+            "entry_run_id": f"e{turn}",
+            "calls": [_call(f"e{turn}", "assistant", 0, ref)],
+            "endings": [],
+        }
+        messages += [{"role": "user", "content": f"q{turn}"}, {"role": "assistant", "content": f"a{turn}"}]
+    session = _session(messages, {"requests": requests})
+    out = render_markdown(session, payloads_path=tmp_path)
+    assert out.count("**System prompt (assistant):**") == 2
+    assert out.index("be brief") < out.index("## Turn 2") < out.index("be verbose")
+    assert "be brief" not in render_markdown(session)
+
+
+def test_system_prompts_are_tracked_per_agent_and_a_missing_payload_is_skipped(tmp_path):
+    ref = _save(tmp_path, {"system": "same text", "messages": []})
+    session = _session(
+        [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}],
+        {
+            "requests": {
+                "0": {
+                    "entry_run_id": "e",
+                    "calls": [
+                        _call("e", "assistant", 0, ref),
+                        _call("w", "worker", 0, ref, parent_run_id="e"),
+                        _call("x", "other", 0, "/payloads/" + "0" * 64),
+                        _call("y", "none", 0, None),
+                    ],
+                    "endings": [],
+                }
+            }
+        },
+    )
+    out = render_markdown(session, payloads_path=tmp_path)
+    assert "**System prompt (assistant):**" in out
+    assert "**System prompt (worker):**" in out
+    assert "(other)" not in out and "(none)" not in out
+
+
+def _two_turn_session(tmp_path):
+    request_ref = _save(tmp_path, {"system": "sys", "messages": [{"role": "user", "content": "```x```"}]})
+    response_ref = _save(tmp_path, {"text": "the answer", "thinking": "hmm", "tool_calls": [{"name": "f"}]})
+    return _session(
+        [
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "one"},
+            {"role": "user", "content": "second"},
+            {"role": "assistant", "content": "two"},
+        ],
+        {
+            "requests": {
+                "2": {
+                    "entry_run_id": "e",
+                    "calls": [
+                        _call("w", "worker", 0, None, parent_run_id="e", endpoint=None),
+                        _call("e", "assistant", 0, request_ref, response_ref=response_ref),
+                    ],
+                    "endings": [
+                        {
+                            "run_id": "e",
+                            "parent_run_id": None,
+                            "agent": "assistant",
+                            "ended_by": "answered",
+                            "round": 1,
+                            "max_iterations": 10,
+                            "error": None,
+                        }
+                    ],
+                }
+            }
+        },
+    )
+
+
+def test_turn_markdown_lists_runs_entry_first_with_request_and_response(tmp_path):
+    from kokua.transcript_export import render_turn_markdown
+
+    out = render_turn_markdown(_two_turn_session(tmp_path), 2, payloads_path=tmp_path)
+    assert "turn 2" in out.splitlines()[0]
+    assert "second" in out
+    assert out.index("### assistant · round 1") < out.index("### worker · round 1")
+    assert '"system": "sys"' in out
+    assert "````json" in out  # the payload holds a fence of its own
+    assert "the answer" in out and "hmm" in out
+    assert "no wire request" in out
+    assert "_not captured_" in out  # the worker's null payload_ref
+    assert "_[ended: answered at round 1 of 10]_" in out
+
+
+def test_turn_markdown_survives_an_unreadable_payload(tmp_path):
+    from kokua.transcript_export import render_turn_markdown
+
+    session = _two_turn_session(tmp_path)
+    session.metadata["requests"]["2"]["calls"][1]["payload_ref"] = "/payloads/" + "0" * 64
+    out = render_turn_markdown(session, 2, payloads_path=tmp_path)
+    assert out.count("_not captured_") >= 2
+
+
+def test_turn_markdown_rejects_a_turn_out_of_range(tmp_path):
+    import pytest
+
+    from kokua.transcript_export import render_turn_markdown
+
+    with pytest.raises(ValueError, match="turns 1 to 2"):
+        render_turn_markdown(_two_turn_session(tmp_path), 5, payloads_path=tmp_path)
+    with pytest.raises(ValueError, match="no turns"):
+        render_turn_markdown(_session([], {}), 1, payloads_path=tmp_path)

@@ -45,13 +45,15 @@ delegating turn read as cheap.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from aimu.sessions import Session
 
 from kokua import payloads
-from kokua.core.messages import derive_title
+from kokua.core.conversations import turn_numbers
+from kokua.core.messages import derive_title, message_text
 from kokua.core.transcripts import replay_items, short_time
 
 # The rendered size of a tool call's arguments or result, a sub-agent's own text, or a failure
@@ -667,6 +669,8 @@ def _render_body(
     index is seen (tracked in ``open_index``), not on every item carrying one.
     """
     lines: list[str] = []
+    previous_prompts: dict[str, str] = {}
+    requests = metadata.get("requests") or {}
     open_index: object = object()  # sentinel: no real message_index (an int, or None) ever equals it
     index = 0
     while index < len(items):
@@ -687,6 +691,11 @@ def _render_body(
             for block in _turn_cost_blocks(message_index, metadata):
                 lines.append("")
                 lines.extend(block)
+            if payloads_path is not None:
+                calls = (requests.get(str(message_index)) or {}).get("calls") or []
+                for block in _system_prompt_blocks(calls, previous_prompts, max_payload_chars, payloads_path):
+                    lines.append("")
+                    lines.extend(block)
             lines.append("")
         if item["type"] == "user":
             lines.append(f"**User:** {item['text']}")
@@ -694,3 +703,153 @@ def _render_body(
             lines.extend(_render_item(item, max_payload_chars, payloads_path))
         index += 1
     return lines
+
+
+def system_prompt_of(payload: Any) -> Optional[str]:
+    """The system prompt inside one recorded request payload, or ``None`` when it holds none.
+
+    The one place Kokua reads a payload's structure. A payload is whatever AIMU's provider adapter
+    built for the wire, so the prompt lives in one of two places: a top-level ``system`` key (a
+    string, or a list of text blocks, as Anthropic takes it) or a leading ``messages`` entry with the
+    ``system`` role (the OpenAI-compatible shape). A payload with neither, such as an in-process
+    provider's raw prompt, has no system prompt this can name, and guessing one would present
+    invented text as evidence of what the model was told.
+    """
+    if not isinstance(payload, dict):
+        return None
+    system = payload.get("system")
+    if system is not None:
+        return _joined_text(system)
+    messages = payload.get("messages")
+    if isinstance(messages, list):
+        for message in messages:
+            if isinstance(message, dict) and message.get("role") == "system":
+                return _joined_text(message.get("content"))
+    return None
+
+
+def _joined_text(content: Any) -> Optional[str]:
+    """A string, or a list of blocks whose ``text`` values are joined with blank lines."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        texts = [
+            block if isinstance(block, str) else block.get("text")
+            for block in content
+            if isinstance(block, (str, dict))
+        ]
+        return "\n\n".join(text for text in texts if isinstance(text, str))
+    return None
+
+
+def _read_json(payloads_path: Path, reference: Optional[str]) -> Any:
+    """The JSON a payload reference names, or ``None`` when it is absent, gone, or not JSON."""
+    if not reference:
+        return None
+    try:
+        text = payloads.read_text(payloads_path, reference)
+        return None if text is None else json.loads(text)
+    except (OSError, ValueError):
+        return None
+
+
+def _system_prompt_blocks(
+    calls: list[dict],
+    previous: dict[str, str],
+    max_payload_chars: Optional[int],
+    payloads_path: Path,
+) -> list[list[str]]:
+    """One block per agent whose system prompt is new or changed this turn.
+
+    ``previous`` holds each agent's last shown prompt and is updated in place. It is keyed by agent
+    name so a sub-agent and the entry agent never compare against each other: they are told different
+    things by design, and a comparison across them would show a prompt on every turn or never.
+    """
+    seen: set[str] = set()
+    blocks = []
+    for call in calls:
+        agent = call.get("agent") or "agent"
+        if agent in seen:
+            continue
+        prompt = system_prompt_of(_read_json(payloads_path, call.get("payload_ref")))
+        if prompt is None:
+            continue
+        seen.add(agent)
+        if previous.get(agent) == prompt:
+            continue
+        previous[agent] = prompt
+        blocks.append([f"**System prompt ({agent}):**", "", _fenced(_capped(prompt, max_payload_chars))])
+    return blocks
+
+
+def _call_heading_lines(call: dict) -> list[str]:
+    """A call's heading and its one-line facts: run, provider, where it went, model, how it stopped."""
+    endpoint = call.get("endpoint") or "no wire request (nearest equivalent; not replayable)"
+    facts = [
+        f"run `{call.get('run_id')}`",
+        f"provider {call.get('provider')}",
+        f"endpoint {endpoint}",
+        f"model {call.get('model')}",
+        f"stop reason {call.get('stop_reason')}",
+    ]
+    if call.get("error"):
+        facts.append(f"error {call['error']}")
+    round_ = call.get("round")
+    shown_round = round_ + 1 if isinstance(round_, int) else round_
+    return [f"### {call.get('agent') or 'agent'} · round {shown_round}", "", "- " + ", ".join(facts)]
+
+
+def _response_lines(response: Any) -> list[str]:
+    parts = []
+    if response.get("text"):
+        parts += ["Text:", "", _fenced(response["text"])]
+    if response.get("thinking"):
+        parts += ["Reasoning:", "", _fenced(response["thinking"])]
+    if response.get("tool_calls"):
+        parts += ["Tool calls:", "", _fenced(json.dumps(response["tool_calls"], indent=2, ensure_ascii=False), "json")]
+    return parts or ["_empty response_"]
+
+
+def render_turn_markdown(session: Session, turn: int, *, payloads_path: Path) -> str:
+    """One turn in full: the user's message, then every model call it made, request and response.
+
+    The conversation export shows what happened; this shows what the model was sent. Each call's
+    payload is the request exactly as recorded, pretty-printed and never capped, since cutting the
+    evidence defeats the purpose of asking for it. A payload or response that is missing or unreadable
+    (a user cleared the folder, or the call predates capture) reads ``_not captured_`` rather than
+    failing the export.
+
+    Raises ``ValueError`` naming the valid range when ``turn`` is not one the conversation has.
+    """
+    index_of_turn = {ordinal: index for index, ordinal in turn_numbers(session.messages, session.metadata).items()}
+    if not index_of_turn:
+        raise ValueError("this conversation has no turns")
+    if turn not in index_of_turn:
+        raise ValueError(f"turn {turn} is out of range; this conversation has turns 1 to {len(index_of_turn)}")
+    user_index = index_of_turn[turn]
+    title = session.metadata.get("title") or derive_title(session.messages) or "Untitled conversation"
+    lines = [f"# {title}: turn {turn}", "", f"**User:** {message_text(session.messages[user_index].get('content'))}"]
+
+    record = (session.metadata.get("requests") or {}).get(str(user_index)) or {}
+    calls = record.get("calls") or []
+    entry_run_id = record.get("entry_run_id")
+    run_ids = list(dict.fromkeys(call.get("run_id") for call in calls))
+    if entry_run_id is not None and entry_run_id in run_ids:
+        run_ids.remove(entry_run_id)
+        run_ids.insert(0, entry_run_id)
+    for run_id in run_ids:
+        for call in (call for call in calls if call.get("run_id") == run_id):
+            lines += [""] + _call_heading_lines(call)
+            request = _read_json(payloads_path, call.get("payload_ref"))
+            lines += ["", "**Request:**", ""]
+            lines.append(
+                "_not captured_"
+                if request is None
+                else _fenced(json.dumps(request, indent=2, ensure_ascii=False), "json")
+            )
+            response = _read_json(payloads_path, call.get("response_ref"))
+            lines += ["", "**Response:**", ""]
+            lines += ["_not captured_"] if not isinstance(response, dict) else _response_lines(response)
+    for ending in record.get("endings") or []:
+        lines += ["", _ending_line(ending)]
+    return "\n".join(lines) + "\n"

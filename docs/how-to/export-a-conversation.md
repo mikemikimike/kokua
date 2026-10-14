@@ -23,6 +23,7 @@ kokua export abcdef01              # a full id, or a unique leading fragment of 
 kokua export abcdef01 -o notes.md  # write somewhere specific
 kokua export abcdef01 -o -         # write to stdout instead of a file
 kokua export abcdef01 --full       # do not truncate long tool arguments and results
+kokua export abcdef01 --turn 3     # one turn, with every request the model was sent
 ```
 
 The conversation argument takes an id, a unique leading fragment of one (at least 6 characters,
@@ -56,6 +57,31 @@ ended it, such as `_[ended: tool-use limit reached at round 10 of 10]_`. A sub-a
 shape: its own reasoning, tool calls, and answer. If a turn stopped short (a tool call was
 denied, a reviewer sent it back for revision, an error cut it off), the reason appears as a quoted
 note where the turn stopped.
+
+A turn's block also shows the system prompt each agent ran under, as a `**System prompt (agent):**`
+heading and a fenced block, but only where it is news: the first time that agent appears in the
+conversation, and again whenever it differs from that agent's previous one. The entry agent and each
+sub-agent are tracked separately, so a sub-agent's prompt is never compared against the entry agent's.
+Prompts come from the recorded request payloads, so a turn whose payload was not captured shows none.
+
+## One turn, in full
+
+`kokua export <conversation> --turn N` writes a single turn instead of the whole conversation, to
+`$KOKUA_HOME/data/downloads/<conversation id>.turn-N.md` (or wherever `-o` says; `-o -` is stdout). It
+holds the user's message, then every model call the turn made, grouped by run with the entry agent
+first, each under a `### agent · round R` heading naming the run, provider, endpoint, model, and how
+the call stopped. Under each is the request as recorded, pretty-printed, and the response: text,
+reasoning, and tool calls. The loop's ending follows. Nothing is truncated, so `--full` is accepted and
+changes nothing.
+
+The request is exactly what was sent. A provider that runs in-process has no wire request, so its
+entry says `no wire request (nearest equivalent; not replayable)`: the payload shown is the nearest
+equivalent Kokua could record, not something you can send again. A payload or response that was not
+captured, or whose file has since been deleted, reads `_not captured_`. A number outside the
+conversation's turns exits with status 2 and names the valid range.
+
+This file contains everything the agent saw, including the system prompt, tool results, and any
+documents or credentials they carried. Treat it as private.
 
 ## Two honesty rules
 
