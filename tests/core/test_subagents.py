@@ -751,7 +751,7 @@ class _ScriptedAgent:
     def __init__(self, during=None):
         self._during = during
 
-    async def run(self, task, stream=True):
+    async def run(self, task, stream=True, **kwargs):
         async def chunks():
             yield _thinking("planning")
             if self._during is not None:
@@ -773,12 +773,14 @@ async def test_nested_and_concurrent_spawns_through_aimus_own_spawn_path_name_th
 
     async def two_concurrent_children():
         await asyncio.gather(
-            _run_observed(_ScriptedAgent(), "left", "a", reporter),
-            _run_observed(_ScriptedAgent(), "right", "b", reporter),
+            _run_observed(_ScriptedAgent(), "left", "a", reporter, run_id="left", parent_run_id=None),
+            _run_observed(_ScriptedAgent(), "right", "b", reporter, run_id="right", parent_run_id=None),
         )
 
-    await _run_observed(_ScriptedAgent(during=two_concurrent_children), "outer", "task", reporter)
-    await _run_observed(_ScriptedAgent(), "after", "task", reporter)
+    await _run_observed(
+        _ScriptedAgent(during=two_concurrent_children), "outer", "task", reporter, run_id="outer", parent_run_id=None
+    )
+    await _run_observed(_ScriptedAgent(), "after", "task", reporter, run_id="after", parent_run_id=None)
 
     creates = {event["role"]: event for event in events if "task" in event}
     outer_id = creates["outer"]["id"]
@@ -786,6 +788,7 @@ async def test_nested_and_concurrent_spawns_through_aimus_own_spawn_path_name_th
     assert creates["left"]["parent"] == outer_id
     assert creates["right"]["parent"] == outer_id
     assert "parent" not in creates["after"], "a finished spawn must not be the parent of the next one"
+    assert {event["id"] for event in creates.values()} == {"outer", "left", "right", "after"}
 
 
 # A card stands in for the call that opened it (see `transcripts.SPAWN_TOOL_NAMES`): it names a tool
