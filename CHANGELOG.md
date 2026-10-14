@@ -48,6 +48,13 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.34.0 or newer
 
 ### Conversations and turns
 
+- **System prompts in the export, and `kokua export --turn N`.** The conversation export now shows each
+  agent's system prompt the first time it appears and again whenever it changes, read from the recorded
+  request payloads (never the payloads themselves), in every route: the command, the web download, and
+  `export_conversation`. `kokua export <id> --turn N` writes one turn alone: the user's message, then every model call it
+  made grouped by run with the request exactly as sent, the response, and how each loop ended, to
+  `<id>.turn-N.md`. A payload that is missing reads `_not captured_`; a turn out of range exits 2 naming
+  the valid range.
 - **Conversation commands at the prompt: `/new`, `/conversations`, `/switch <id>`.** The terminal used
   to have no way to start a conversation or reach one it was not already in, which made every earlier
   conversation unreachable from the CLI and left restarting the process resuming the most recent one.
@@ -137,6 +144,34 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.34.0 or newer
   on every exit branch of a turn: success, cancellation, a connection error, a generic error, with the
   wall-clock figure measured at the moment of recording, so a turn that raised still reports what it
   cost up to the point it stopped.
+- **A turn records every model call's request and every loop's ending.** `core/requests.py`'s
+  `TurnRequests`, fed by the same `record_event` sink as the cost record, stores each call's endpoint and
+  a reference to the exact request and response (files under `$KOKUA_HOME/data/payloads/`) and how each
+  agent loop ended, under `session.metadata["requests"][str(user_index)]`. Recorded on every exit
+  branch, unattended runs included, and dropped or kept with the turn when a conversation is branched or
+  truncated. `[assistant].capture_requests` (default `true`, hot) turns the payload files off; endings
+  are recorded either way. `CORE_RUNTIME_SETTINGS` now holds two entries.
+- **The web UI shows what the model saw.** A round marker per model call under that round's output, its
+  summary drawn without a fetch; opening it fetches the request once and renders it a level at a time,
+  with long strings cut behind "show all", image data labeled, and no inline tree above two million
+  characters. Each marker links `/payloads/<sha256>?download=<name>` (accepted only for
+  `^[A-Za-z0-9._-]{1,100}\Z`, served as an attachment), each loop ends with an `ended: ...` line worded as
+  the terminal and export word it (rounds counted from 1), and the user bubble carries a `turn N` badge.
+- **Those records reach the channel live.** `ChannelUI.show_request` / `show_ending` and the optional
+  `RichChannel.send_request` / `send_ending` carry a `request` frame per completed entry-agent call and an
+  `ending` frame per loop; a sub-agent's appear as `request` and `ending` entries in its own card
+  (`SubagentReporter.append`). A channel without the frames shows no request marker and gets one plain
+  line for a `wrap_up` or `error` ending only, such as `[assistant] ended: tool-use limit of 10 rounds
+  reached; answered on a forced wrap-up call`. Kokua's terminal channel defines `send_turn` and
+  `send_ending` itself and prints every ending and the `[turn N]` line; no other channel gets the turn
+  line. Every surface counts rounds from 1.
+- **Turns are numbered once, and replay shows the markers.** `core/conversations.py`'s `turn_numbers`
+  gives each turn its ordinal, skipping loop nudges, agents' messages, and messages typed mid-turn, and the
+  live `[turn N]` line (`ChannelUI.show_turn`; printed by the terminal channel only), the
+  `turn_saved` frame's new `turn` field, the history `user` item's `turn`, and the export's `## Turn N`
+  headings all read it. A reloaded conversation replays each entry-agent round's `request` item right
+  after that round's assistant message and the loop's `ending` at the turn's end, as the live frames
+  arrived; the export renders each ending, a sub-agent card's included, as `_[ended: answered at round 2 of 10]_` or `_[ended: tool-use limit of 10 rounds reached; answered on a forced wrap-up call]_`.
 - **Delegated and reviewed work counts toward that same total, with one named exception.** A spawned
   sub-agent and a workflow critic each build their own client, outside the family a turn's own scoped
   sink reaches, so both were invisible to `TurnMetrics` and a heavily delegating turn read as cheap.
@@ -153,6 +188,9 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.34.0 or newer
   emits no turn event on any client, so wiring `client.events` closes the gap for every other direct
   client call but not this one. A `/plan` turn's recorded cost is short by exactly one call per review
   round, with no qualifier able to say so.
+- **The per-agent cost breakdown names the entry agent by its configured name.** The entry agent's own
+  event sink is now wired beside its client's, so its calls carry its name (`assistant` by default,
+  whatever `[assistant].agent` says otherwise) and a call no run claimed is labelled `unattributed`.
 - **`kokua export` writes a conversation as Markdown.** `transcript_export.render_markdown` renders a
   saved conversation's header, each turn's user message, reasoning, tool calls with their arguments
   and results, sub-agent cards, and what it cost, into one Markdown document a person can read, diff,

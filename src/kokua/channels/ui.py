@@ -31,6 +31,24 @@ from aimu.aio.channels.base import ChannelMessage
 from aimu.models import StreamChunk
 
 
+def ending_line(ending: dict) -> str:
+    """One line saying how an agent's tool loop ended. Every surface counts rounds from 1 (AIMU's own
+    counter starts at 0, hence the ``+ 1``), and a forced wrap-up names the cap instead of a round."""
+    limit = ending["max_iterations"]
+    of_limit = f" of {limit}" if limit is not None else ""
+    position = f"round {ending['round'] + 1}{of_limit}"
+    if ending["ended_by"] == "answered":
+        rule = f"answered at {position}"
+    elif ending["ended_by"] == "wrap_up":
+        cap = f"limit of {limit} rounds" if limit is not None else "limit"
+        rule = f"tool-use {cap} reached; answered on a forced wrap-up call"
+    elif ending["ended_by"] == "error":
+        rule = f"error ({ending['error']}) at {position}" if ending["error"] else f"error at {position}"
+    else:
+        return f"[{ending['agent']}] ended at {position}"
+    return f"[{ending['agent']}] ended: {rule}"
+
+
 def _bullets(issues: list[str]) -> str:
     return "\n".join(f"- {issue}" for issue in issues)
 
@@ -49,12 +67,15 @@ class ChannelUI:
         self._phase = getattr(channel, "send_phase", None)
         self._done = getattr(channel, "send_done", None)
         self._subagent = getattr(channel, "send_subagent", None)
+        self._request = getattr(channel, "send_request", None)
+        self._ending = getattr(channel, "send_ending", None)
         self._stream_activity = getattr(channel, "stream_activity", None)
         self._begin_catch_up = getattr(channel, "begin_catch_up", None)
         self._end_catch_up = getattr(channel, "end_catch_up", None)
         self._history = getattr(channel, "send_history", None)
         self._working = getattr(channel, "send_working", None)
         self._turn_saved = getattr(channel, "send_turn_saved", None)
+        self._turn = getattr(channel, "send_turn", None)
         self._message_frame = getattr(channel, "send_message_frame", None)
 
     @property
@@ -130,7 +151,9 @@ class ChannelUI:
         if self._working is not None:
             await self._working(elapsed)
 
-    async def turn_saved(self, conversation_id: str, message_index: int, *, token: Optional[str] = None) -> None:
+    async def turn_saved(
+        self, conversation_id: str, message_index: int, *, token: Optional[str] = None, turn: Optional[int] = None
+    ) -> None:
         """Publish the position of a turn whose transcript has just been stored.
 
         A front end uses it to offer an action on the turn that only makes sense once the store has
@@ -140,9 +163,30 @@ class ChannelUI:
         ``token`` is whatever the front end sent with the message this turn was made of, so it can
         match the message it drew to the turn that was made of it. None whenever no front end sent
         one, which is every turn nobody typed.
+
+        ``turn`` is the turn's ordinal in the conversation (``conversations.turn_numbers``), so a page
+        that drew the turn live can caption it with the same number a reload will.
         """
         if self._turn_saved is not None:
-            await self._turn_saved(conversation_id, message_index, token=token)
+            await self._turn_saved(conversation_id, message_index, token=token, turn=turn)
+
+    @property
+    def shows_saved_turn(self) -> bool:
+        """Whether the channel takes a saved-turn frame, so a caller can skip the store read that builds it."""
+        return self._turn_saved is not None
+
+    @property
+    def shows_turn(self) -> bool:
+        """Whether the channel renders a turn number, so a caller can skip the store read that computes it
+        for a channel that would discard it."""
+        return self._turn is not None
+
+    async def show_turn(self, number: int) -> None:
+        """Announce which turn of the conversation is starting, before its reply streams. A no-op for a
+        channel with no ``send_turn``: the terminal channel defines one that prints ``[turn N]``, and a
+        page learns the number from ``turn_saved`` and history instead."""
+        if self._turn is not None:
+            await self._turn(number)
 
     async def message_taken(self, text: str, *, token: Optional[str] = None) -> None:
         """Report that this message joined the turn already running instead of starting one.
@@ -313,6 +357,23 @@ class ChannelUI:
         """
         if self._subagent is not None:
             await self._subagent(event)
+
+    async def show_request(self, record: dict) -> None:
+        """Mark one model call of the entry agent's run: its round, endpoint, stop reason, and a
+        reference to the exact request that was sent. A no-op where requests aren't rendered: the
+        terminal shows them only through ``kokua export --turn``."""
+        if self._request is not None:
+            await self._request(record)
+
+    async def show_ending(self, ending: dict) -> None:
+        """Say how an agent's tool loop ended (``ended_by``: ``"answered"``, ``"wrap_up"``, or
+        ``"error"``). A channel with no ``send_ending`` still gets one plain line for the two endings that
+        are not routine (``"wrap_up"`` and ``"error"``), so the cap being hit is never silent; an
+        ``"answered"`` ending is the ordinary case and says nothing there."""
+        if self._ending is not None:
+            await self._ending(ending)
+        elif ending["ended_by"] in ("wrap_up", "error"):
+            await self._channel.send(ending_line(ending))
 
     async def stream_activity(self, chunks: AsyncIterator[StreamChunk], *, show_answer: bool = False) -> str:
         """Stream an agentic loop live and return its generated text.

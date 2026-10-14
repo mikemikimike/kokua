@@ -83,6 +83,8 @@ _TURN_FRAMES = frozenset(
         "plan",
         "phase",
         "subagent",
+        "request",
+        "ending",
     }
 )
 
@@ -317,7 +319,9 @@ class WebChannel(BaseWebChannel):
             frame["elapsed"] = elapsed
         await self.send_frame(frame)
 
-    async def send_turn_saved(self, conversation_id: str, message_index: int, *, token: Optional[str] = None) -> None:
+    async def send_turn_saved(
+        self, conversation_id: str, message_index: int, *, token: Optional[str] = None, turn: Optional[int] = None
+    ) -> None:
         """Tell the page a turn has reached the store, and where in the transcript it starts.
 
         Never muted (``turn_saved`` is not in ``_TURN_FRAMES``): it carries the conversation it is
@@ -336,7 +340,13 @@ class WebChannel(BaseWebChannel):
         }
         if token is not None:
             frame["token"] = token
+        if turn is not None:
+            frame["turn"] = turn
         await self.send_frame(frame)
+
+    async def send_turn(self, number: int) -> None:
+        """Nothing: the page gets a turn's number from ``turn_saved`` and from history, so the plain-line
+        fallback ``ChannelUI.show_turn`` would otherwise print is suppressed by defining this."""
 
     async def send_message_frame(self, text: str, *, token: Optional[str] = None) -> None:
         """Tell the page a message it drew has joined the turn already running rather than starting one.
@@ -520,6 +530,7 @@ class WebChannel(BaseWebChannel):
             failure=meta.get("failure"),
             mid_turn=meta.get("messages"),
             undelivered=meta.get("undelivered"),
+            requests=meta.get("requests"),
         )
         record = self._catch_up.get(self.active_conversation_id)
         if record is not None:
@@ -659,6 +670,19 @@ class WebChannel(BaseWebChannel):
 
         Muted for a background turn (see the module docstring)."""
         await self.send_frame({"type": "subagent", **event})
+
+    async def send_request(self, record: dict) -> None:
+        """Mark one completed model call. Only the entry agent's run (no ``parent_run_id``) is sent; a
+        sub-agent's calls appear in its own card instead. ``TurnRunner`` decides which records reach here.
+        Muted for a background turn."""
+        if record.get("parent_run_id") is None:
+            await self.send_frame({"type": "request", **record})
+
+    async def send_ending(self, ending: dict) -> None:
+        """Say how the entry agent's tool loop ended; a sub-agent's ending appears in its card.
+        ``TurnRunner`` decides which records reach here. Muted for a background turn."""
+        if ending.get("parent_run_id") is None:
+            await self.send_frame({"type": "ending", **ending})
 
     async def send_plan_review_request(self, plan: str, critique: Optional[str] = None) -> None:
         """Ask the browser to review a plan; the page replies with a normal 'approve'/'reject'/'edit:'

@@ -18,11 +18,18 @@ from datetime import datetime
 from typing import Callable, Optional, Union
 
 from aimu import aio
+from aimu.models import PROVENANCE_KEY
 from aimu.sessions import Session, SessionSummary, TinyDBSessionStore
 
 from kokua.core.agent_registry import AgentRegistry
 from kokua.config import AssistantConfig
-from kokua.core.messages import TITLE_MAX, compact_message_images, derive_title, is_user_turn
+from kokua.core.messages import (
+    PROVENANCE_MIXED,
+    TITLE_MAX,
+    compact_message_images,
+    derive_title,
+    is_user_turn,
+)
 from kokua.core.turn_gate import TurnGate
 
 
@@ -52,7 +59,17 @@ COPY_TITLE_PREFIX = "Copy of "
 # transcript, and a key it drops takes its values with it. Nothing points across the cut either way.
 # `undelivered` does not share that further argument: its values are sender/selector/text dicts, not
 # indices, so it only needs the argument every other entry here already makes.
-TURN_KEYED_METADATA = ("subagent", "trace", "model", "thinking", "failure", "usage", "messages", "undelivered")
+TURN_KEYED_METADATA = (
+    "subagent",
+    "trace",
+    "model",
+    "thinking",
+    "failure",
+    "usage",
+    "requests",
+    "messages",
+    "undelivered",
+)
 
 
 class TurnNotFound(Exception):
@@ -104,6 +121,25 @@ def mid_turn_indices(metadata: dict) -> frozenset[int]:
     hardening one of them alone would only move where the failure surfaces.
     """
     return frozenset(index for indices in metadata.get("messages", {}).values() for index in indices)
+
+
+def turn_numbers(messages: list[dict], metadata: dict) -> dict[int, int]:
+    """Each turn's user-message index mapped to its 1-based ordinal in the conversation.
+
+    One count for every surface that shows a turn number (the live marker, the page's history, the
+    Markdown export), so they cannot disagree. A turn is opened by a message the user sent to start
+    it: not a loop nudge or an agent's message (:func:`kokua.core.messages.is_user_turn`), not a
+    delivery that mixed the two (it carries ``PROVENANCE_MIXED`` and is untagged by ``is_user_turn``
+    on purpose), and not a message the user typed into a turn already running
+    (:func:`mid_turn_indices`).
+    """
+    mid_turn = mid_turn_indices(metadata)
+    opening = (
+        index
+        for index, message in enumerate(messages)
+        if is_user_turn(message) and message.get(PROVENANCE_KEY) != PROVENANCE_MIXED and index not in mid_turn
+    )
+    return {index: ordinal for ordinal, index in enumerate(opening, start=1)}
 
 
 def turn_end(messages: list[dict], user_index: int, *, mid_turn: frozenset[int] = frozenset()) -> Optional[int]:
@@ -414,6 +450,13 @@ class ConversationBook:
         """
         session = self._store.get(conversation_id)
         return turn_end(session.messages, user_index, mid_turn=mid_turn_indices(session.metadata)) is not None
+
+    def saved_turn(self, conversation_id: str, user_index: int) -> tuple[bool, Optional[int]]:
+        """:meth:`branchable` and the turn's ordinal from one read of the store, which is a whole-file
+        parse. The ordinal is ``None`` for a message that is not a turn's opening one."""
+        session = self._store.get(conversation_id)
+        branchable = turn_end(session.messages, user_index, mid_turn=mid_turn_indices(session.metadata)) is not None
+        return branchable, turn_numbers(session.messages, session.metadata).get(user_index)
 
     def branch(self, conversation_id: str, user_index: int) -> str:
         """Fork a conversation at one of its turns into a new one, switch to it, and return its id.
@@ -733,6 +776,7 @@ class ConversationBook:
         failure: Optional[str] = None,
         usage: Optional[dict] = None,
         messages: Optional[list[int]] = None,
+        requests: Optional[dict] = None,
     ) -> None:
         """Persist what produced a turn's output: its sub-agent activity, the model that answered, the
         reasoning effort it ran at, why it stopped early if it did, what it cost, and which of its
@@ -768,8 +812,12 @@ class ConversationBook:
         guesses from position offers a turn's own controls on a message that has no turn. An empty list
         stays out of the file, like an unconfigured effort, so a turn that received none reads as one
         that never had the question put to it.
+
+        ``requests`` is what ``core.requests.TurnRequests.record`` returned: each model call's exact
+        request (by reference to a payload file) and how each agent loop ended. It sits beside ``usage``
+        because the two answer one question from two sides, what the turn cost and what it was shown.
         """
-        if user_index < 0 or not (events or model or thinking is not None or failure or usage or messages):
+        if user_index < 0 or not (events or model or thinking is not None or failure or usage or messages or requests):
             return
         session = self._store.get(conversation_id)
         if events:
@@ -782,6 +830,8 @@ class ConversationBook:
             session.metadata.setdefault("failure", {})[str(user_index)] = failure
         if usage:
             session.metadata.setdefault("usage", {})[str(user_index)] = usage
+        if requests:
+            session.metadata.setdefault("requests", {})[str(user_index)] = requests
         if messages:
             session.metadata.setdefault("messages", {})[str(user_index)] = list(messages)
         self._store.save(session)

@@ -162,7 +162,7 @@ immediately. Everything else is **startup-only**: change it, then restart.
 
 | Hot | Startup-only |
 | --- | --- |
-| `[assistant].generate_titles` | the rest of `[assistant]`, including `[assistant.generation]`, and `[planning].review_rounds` |
+| `[assistant].generate_titles`, `[assistant].capture_requests` | the rest of `[assistant]`, including `[assistant.generation]`, and `[planning].review_rounds` |
 | `[planning].plan_review`, `plan_review_agent`, `result_review`, `show_reasoning` | |
 | `[capabilities].max_depth` | all of `[agents.*]` and `[reviewers.*]`, `[mcp]` (including `[[mcp.server]]`), `[security]` (including `[security.auto_approval]`), `[paths]`, `[frontend]`, `[web]`, `[logging]`, `[email]` |
 | `[scheduling].max_task_conversations` | |
@@ -182,7 +182,8 @@ sections](#toolset-sections).
 
 ## `[assistant]`
 
-Process-wide defaults. Everything here is read at startup, except `generate_titles`, which is hot.
+Process-wide defaults. Everything here is read at startup, except `generate_titles` and `capture_requests`, which are
+hot.
 
 ### `model`
 
@@ -316,7 +317,7 @@ key](#who-may-change-which-key).
 ### `generate_titles`
 
 Have the model write each new conversation's title from the message that opened it. Default `true`.
-**Hot**, and the only hot key in `[assistant]`: the title is written per conversation, so a change
+**Hot**: the title is written per conversation, so a change
 applies to the next one with no restart.
 
 The first message truncated to 40 characters is the title the instant a conversation has one; the
@@ -324,6 +325,22 @@ written title replaces it a moment later, in the background, on the model that c
 (no separate model to configure). `false` stops at the truncation, which is also what stands whenever
 the call fails: an endpoint that is down, or an answer that cleans up to nothing, is silent and leaves
 the placeholder. A conversation a scheduled task minted keeps the task's name either way.
+
+### `capture_requests`
+
+Keep each model call's exact request and response as files under `$KOKUA_HOME/data/payloads/`, so a turn
+can be examined afterwards as the model saw it. Default `true`. **Hot**: it is read as each turn opens, so
+a change applies from the next turn with no restart.
+
+The cost is disk, and it grows with the square of a conversation's length, because every call resends the
+whole context: a 10-round turn at about 30k tokens of context is roughly 1.2 MB. A payload carrying images
+holds their base64 data, repeated on each call. Nothing collects old files yet
+([#15](https://github.com/saxman/kokua/issues/15)). `false` stops writing the files only: how each agent
+loop ended (answered, wrapped up, or failed) is recorded either way, under the turn's entry in the
+conversation's metadata.
+
+The key is not locked, so the assistant can change it through `update_config`, like `generate_titles`; lock
+it via `[security].locked_config_keys` to keep it fixed.
 
 ## `[assistant.generation]`
 

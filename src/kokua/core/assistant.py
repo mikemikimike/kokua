@@ -167,6 +167,7 @@ class Assistant:
             push_conversations=self._maybe_push_conversations,
             delete_conversation=self.delete_conversation,
             spawn_title=self._spawn_title,
+            reporter=self._subagent_reporter,
         )
         # The background title writers still in flight (see `core/titles.py`). Held so shutdown can
         # end them: a task that outlives `self._store.close()` writes to a closed file, out of a task

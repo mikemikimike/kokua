@@ -579,7 +579,7 @@ def test_replay_items_replays_verbose_trace_not_committed_answer():
     }
     items = replay_items(messages, trace=trace)
     assert items == [
-        {"type": "user", "text": "do X", "message_index": 0},
+        {"type": "user", "text": "do X", "message_index": 0, "turn": 1},
         {"type": "phase", "label": "Planner", "detail": "drafting a plan"},
         {"type": "reasoning", "text": "THE PLAN"},
         {"type": "phase", "label": "Plan reviewer", "detail": "round 1"},
@@ -1047,7 +1047,7 @@ def test_replay_items_full_replay():
     # message_index is 1, not 0: _CONVERSATION's leading system message shifts the user message
     # one position later, which is exactly the off-by-one the stamping has to get right.
     assert items == [
-        {"type": "user", "text": "what's 2+2?", "message_index": 1},
+        {"type": "user", "text": "what's 2+2?", "message_index": 1, "turn": 1},
         {"type": "thinking", "text": "adding the numbers"},
         {"type": "message", "text": "4", "proactive": False},
         {"type": "tool", "name": "calc", "arguments": {"x": 2}, "response": "4"},
@@ -3157,3 +3157,194 @@ async def test_an_accepted_mid_turn_message_is_caught_up_once_rather_than_twice(
     await channel.send_history([], {})
 
     assert [item["type"] for item in ws.frames[-1]["items"] if item["type"] == "inbox"] == ["inbox"]
+
+
+async def test_web_channel_sends_entry_requests_and_endings_and_drops_sub_agent_ones():
+    ws = _FakeWS()
+    channel = WebChannel(ws)
+    await channel.send_request({"run_id": "lead-1", "parent_run_id": None, "round": 0, "payload_ref": "/payloads/ab"})
+    await channel.send_request({"run_id": "kid-1", "parent_run_id": "lead-1", "round": 0})
+    await channel.send_ending({"run_id": "lead-1", "parent_run_id": None, "ended_by": "answered"})
+    await channel.send_ending({"run_id": "kid-1", "parent_run_id": "lead-1", "ended_by": "answered"})
+
+    assert [f["type"] for f in ws.frames] == ["request", "ending"]
+    assert ws.frames[0]["payload_ref"] == "/payloads/ab"
+
+
+async def test_a_background_turns_request_frame_is_muted_and_caught_up():
+    from kokua.channels.web import streaming_conversation
+
+    ws = _FakeWS()
+    channel = WebChannel(ws)
+    channel.active_conversation_id = "viewed"
+    channel.begin_catch_up("other", "ping")
+
+    token = streaming_conversation.set("other")
+    try:
+        await channel.send_request({"run_id": "lead-1", "parent_run_id": None, "round": 0})
+        await channel.send_ending({"run_id": "lead-1", "parent_run_id": None, "ended_by": "answered"})
+        assert ws.frames == []
+        channel.active_conversation_id = "other"
+        await channel.send_history([], {})
+    finally:
+        streaming_conversation.reset(token)
+
+    items = ws.frames[-1]["items"]
+    assert [item["type"] for item in items] == ["user", "request", "ending"]
+
+
+def _entry_call(round_, **extra):
+    return {"run_id": "e", "parent_run_id": None, "round": round_, "endpoint": "m", **extra}
+
+
+def _two_round_messages():
+    return [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "1", "function": {"name": "f", "arguments": {}}}]},
+        {"role": "tool", "tool_call_id": "1", "content": "out"},
+        {"role": "assistant", "content": "done"},
+    ]
+
+
+def _types(items):
+    return [item["type"] for item in items]
+
+
+def test_replay_items_user_item_carries_its_turn_number():
+    messages = [
+        {"role": "user", "content": "one"},
+        {"role": "assistant", "content": "a"},
+        {"role": "user", "content": "mid"},
+        {"role": "user", "content": "two"},
+    ]
+    items = replay_items(messages, mid_turn={"0": [2]})
+    assert [(i["text"], i["turn"]) for i in items if i["type"] == "user"] == [("one", 1), ("two", 2)]
+
+
+def test_replay_items_places_each_entry_round_after_its_assistant_message_and_the_ending_last():
+    requests = {
+        "0": {
+            "entry_run_id": "e",
+            "calls": [_entry_call(0), _entry_call(1), {**_entry_call(0), "run_id": "w", "parent_run_id": "e"}],
+            "endings": [
+                {"run_id": "e", "parent_run_id": None, "agent": "assistant", "ended_by": "answered", "round": 1},
+                {"run_id": "w", "parent_run_id": "e", "agent": "worker", "ended_by": "answered", "round": 0},
+            ],
+        }
+    }
+    items = replay_items(_two_round_messages(), requests=requests, failure={"0": "boom"})
+    assert _types(items) == ["user", "tool", "request", "message", "request", "ending", "notice"]
+    assert [i["round"] for i in items if i["type"] == "request"] == [0, 1]
+    assert items[-2]["agent"] == "assistant"
+
+
+def test_replay_items_puts_a_leftover_round_at_the_turn_end():
+    messages = _two_round_messages()[:3]  # the second round failed before any assistant message
+    requests = {"0": {"entry_run_id": "e", "calls": [_entry_call(0), _entry_call(1)], "endings": []}}
+    items = replay_items(messages, requests=requests)
+    assert _types(items) == ["user", "tool", "request", "request"]
+
+
+def test_replay_items_gives_a_workflow_turn_no_top_level_requests_or_endings():
+    requests = {
+        "0": {
+            "entry_run_id": None,
+            "calls": [_entry_call(0)],
+            "endings": [{"run_id": "e", "parent_run_id": None, "agent": "a", "ended_by": "answered", "round": 0}],
+        }
+    }
+    items = replay_items(_two_round_messages(), requests=requests)
+    assert "request" not in _types(items) and "ending" not in _types(items)
+
+
+def test_replay_items_requests_are_per_turn():
+    messages = [
+        {"role": "user", "content": "one"},
+        {"role": "assistant", "content": "a"},
+        {"role": "user", "content": "two"},
+        {"role": "assistant", "content": "b"},
+    ]
+    requests = {"2": {"entry_run_id": "e", "calls": [_entry_call(0)], "endings": []}}
+    assert _types(replay_items(messages, requests=requests)) == ["user", "message", "user", "message", "request"]
+
+
+async def test_web_channel_show_turn_sends_nothing_and_turn_saved_carries_the_number():
+    from kokua.channels.ui import ChannelUI
+
+    ws = _FakeWS()
+    channel = WebChannel(ws)
+    await ChannelUI(channel).show_turn(3)
+    assert ws.frames == []
+    await channel.send_turn_saved("c1", 4, turn=2)
+    assert ws.frames == [{"type": "turn_saved", "conversation_id": "c1", "message_index": 4, "turn": 2}]
+
+
+def _payload_client(tmp_path):
+    from starlette.testclient import TestClient
+
+    from kokua import payloads
+
+    config = _config(tmp_path)
+    reference = payloads.save_text(config.payloads_path, '{"a": 1}')
+    return TestClient(build_app(config, client=MockAsyncModelClient([]))), reference
+
+
+def test_a_payload_downloads_as_an_attachment_when_asked(tmp_path):
+    client, reference = _payload_client(tmp_path)
+    response = client.get(reference + "?download=turn-1-round-1.json")
+    assert response.headers["content-disposition"] == 'attachment; filename="turn-1-round-1.json"'
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.text == '{"a": 1}'
+
+
+def test_a_payload_without_a_download_name_stays_inline(tmp_path):
+    client, reference = _payload_client(tmp_path)
+    response = client.get(reference)
+    assert "content-disposition" not in response.headers
+    assert response.headers["content-type"].startswith("text/plain")
+
+
+@pytest.mark.parametrize("name", ["../../etc/passwd", 'a"b.json', "a/b.json", "", "x" * 101 + ".json", "a.json\n"])
+def test_an_unsafe_download_name_is_ignored(tmp_path, name):
+    from urllib.parse import quote
+
+    client, reference = _payload_client(tmp_path)
+    response = client.get(reference + "?download=" + quote(name, safe=""))
+    assert response.status_code == 200
+    assert "content-disposition" not in response.headers
+    assert response.headers["content-type"].startswith("text/plain")
+
+
+def test_the_web_export_includes_each_agents_system_prompt(tmp_path):
+    """The download renders the same document `kokua export` does, system prompts included."""
+    import json
+
+    from aimu.sessions import TinyDBSessionStore
+    from starlette.testclient import TestClient
+
+    from kokua import payloads
+
+    config = _config(tmp_path)
+    app = build_app(config, client_factory=lambda cid: MockAsyncModelClient(["the reply"]))
+    with TestClient(app).websocket_connect("/ws") as ws:
+        _drain_until(ws, "conversations")
+        ws.send_text("a question")
+        _drain_until(ws, "done")
+        convs = _drain_until(ws, "conversations")
+        active_id = next(i["id"] for i in convs["items"] if i["active"])
+        store = TinyDBSessionStore(str(config.sessions_path))
+        session = store.get(active_id)
+        reference = payloads.save_text(config.payloads_path, json.dumps({"system": "be exact", "messages": []}))
+        session.metadata["requests"] = {
+            "0": {
+                "entry_run_id": "e",
+                "calls": [{"run_id": "e", "agent": "assistant", "round": 0, "payload_ref": reference}],
+                "endings": [],
+            }
+        }
+        store.save(session)
+        ws.send_text(json.dumps({"type": "export", "id": active_id}))
+        frame = _drain_until(ws, "download")
+    written = (config.downloads_path / frame["name"]).read_text(encoding="utf-8")
+    assert "**System prompt (assistant):**" in written
+    assert "be exact" in written

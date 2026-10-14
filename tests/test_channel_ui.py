@@ -32,7 +32,7 @@ class _TurnSavedDouble(BareChannel):
         super().__init__()
         self.saved: list[tuple[str, int, Optional[str]]] = []
 
-    async def send_turn_saved(self, conversation_id, message_index, *, token=None):
+    async def send_turn_saved(self, conversation_id, message_index, *, token=None, turn=None):
         self.saved.append((conversation_id, message_index, token))
 
 
@@ -72,6 +72,12 @@ class RichChannelDouble(BareChannel):
 
     async def send_subagent(self, event: dict) -> None:
         self.calls.append(("subagent", (event,)))
+
+    async def send_request(self, record: dict) -> None:
+        self.calls.append(("request", (record,)))
+
+    async def send_ending(self, ending: dict) -> None:
+        self.calls.append(("ending", (ending,)))
 
     async def send_message_frame(self, text: str, *, token: Optional[str] = None) -> None:
         self.calls.append(("message_frame", (text, token)))
@@ -198,6 +204,8 @@ async def test_rich_channel_receives_every_frame():
     await ui.show_plan("step 1")
     await ui.show_phase("Planner", "drafting")
     await ui.show_subagent({"role": "Plan reviewer"})
+    await ui.show_request({"run_id": "r"})
+    await ui.show_ending({"run_id": "r"})
     await ui.finish_stream()
     assert await ui.stream_activity(_chunks("a", "b"), show_answer=True) == "ab"
 
@@ -211,6 +219,8 @@ async def test_rich_channel_receives_every_frame():
         "plan",
         "phase",
         "subagent",
+        "request",
+        "ending",
         "done",
         "stream_activity",
     ]
@@ -364,3 +374,46 @@ async def test_an_escalation_says_it_is_going_to_the_user():
         "run_command", {"command": "ls"}, approved=False, reason="cannot be undone", model="ollama:b"
     )
     assert "asking you" in channel.sent[0]
+
+
+async def test_a_request_is_a_no_op_and_only_a_wrap_up_or_error_ending_is_a_line_on_a_bare_channel():
+    channel = BareChannel()
+    ui = ChannelUI(channel)
+    await ui.show_request({"run_id": "r", "parent_run_id": None, "round": 0})
+    await ui.show_ending(
+        {"agent": "assistant", "ended_by": "wrap_up", "round": 10, "max_iterations": 10, "error": None}
+    )
+    await ui.show_ending(
+        {"agent": "researcher", "ended_by": "error", "round": 2, "max_iterations": None, "error": "TruncatedTurnError"}
+    )
+    await ui.show_ending(
+        {"agent": "assistant", "ended_by": "answered", "round": 1, "max_iterations": 10, "error": None}
+    )
+
+    assert channel.sent == [
+        "[assistant] ended: tool-use limit of 10 rounds reached; answered on a forced wrap-up call",
+        "[researcher] ended: error (TruncatedTurnError) at round 3",
+    ]
+
+
+def test_ending_lines_count_rounds_from_one_and_need_no_counter_for_a_wrap_up():
+    from kokua.channels.ui import ending_line
+
+    base = {"agent": "a", "round": 0, "max_iterations": 10, "error": None}
+    assert ending_line({**base, "ended_by": "answered"}) == "[a] ended: answered at round 1 of 10"
+    assert ending_line({**base, "ended_by": "answered", "max_iterations": None}) == "[a] ended: answered at round 1"
+    wrap = {**base, "ended_by": "wrap_up", "round": 10}
+    assert ending_line(wrap) == "[a] ended: tool-use limit of 10 rounds reached; answered on a forced wrap-up call"
+    assert ending_line({**wrap, "max_iterations": None}) == (
+        "[a] ended: tool-use limit reached; answered on a forced wrap-up call"
+    )
+    error = {**base, "ended_by": "error", "error": "boom", "round": 2}
+    assert ending_line(error) == "[a] ended: error (boom) at round 3 of 10"
+    assert ending_line({**error, "error": None}) == "[a] ended: error at round 3 of 10"
+    assert ending_line({**base, "ended_by": None}) == "[a] ended at round 1 of 10"
+
+
+async def test_show_turn_is_a_no_op_on_a_bare_channel():
+    channel = BareChannel()
+    await ChannelUI(channel).show_turn(3)
+    assert channel.sent == []

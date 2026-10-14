@@ -149,6 +149,12 @@ def build_arg_parser(prog: str = "kokua") -> argparse.ArgumentParser:
         action="store_true",
         help="Do not truncate long tool arguments and results.",
     )
+    export_parser.add_argument(
+        "--turn",
+        type=int,
+        metavar="N",
+        help="Export turn N alone, with every request the model was sent and every response it gave.",
+    )
     return parser
 
 
@@ -416,7 +422,12 @@ def _export(args: argparse.Namespace, config: AssistantConfig) -> int:
     renderer it calls, `render_markdown`, imports neither, and a CLI path that built a front end just to
     read a file back off disk would quietly make the web extra a requirement for exporting again.
     """
-    from kokua.transcript_export import DEFAULT_MAX_PAYLOAD_CHARS, export_filename, render_markdown
+    from kokua.transcript_export import (
+        DEFAULT_MAX_PAYLOAD_CHARS,
+        export_filename,
+        render_markdown,
+        render_turn_markdown,
+    )
 
     try:
         session, match_count = _resolve_export_session(args, config)
@@ -443,19 +454,28 @@ def _export(args: argparse.Namespace, config: AssistantConfig) -> int:
             print(f"no conversation found matching '{args.conversation}'", file=sys.stderr)
         return 2
 
-    markdown = render_markdown(
-        session,
-        max_payload_chars=None if args.full else DEFAULT_MAX_PAYLOAD_CHARS,
-        payloads_path=config.payloads_path,
-    )
+    if args.turn is not None:
+        if args.full:
+            print("note: --full has no effect with --turn; a per-turn export is always whole.", file=sys.stderr)
+        try:
+            markdown = render_turn_markdown(session, args.turn, payloads_path=config.payloads_path)
+        except ValueError as error:
+            print(error, file=sys.stderr)
+            return 2
+        default_name = f"{session.key}.turn-{args.turn}.md"
+    else:
+        markdown = render_markdown(
+            session,
+            max_payload_chars=None if args.full else DEFAULT_MAX_PAYLOAD_CHARS,
+            payloads_path=config.payloads_path,
+        )
+        default_name = export_filename(session.key, full=args.full)
 
     if args.output == "-":
         print(markdown, end="")
         return 0
 
-    destination = (
-        Path(args.output) if args.output else config.downloads_path / export_filename(session.key, full=args.full)
-    )
+    destination = Path(args.output) if args.output else config.downloads_path / default_name
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(markdown, encoding="utf-8")
     print(str(destination))

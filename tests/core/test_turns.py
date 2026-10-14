@@ -20,6 +20,7 @@ from kokua.workflows import Workflow, WorkflowResult
 from tests.channels import (
     AlertCapturingChannel,
     FakeChannel,
+    SubagentCapturingChannel,
     _ConvCapturingChannel,
     _TurnSavedChannel,
     _config,
@@ -168,6 +169,17 @@ async def test_a_completed_turn_publishes_where_it_starts(tmp_path):
     assert conversation_id == assistant._active_id
     stored = assistant._store.get(conversation_id)
     assert stored.messages[index]["role"] == "user"
+
+
+async def test_each_turn_is_announced_and_saved_under_its_ordinal(tmp_path):
+    channel = _TurnSavedChannel()
+    assistant = await Assistant.create(_config(tmp_path), channel, client=MockAsyncModelClient(["one", "two"]))
+
+    for text in ("first", "second"):
+        await assistant._handle(ChannelMessage(text=text, channel="fake"), conversation_id=assistant._active_id)
+
+    assert channel.turns == [1, 2]
+    assert channel.turn_ordinals == [1, 2]
 
 
 async def test_a_completed_turn_echoes_the_token_of_the_message_that_started_it(tmp_path):
@@ -531,6 +543,87 @@ async def test_stop_cancels_in_flight_turn(tmp_path):
     assert "(stopped)" in channel.sent
     # The partial turn was captured for resume (the agent snapshots in its finally).
     assert any(m.get("content") == "long task" for m in assistant._agent.model_client.messages)
+
+
+class _RecordingClient(MockAsyncModelClient):
+    """MockAsyncModelClient never reaches AIMU's request seam, so emit the pair a real provider would."""
+
+    async def _chat(self, *args, **kwargs):
+        from aimu.events import RequestPrepared
+        from aimu.models._internal.chat_state import _effective_sink
+
+        sink = _effective_sink(self)
+        if sink is not None:
+            sink(RequestPrepared(provider="Mock", model="m", endpoint="http://x", payload={"messages": []}))
+        return await super()._chat(*args, **kwargs)
+
+
+def _turn_records(assistant):
+    return list(assistant._store.get(assistant._active_id).metadata["requests"].values())
+
+
+async def test_a_turn_records_its_requests_and_ending(tmp_path):
+    assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=_RecordingClient(["hello"]))
+    await assistant._handle(ChannelMessage(text="hello", channel="fake"), conversation_id=assistant._active_id)
+
+    record = _turn_records(assistant)[0]
+    assert record["calls"][0]["endpoint"] == "http://x" and record["calls"][0]["payload_ref"]
+    assert [e["ended_by"] for e in record["endings"]] == ["answered"]
+
+
+async def test_capture_off_records_no_payload_files(tmp_path):
+    config = _config(tmp_path)
+    config.capture_requests = False
+    assistant = await Assistant.create(config, FakeChannel(), client=_RecordingClient(["hello"]))
+    await assistant._handle(ChannelMessage(text="hello", channel="fake"), conversation_id=assistant._active_id)
+
+    record = _turn_records(assistant)[0]
+    assert record["calls"] and all(call["payload_ref"] is None for call in record["calls"])
+    assert record["endings"]
+    assert not config.payloads_path.exists() or not any(config.payloads_path.iterdir())
+
+
+async def test_capture_requests_is_read_per_turn_without_a_restart(tmp_path):
+    config = _config(tmp_path)
+    assistant = await Assistant.create(config, FakeChannel(), client=_RecordingClient(["one", "two"]))
+    await assistant._handle(ChannelMessage(text="first", channel="fake"), conversation_id=assistant._active_id)
+    config.capture_requests = False
+    await assistant._handle(ChannelMessage(text="second", channel="fake"), conversation_id=assistant._active_id)
+
+    first, second = _turn_records(assistant)
+    assert first["calls"][0]["payload_ref"]
+    assert second["calls"] and second["calls"][0]["payload_ref"] is None
+
+
+async def test_the_turns_request_accumulator_is_cleared_afterwards(tmp_path):
+    from kokua.core.requests import current_requests
+
+    assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient(["hello"]))
+    await assistant._handle(ChannelMessage(text="hello", channel="fake"), conversation_id=assistant._active_id)
+    assert current_requests.get() is None
+
+
+async def test_a_stopped_turn_records_its_entry_agents_cancelled_ending(tmp_path):
+    client = _BlockingStreamClient()
+    channel = _StopChannel(client.started)
+    assistant = await Assistant.create(_config(tmp_path), channel, client=client)
+
+    await assistant._serve_channel()
+    info = assistant._tracker.get(assistant._active_id)
+    if info is not None:
+        await asyncio.gather(info.handle.task, return_exceptions=True)
+
+    record = next(iter(assistant._store.get(assistant._active_id).metadata["requests"].values()))
+    assert [(e["ended_by"], e["error"]) for e in record["endings"]] == [("error", "CancelledError")]
+
+
+async def test_an_unattended_turn_records_its_requests_too(tmp_path):
+    assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient(["done"]))
+
+    await assistant._proactive("remind")
+
+    record = next(iter(assistant._store.get(assistant._active_id).metadata["requests"].values()))
+    assert [e["ended_by"] for e in record["endings"]] == ["answered"]
 
 
 async def test_stop_with_no_active_turn_is_noop(tmp_path):
@@ -1506,6 +1599,23 @@ async def test_an_unattended_turn_opens_a_catch_up_record_for_the_conversation_i
     assert ("begin", task_id, "run the report") in channel.calls
     # Ended at the persist, so a switch-in landing after it replays the store alone, not both.
     assert channel.calls.index(("end", task_id)) > channel.calls.index(("begin", task_id, "run the report"))
+
+
+async def test_the_entry_agents_own_run_events_reach_the_turns_sink(tmp_path, monkeypatch):
+    """The loop emits RunFinished to the agent's sink, not the client's; without wiring it the
+    entry agent's ending was invisible to everything Kokua records."""
+    from aimu.events import RunFinished
+
+    from kokua.core import metrics
+
+    seen = []
+    original = metrics.record_event
+    monkeypatch.setattr("kokua.core.turns.record_event", lambda event: (seen.append(event), original(event)))
+    assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient(["hello"]))
+    await assistant._handle(ChannelMessage(text="hello", channel="fake"), conversation_id=assistant._active_id)
+
+    finished = [event for event in seen if isinstance(event, RunFinished)]
+    assert len(finished) == 1 and finished[0].ended_by == "answered"
 
 
 async def test_a_turn_records_what_it_cost(tmp_path):
@@ -3160,3 +3270,116 @@ def test_the_undelivered_cap_is_the_same_number_a_read_caps_one_message_at():
     # And the cut string, which is copied rather than shared, says the same thing in the same shape.
     long_text = "x" * (UNDELIVERED_TEXT_CHARS + 1)
     assert _capped_message_text(long_text).endswith(f"... [message truncated, {len(long_text)} chars total]")
+
+
+class _DelegatingRecordingClient(_RecordingClient):
+    """Emits its own request, then a sub-agent's whole lifecycle (card plus the child run's events)."""
+
+    def __init__(self, replies):
+        super().__init__(replies)
+        self.reporter = None
+
+    async def _chat(self, *args, **kwargs):
+        from aimu.events import ModelTurnFinished, RequestPrepared, RunFinished
+        from aimu.models._internal.chat_state import _effective_sink
+
+        from kokua.core.metrics import current_requests
+
+        sink = _effective_sink(self)
+        entry = current_requests.get().entry_run_id
+        if self.reporter is not None and sink is not None:
+            await self.reporter.spawned("kid-1", "researcher", "find X")
+            common = {"agent": "researcher", "run_id": "kid-1", "parent_run_id": entry}
+            sink(RequestPrepared(provider="Mock", model="m", endpoint="http://x", payload={"messages": []}, **common))
+            sink(ModelTurnFinished(model="m", text="found", stop_reason="stop", **common))
+            sink(RunFinished(ended_by="answered", max_iterations=5, **common))
+            # Frames are scheduled tasks, so in production a card's ending entry can land after its
+            # terminal status; renderers handle appends after one. Yielding here only makes this test
+            # deterministic about what was delivered, not about the order.
+            await asyncio.sleep(0)
+            await self.reporter.finished("kid-1", "found", None)
+            sink(ModelTurnFinished(model="m", text="done", stop_reason="stop", run_id=entry))
+            # An unparented run that is not the entry's, as a workflow critic's is.
+            sink(RunFinished(agent="critic", run_id="critic-1", ended_by="answered", max_iterations=6))
+        return await super()._chat(*args, **kwargs)
+
+
+async def test_a_turn_shows_its_entry_request_and_a_sub_agents_request_and_ending_in_its_card(tmp_path):
+    channel = SubagentCapturingChannel()
+    client = _DelegatingRecordingClient(["done"])
+    assistant = await Assistant.create(_config(tmp_path), channel, client=client)
+    client.reporter = assistant._subagent_reporter
+    await assistant._handle(ChannelMessage(text="hello", channel="fake"), conversation_id=assistant._active_id)
+
+    assert [f["round"] for f in channel.request_frames if f["parent_run_id"] is None] == [0]
+    assert all(f["parent_run_id"] is None or f["run_id"] == "kid-1" for f in channel.request_frames)
+    appended = [e["append"] for e in channel.subagent_frames if e["id"] == "kid-1" and "append" in e]
+    kinds = [a["kind"] for a in appended]
+    assert "request" in kinds and "ending" in kinds
+    request = next(a for a in appended if a["kind"] == "request")
+    assert set(request) == {
+        "kind", "round", "payload_ref", "payload_chars", "message_count", "tool_count",
+        "endpoint", "model", "stop_reason", "error", "agent",
+    }  # fmt: skip
+    assert request["agent"] == "researcher" and request["stop_reason"] == "stop"
+    recorded = assistant._store.get(assistant._active_id).metadata["subagent"]["0"]
+    assert {"request", "ending"} <= {e["append"]["kind"] for e in recorded if "append" in e}
+    assert [e["ended_by"] for e in channel.ending_frames] == ["answered", "answered"]
+    assert all(e["run_id"] != "critic-1" for e in channel.ending_frames)  # a critic's ending is not shown live
+    record = next(iter(assistant._store.get(assistant._active_id).metadata["requests"].values()))
+    assert record["entry_run_id"] is not None
+    assert any(e["run_id"] == "critic-1" for e in record["endings"])  # but it is still recorded
+    entry_calls = [c for c in record["calls"] if c["parent_run_id"] is None]
+    assert {c["run_id"] for c in entry_calls} <= {record["entry_run_id"], None}
+
+
+class _BareChannel(FakeChannel):
+    """A channel that renders neither turn numbers nor saved-turn frames."""
+
+    send_turn = None
+
+
+async def _store_reads_during_one_turn(tmp_path, channel) -> int:
+    assistant = await Assistant.create(_config(tmp_path), channel, client=MockAsyncModelClient(["sure"]))
+    reads = 0
+    original_get = assistant._store.get
+
+    def counting_get(conversation_id):
+        nonlocal reads
+        reads += 1
+        return original_get(conversation_id)
+
+    assistant._store.get = counting_get
+    await assistant._handle(ChannelMessage(text="hello", channel="fake"), conversation_id=assistant._active_id)
+    return reads
+
+
+async def test_a_turn_reads_the_store_for_its_number_only_when_the_channel_shows_it(tmp_path):
+    """A whole-file parse before the first token, for a number the web channel discards, is the cost this
+    pins: the number is computed only for a channel that renders it, and a saved-turn frame costs one
+    further read, not two."""
+    bare = await _store_reads_during_one_turn(tmp_path / "bare", _BareChannel())
+    numbered = await _store_reads_during_one_turn(tmp_path / "numbered", FakeChannel())
+    saved = await _store_reads_during_one_turn(tmp_path / "saved", _TurnSavedChannel())
+
+    assert numbered - bare == 1
+    assert saved - numbered == 1
+
+
+async def test_a_record_with_no_run_id_is_not_the_entry_run_of_a_turn_with_no_named_entry(tmp_path):
+    """A workflow-shaped turn names no entry run, and an unparented record whose run id is also None must
+    not be mistaken for one by that equality alone."""
+    from kokua.core.requests import TurnRequests, current_requests
+
+    channel = SubagentCapturingChannel()
+    assistant = await Assistant.create(_config(tmp_path), channel, client=MockAsyncModelClient(["x"]))
+    token = current_requests.set(TurnRequests(payloads_path=tmp_path / "payloads", capture=False, entry_run_id=None))
+    try:
+        record = {"run_id": None, "parent_run_id": None, "round": 0, "agent": "assistant"}
+        assistant._turns._notify_request("request", record)
+        assistant._turns._notify_request("ending", {**record, "ended_by": "answered", "max_iterations": 5})
+        await asyncio.sleep(0)
+    finally:
+        current_requests.reset(token)
+
+    assert channel.request_frames == [] and channel.ending_frames == []

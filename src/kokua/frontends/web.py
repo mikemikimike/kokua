@@ -175,6 +175,8 @@ async def _sync_view(channel: WebChannel, assistant: Assistant) -> None:
 # is what actually guarantees uniqueness.
 _EXPORT_SLUG_WORDS = 6
 
+_DOWNLOAD_NAME = re.compile(r"[A-Za-z0-9._-]{1,100}\Z")
+
 
 def _export_filename(session_key: str, title: str) -> str:
     """A bare filename (no directory component) for one conversation's Markdown export.
@@ -208,7 +210,11 @@ async def _export_conversation(
     session = assistant.resolve_conversation(conversation_id)
     if session is None:
         raise ValueError(f"no conversation found matching {conversation_id!r} to export")
-    markdown = render_markdown(session, max_payload_chars=DEFAULT_MAX_PAYLOAD_CHARS)
+    # Off the event loop: rendering reads and parses every recorded payload file, which would otherwise
+    # stall every connection's socket for as long as a large conversation takes.
+    markdown = await asyncio.to_thread(
+        render_markdown, session, max_payload_chars=DEFAULT_MAX_PAYLOAD_CHARS, payloads_path=config.payloads_path
+    )
     title = session.metadata.get("title") or derive_title(session.messages) or ""
     name = _export_filename(session.key, title)
     # The download route serves out of this directory and expects it to already exist (it 404s
@@ -291,7 +297,13 @@ def build_app(config: AssistantConfig, *, client=None, client_factory=None) -> S
         path = payloads.reference_to_path(config.payloads_path, payloads.ROUTE_PREFIX + name)
         if path is None or not path.is_file():
             return Response(status_code=404)
-        return FileResponse(path, media_type="text/plain; charset=utf-8")
+        download = request.query_params.get("download", "")
+        if not _DOWNLOAD_NAME.match(download):
+            return FileResponse(path, media_type="text/plain; charset=utf-8")
+        # The name is echoed into a header, so only the allowlist above reaches it: no separator,
+        # quote, or newline can get through. Anything else is served inline rather than refused.
+        media_type = "application/json" if download.endswith(".json") else "text/plain; charset=utf-8"
+        return FileResponse(path, media_type=media_type, filename=download, content_disposition_type="attachment")
 
     async def ws_endpoint(websocket: WebSocket) -> None:
         await websocket.accept()

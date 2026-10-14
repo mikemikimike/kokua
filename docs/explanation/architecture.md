@@ -723,10 +723,10 @@ the read and the write. Shutdown cancels a title still in flight rather than awa
 invariant 7 gives about the store closing under a task nobody is watching.
 
 `[assistant] generate_titles` (default `true`) turns the second half off, leaving the placeholder as the
-title. It is the one entry in `CORE_RUNTIME_SETTINGS`, and it is there rather than in a toolset because
-no capability owns it: `Assistant._spawn_title` is the only reader. It is hot rather than startup-only
-because that read happens per conversation, so a change genuinely applies without a restart, which is
-the test the model itself fails. There is no setting for *which* model writes the title, because the
+title. It is one of two entries in `CORE_RUNTIME_SETTINGS` (the other is `[assistant].capture_requests`), and it is
+there rather than in a toolset because no capability owns it: `Assistant._spawn_title` is the only reader. It is hot
+rather than startup-only because that read happens per conversation, so a change genuinely applies without a restart,
+which is the test the model itself fails. There is no setting for *which* model writes the title, because the
 conversation already answers that.
 
 ### Renaming a conversation
@@ -1322,9 +1322,9 @@ patterns and what removing each one permits. `update_config` applies hot-appliab
 Which settings are hot is not a list maintained by hand in several places: it is
 `config/table.py`'s `SettingsTable`, built once at startup from `CORE_RUNTIME_SETTINGS` plus every
 toolset's own hot `Setting`s, and every consumer -- the schema, the incoming-payload sanitizer, the
-live-apply loop, and the persist path -- loops over that one instance. `CORE_RUNTIME_SETTINGS` holds one
-entry, `[assistant].generate_titles`; every other hot setting a run holds arrives from a toolset, so the
-table's contents depend on which toolsets are installed. The
+live-apply loop, and the persist path -- loops over that one instance. `CORE_RUNTIME_SETTINGS` holds two
+entries, `[assistant].generate_titles` and `[assistant].capture_requests`; every other hot setting a run holds arrives
+from a toolset, so the table's contents depend on which toolsets are installed. The
 sanitizer predates the removal of the web settings window and outlived it: `update_config` is now its
 only caller, so "panel" in the surrounding code names a surface that no longer exists.
 
@@ -1483,6 +1483,18 @@ vendored `marked` + `DOMPurify`
 typeset after sanitization with `trust:false` once the turn completes. The server allowlists these assets: JS/CSS by name, the
 woff2 fonts under `/fonts/`.
 
+What a turn recorded about its model calls (`core/requests.py`) reaches the page as `request` and
+`ending` frames, on replay as items of the same names, and inside a sub-agent's card as `request` and
+`ending` entries, which can arrive after the card's terminal status and are drawn anyway. A `request`
+renders as a foldable round marker under the round's output, whose summary line is drawn from the call
+record with no fetch. The viewer is size-safe because a request can be megabytes: the payload is
+fetched once, on first expand, from `/payloads/<sha256>`; the tree is built a level at a time (an
+unopened subtree is one element); strings are cut at 4,000 characters; image data is labeled; above
+`REQUEST_INLINE_CEILING` characters there is no tree, only the download link (`?download=<name>`, served
+as an attachment only for a name matching `^[A-Za-z0-9._-]{1,100}\Z`). Every payload-derived string
+reaches the DOM through `textContent`, since a request is model and user content. `turn_saved` carries
+the turn's number, which the user bubble wears as a `turn N` badge.
+
 The page sends an `input` frame (`{"type": "input", "text", "token", "images"?, "thinking"?}`) for
 **every** message the composer sends, text-only ones included, and the bare string only for its own
 control replies: the Stop button's `/stop`, an approval's Allow/Deny, and a plan review's verdict. It
@@ -1523,7 +1535,7 @@ each resyncs the view rather than describing what changed, so the applying task 
 about a diff. `delete` takes that same path even when the conversation it removes is not the one on
 screen, where the resync only refreshes the sidebar; the four share one mechanism regardless of which of
 them actually changes what the user sees.
-Among the frames the server pushes, `turn_saved` (`{"conversation_id", "message_index", "token"?}`)
+Among the frames the server pushes, `turn_saved` (`{"conversation_id", "message_index", "token"?, "turn"?}`)
 takes no such resync, because it names one turn that already rendered rather than replacing anything: it
 exists only to say where that turn now lives in the store, so a bubble already on screen can grow a
 branch control. The optional `token` says *which* bubble, and is absent for any turn the page did not

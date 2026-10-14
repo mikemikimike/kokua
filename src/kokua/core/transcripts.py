@@ -24,6 +24,7 @@ from typing import Any, Optional
 from aimu.models import PROVENANCE_KEY, PROVENANCE_PROACTIVE
 from aimu.sessions import Session
 
+from kokua.core.conversations import turn_numbers
 from kokua.core.messages import (
     INJECTED_USER_PROVENANCE,
     LOOP_INJECTED_PROVENANCE,
@@ -338,6 +339,7 @@ def replay_items(
     failure: Optional[dict] = None,
     mid_turn: Optional[dict] = None,
     undelivered: Optional[dict] = None,
+    requests: Optional[dict] = None,
 ) -> list[dict]:
     """Flatten stored conversation messages into ordered display items the page replays on reload.
 
@@ -413,11 +415,27 @@ def replay_items(
     asks ("did this reach anyone" rather than "did the user or an agent say this"), and flushed at the
     same point ``failure`` is (the next turn, or the end of the transcript), since both are discovered
     only when a turn ends and neither has anywhere earlier to attach to.
+
+    ``requests`` is keyed the same way and holds what ``TurnRequests`` recorded for the turn: its
+    ``entry_run_id``, every model ``calls`` record, and every loop's ``endings``. Only the entry
+    agent's records become top-level items (a call or ending whose ``run_id`` is the record's
+    ``entry_run_id``; a workflow turn records None and so gets none, and a sub-agent's records already
+    live in its card). Each round's ``request`` item goes immediately *after* the j-th assistant
+    message of the turn, the order the live marker arrives in (it is sent when the call completes, so
+    it follows that round's output); rounds with no assistant message to follow (a turn that failed
+    before answering) go at the turn's end. The entry agent's ``ending`` goes last, before any
+    ``notice``. Both carry the shape a live frame folds into on a catch-up record, so the page treats a
+    replayed one and a watched one alike.
+
+    Every item opening a turn carries ``turn``, its ordinal from
+    :func:`kokua.core.conversations.turn_numbers`.
     """
     subagent = subagent or {}
     trace = trace or {}
     failure = failure or {}
     undelivered = undelivered or {}
+    requests = requests or {}
+    turns = turn_numbers(messages, {"messages": mid_turn or {}})
     # Flattened across turns: the question asked per message is "was this one mid-turn", and a
     # message belongs to at most one turn, so which turn recorded it adds nothing here.
     mid_turn_set = {index for indices in (mid_turn or {}).values() for index in indices}
@@ -430,6 +448,11 @@ def replay_items(
     # opened live; one whose call is not in the transcript (a turn cut short mid-dispatch, or a verbose
     # turn whose assistant message is skipped) is placed when the turn ends instead.
     pending_cards: list[tuple[list[dict], object]] = []
+    # The turn's entry-agent round markers not yet placed, one list per round in order, and its entry
+    # endings; placed by `emit_request_group` and `flush_turn_end` with the turn's timestamp.
+    pending_request_groups: list[list[dict]] = []
+    pending_endings: list[dict] = []
+    current_turn_ts: object = None
 
     def add(item: dict, timestamp) -> None:
         # Attach the source message's append-time timestamp (AIMU's inert ``timestamp`` key) so the page
@@ -456,6 +479,11 @@ def replay_items(
                 return True
         return False
 
+    def emit_request_group(timestamp) -> None:
+        if pending_request_groups:
+            for call in pending_request_groups.pop(0):
+                add({"type": "request", **call}, timestamp)
+
     def flush_turn_end() -> None:
         """Close the turn in progress with its recorded failure and whatever it reported as
         undelivered, if either survived to the end of the turn.
@@ -474,6 +502,11 @@ def replay_items(
         for lineage, turn_ts in pending_cards:
             add_lineage(lineage, turn_ts)
         pending_cards.clear()
+        while pending_request_groups:
+            emit_request_group(current_turn_ts)
+        for ending in pending_endings:
+            add({"type": "ending", **ending}, current_turn_ts)
+        pending_endings.clear()
         if pending_failure is not None:
             reason, turn_ts = pending_failure
             pending_failure = None
@@ -536,6 +569,16 @@ def replay_items(
                 add(item, ts)
                 continue
             flush_turn_end()  # whatever turn was in progress ends where this one begins
+            current_turn_ts = ts
+            record = requests.get(str(index)) or {}
+            entry_run_id = record.get("entry_run_id")
+            if entry_run_id is not None:
+                rounds: dict[int, list[dict]] = {}
+                for call in record.get("calls") or []:
+                    if call.get("run_id") == entry_run_id:
+                        rounds.setdefault(call.get("round", 0), []).append(call)
+                pending_request_groups.extend(rounds[round_] for round_ in sorted(rounds))
+                pending_endings.extend(e for e in record.get("endings") or [] if e.get("run_id") == entry_run_id)
             if str(index) in failure:
                 pending_failure = (failure[str(index)], ts)
             if str(index) in undelivered:
@@ -546,12 +589,12 @@ def replay_items(
                 # writes a turn's model, effort, usage, and failure under. A caller (the Markdown export)
                 # joins on this instead of deriving the index itself, which is how the off-by-one
                 # resolve_user_index's docstring warns about would come back in a second place.
-                add({"type": "user", "text": text, "message_index": index}, ts)
+                add({"type": "user", "text": text, "message_index": index, "turn": turns[index]}, ts)
             for url in image_refs_of(message.get("content")):  # uploaded images, replayed under the bubble
                 # Carries the same message_index as the text item above (or is the only item to carry
                 # it, when the user sent an image with no text): the renderer opens a turn at the first
                 # item bearing this index, and an image-only user message must still open one.
-                add({"type": "image", "url": url, "from": "user", "message_index": index}, ts)
+                add({"type": "image", "url": url, "from": "user", "message_index": index, "turn": turns[index]}, ts)
             events = subagent.get(str(index), [])
             if str(index) in trace:  # verbose turn: replay the raw trace, not the verdict cards
                 for segment in trace[str(index)]:
@@ -593,6 +636,7 @@ def replay_items(
                     },
                     ts,
                 )
+            emit_request_group(ts)
         elif role == "tool":
             # Tool results are otherwise not replayed, but a generate_image result carries an /images/
             # reference the user asked to see, so surface it as an image of its own.

@@ -307,6 +307,10 @@ class SubagentReporter:
                 event["append"] = {"kind": "answer", "text": result}
         await self._report(event, best_effort=error is not None)
 
+    async def append(self, spawn_id: str, entry: dict) -> None:
+        """Add one entry to a spawn's card from outside the observer callbacks (the turn's request sink)."""
+        await self._report({"id": spawn_id, "append": entry})
+
     async def _report(self, event: dict, *, best_effort: bool = False) -> None:
         """Record the event, then show it. Recording first is what makes a cancelled spawn survive:
         the send can fail (or be cancelled outright) once the task it runs in is being torn down."""

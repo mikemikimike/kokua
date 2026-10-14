@@ -361,6 +361,27 @@ header { display: flex; align-items: center; justify-content: space-between; gap
    note instead of a second button, since retrying would hit the same file. */
 .tool-output .output-more.output-error { color: var(--danger); border-color: transparent; padding-left: 0;
   cursor: default; }
+/* A round marker: the same dimmed machine-event row as a tool call, whose body is the request the
+   model was sent. The tree is built a level at a time (see renderJsonNode), so the row stays cheap
+   however large the request; strings wrap rather than scroll sideways, and long ones are clamped. */
+.request { color: var(--fg-dim); margin: 1px 0 1px 14px; max-width: var(--row-measure); font-size: 0.85em; }
+.request .request-note, .request .request-empty { margin: 2px 0; }
+.request .request-download { display: inline-block; margin: 2px 0 4px; color: inherit; text-decoration: underline; }
+.request-tree { font-family: ui-monospace, monospace; font-size: 0.95em; }
+.json-node > summary { cursor: pointer; }
+.json-children { margin-left: 14px; }
+.json-key { color: var(--fg); }
+.json-size { color: var(--fg-faint); }
+.json-leaf > .json-key::after { content: ": "; }
+.json-string, .json-image { display: block; margin: 0 0 2px 14px; white-space: pre-wrap; overflow-wrap: anywhere;
+  font: inherit; max-height: 24em; overflow: auto; }
+.json-image:not(.json-full) { font-style: italic; }
+.json-scalar { color: var(--fg-dim); }
+.json-more { display: block; margin: 0 0 2px 14px; padding: 1px 6px; font: inherit; color: inherit;
+  background: transparent; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+.json-more:hover { text-decoration: underline; }
+/* How a tool loop ended: one short dimmed line, indented like the rows it closes. */
+.ending { color: var(--fg-faint); margin: 1px 0 6px 14px; font-size: 0.8em; font-style: italic; }
 .subagent[data-status="running"] .fold-metric { font-style: italic; }
 /* A spawn card stands in for the `spawn_subagent` tool block the server suppresses (see
    WebChannel.send_frame), so its header line and argument line carry the tool block's monospace
@@ -545,6 +566,8 @@ button.secondary { background: none; border-color: var(--border); color: var(--f
    mismatch: the caption is not focusable, and the two controls keep their relative order, so tab order
    still reaches them constructive before destructive. */
 .bubble-meta > .bubble-ts { order: 1; }
+/* The turn's number, first in the cluster, ahead of the controls and the caption. */
+.turn-badge { order: 0; color: var(--fg-faint); font-size: 0.7em; font-family: -apple-system, system-ui, sans-serif; }
 /* A notice is not a flex row, so its meta lands below the text as ordinary flow content and wants the
    gap back. */
 .notice > .bubble-meta { margin-top: 2px; }
