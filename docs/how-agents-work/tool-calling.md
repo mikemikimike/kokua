@@ -89,7 +89,7 @@ and the turn ends after two model calls, which is [the turn loop](the-turn-loop.
 of tools in it.
 
 In the web UI you can open each of those rounds: the request the model was sent and the response it
-returned. A round marker sits under the round's output; open it and, in the request, the `tools` list is
+returned. A `{ }` button sits on the round's output; click it to open the round's panel and, in the request, the `tools` list is
 the schema the model was shown (every tool's name, description, and parameters), and the `messages` list
 ends with the result of the previous round's call, which is where round two's quote came from. The
 response shows the tool call the model asked for, with its arguments: the half a tools-only round

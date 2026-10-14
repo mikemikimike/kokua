@@ -361,14 +361,40 @@ header { display: flex; align-items: center; justify-content: space-between; gap
    note instead of a second button, since retrying would hit the same file. */
 .tool-output .output-more.output-error { color: var(--danger); border-color: transparent; padding-left: 0;
   cursor: default; }
-/* A round marker: the same dimmed machine-event row as a tool call, whose body is one round, the
-   request the model was sent and the response it returned. The request tree is built a level at a
-   time (see renderJsonNode), so the row stays cheap however large the request; strings wrap rather
-   than scroll sideways, and long ones are clamped. */
-.request { color: var(--fg-dim); margin: 1px 0 1px 14px; max-width: var(--row-measure); font-size: 0.85em; }
-.request .request-note, .request .request-empty { margin: 2px 0; }
-.request .request-download, .request .response-download { display: inline-block; margin: 2px 0 4px;
+/* A round's details live in the right panel (see renderRoundDetails), in the dimmed machine-event style: a
+   fixed-width column with its own scroll. While it is open the conversation column narrows to make room
+   (the panel is a flex sibling of #main), and below 900px it overlays instead, so a narrow window keeps its
+   full-width log. The request tree is built a level at a time (see renderJsonNode), so the panel stays cheap
+   however large the request; strings wrap rather than scroll sideways, and long ones are clamped. */
+#round-panel { flex: none; width: 420px; overflow-y: auto; padding: 0 14px 14px; color: var(--fg-dim);
+  background: var(--bg); border-left: 1px solid var(--border); font-size: 0.85em; }
+#round-panel[hidden] { display: none; }
+@media (max-width: 900px) {
+  #round-panel { position: fixed; top: 0; right: 0; bottom: 0; max-width: 100vw; z-index: 20;
+    box-shadow: -4px 0 12px rgba(0, 0, 0, 0.25); }
+}
+.round-panel-header { position: sticky; top: 0; display: flex; align-items: baseline; gap: 8px; padding: 10px 0 6px;
+  background: var(--bg); }
+.round-panel-title { color: var(--fg); font-weight: 600; }
+.round-panel-agent { flex: 1; color: var(--fg-faint); }
+.round-panel-close { background: none; border: none; color: var(--fg-dim); font-size: 1.3em; line-height: 1;
+  cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+.round-panel-close:hover { color: var(--fg); background: var(--surface); }
+.round-summary, .round-ending { margin: 2px 0; }
+.round-ending { color: var(--fg-faint); font-style: italic; }
+#round-panel .request-note, #round-panel .request-empty { margin: 2px 0; }
+#round-panel .request-download, #round-panel .response-download { display: inline-block; margin: 2px 0 4px;
   color: inherit; text-decoration: underline; }
+/* The button on a round's output: quiet until hovered or focused, tinted when the loop ended on a forced
+   wrap-up or an error. The output it opened is outlined while its details are shown. */
+.round-button { background: none; border: 1px solid transparent; border-radius: 4px; color: var(--fg-faint);
+  font: 0.75em ui-monospace, monospace; padding: 0 5px; cursor: pointer; opacity: 0.6; }
+.round-button:hover, .round-button:focus-visible, .round-button[aria-expanded="true"] { opacity: 1; color: var(--fg);
+  border-color: var(--border); }
+.round-button.warn { color: var(--danger); opacity: 1; }
+.round-selected { outline: 1px solid var(--border); outline-offset: 2px; border-radius: 4px; }
+.round-orphan { margin: 1px 0 1px 14px; }
+.foldable > .bubble-meta { margin: 0 0 0 14px; }
 .round-section { margin: 4px 0 6px; }
 .round-section-title { color: var(--fg); font-weight: 600; }
 .request-tree, .round-response { font-family: ui-monospace, monospace; font-size: 0.95em; }
@@ -388,7 +414,7 @@ header { display: flex; align-items: center; justify-content: space-between; gap
 .json-more { display: block; margin: 0 0 2px 14px; padding: 1px 6px; font: inherit; color: inherit;
   background: transparent; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
 .json-more:hover { text-decoration: underline; }
-/* How a tool loop ended: one short dimmed line, indented like the rows it closes. */
+/* The inline fallback for an ending with no round to ride: one short dimmed line. */
 .ending { color: var(--fg-faint); margin: 1px 0 6px 14px; font-size: 0.8em; font-style: italic; }
 .subagent[data-status="running"] .fold-metric { font-style: italic; }
 /* A spawn card stands in for the `spawn_subagent` tool block the server suppresses (see

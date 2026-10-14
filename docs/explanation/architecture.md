@@ -1486,9 +1486,12 @@ woff2 fonts under `/fonts/`.
 What a turn recorded about its model calls (`core/requests.py`) reaches the page as `request` and
 `ending` frames, on replay as items of the same names, and inside a sub-agent's card as `request` and
 `ending` entries, which can arrive after the card's terminal status and are drawn anyway. A `request`
-renders as a foldable round marker under the round's output, whose summary line is drawn from the call
-record with no fetch. The viewer is size-safe because a request can be megabytes: the payload is
-fetched once, on first expand, from `/payloads/<sha256>`; the tree is built a level at a time (an
+renders as a `{ }` button on the round's own output (the last assistant output before it in the log or
+card body; a round with none gets a small `round-orphan` row), and an `ending` attaches to its run's
+latest round, tinting the button for a wrap-up or error, with an inline line only as the fallback when no
+round exists. The button opens the single `#round-panel` beside the log, whose summary line is drawn from
+the call record with no fetch. The viewer is size-safe because a request can be megabytes: the payload is
+fetched when the panel shows that round, from `/payloads/<sha256>`; the tree is built a level at a time (an
 unopened subtree is one element); strings are cut at 4,000 characters; image data is labeled; above
 `REQUEST_INLINE_CEILING` characters there is no tree, only the download link (`?download=<name>`, served
 as an attachment only for a name matching `^[A-Za-z0-9._-]{1,100}\Z`). Every payload-derived string

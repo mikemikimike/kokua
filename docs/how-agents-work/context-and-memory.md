@@ -126,11 +126,12 @@ HNSW index binaries, which is what makes a similarity search fast. The `store_me
 numbered directory; the two `sqlite3` queries pull the stored string back out, byte for byte as the
 model wrote it.
 
-In the web UI the context itself is one click away. After each model call a **round marker** appears
-under that round's output. A round is one request and the one response it got, and the marker's summary
-line gives the request's message count, tool count, and size, and how the call stopped.
+In the web UI the context itself is one click away. After each model call a small **`{ }` button**
+appears on that round's output. A round is one request and the one response it got. Clicking the button
+opens a panel on the right, whose summary line gives the request's message count, tool count, and size,
+and how the call stopped; click it again, press Escape, or use the panel's close button to put it away.
 In a long turn, watch the message count and the size grow round by round: that is the context filling,
-and it is the number the window limit is measured against. Open a round to see both halves: the
+and it is the number the window limit is measured against. The panel shows both halves: the
 **request** exactly as it was sent (the message list, the system prompt, the tool schemas), drawn one
 level at a time so a large request costs the page only what you open, and the **response** the model
 returned (its reasoning, the tool calls it asked for, and its text). Round two's request is round one's

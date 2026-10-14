@@ -4,6 +4,7 @@ const input = document.getElementById("msg");
 const sendBtn = document.getElementById("send");
 const stopBtn = document.getElementById("stop");
 const planToggle = document.getElementById("plan-toggle");
+const roundPanel = document.getElementById("round-panel");
 const thinkingLevel = document.getElementById("thinking-level");
 const attachBtn = document.getElementById("attach-btn");
 const imageInput = document.getElementById("image-input");
@@ -149,7 +150,9 @@ function dismissAlert(index) {
 // Anything with a closer claim on the key (a rename input, mid-edit) calls preventDefault, and its
 // listener on the input runs before this one on the document.
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !e.defaultPrevented && alerts.length) dismissAlert(0);
+  if (e.key !== "Escape" || e.defaultPrevented) return;
+  if (alerts.length) dismissAlert(0);
+  else if (shownRound) closeRoundPanel();
 });
 
 // The inline "working" indicator: a dim row saying a turn is under way, pinned to the foot of the
@@ -902,12 +905,12 @@ function appendSubagentEntry(card, entry) {
   // Both can land after the card's terminal status (frames are scheduled tasks), and are drawn anyway.
   if (entry.kind === "request") {
     card.answer = null;
-    renderRequest(entry, { parent: card.body });
+    renderRequest(entry, { card });
     return;
   }
   if (entry.kind === "ending") {
     card.answer = null;
-    renderEnding(entry, { parent: card.body });
+    renderEnding(entry, { card, parent: card.body });
     return;
   }
   if (entry.kind === "loop") {
@@ -1484,11 +1487,12 @@ function renderToolOutput(parent, response, opts) {
 }
 
 // --- What the model saw -------------------------------------------------------------------
-// One marker per model call, under the round's output, holding the round's two halves: the request the
-// model was sent and the response it returned (a small file, fetched on first expand). A single request can be 120 KB at 30k tokens
+// One `{ }` button per model call, on the round's own output, opening a right-hand panel with the round's
+// two halves: the request the model was sent and the response it returned (a small file, fetched when the
+// round is shown). A single request can be 120 KB at 30k tokens
 // of context and megabytes once images ride along (base64, repeated on every call), so the viewer
 // costs the page only what the reader opens: the summary line is drawn from the call record with no
-// fetch, the tree is fetched on first expand and rendered a level at a time, long strings are cut,
+// fetch, the tree is fetched when the round is shown and rendered a level at a time, long strings are cut,
 // and above a ceiling there is no inline tree at all, only the download.
 const REQUEST_INLINE_CEILING = 2_000_000;  // characters; a request above this is download-only
 const JSON_STRING_CLAMP = 4000;  // characters of a string shown before "show all"
@@ -1498,7 +1502,7 @@ const IMAGE_DATA_MIN = 1000;  // a string this long that is a data:image/ URL or
 const PAYLOAD_REF = /^\/payloads\/[0-9a-f]{64}$/;
 const BASE64_ONLY = /^[A-Za-z0-9+/=]+$/;
 
-// Every surface counts rounds from 1: markers, endings, and the export. AIMU's own counter starts at 0.
+// Every surface counts rounds from 1: buttons, endings, and the export. AIMU's own counter starts at 0.
 function requestSummary(call) {
   const parts = [];
   if (call.message_count != null) parts.push(`${call.message_count} messages`);
@@ -1511,7 +1515,7 @@ function requestSummary(call) {
 
 // The number of the turn a block belongs to, read from the nearest user bubble above it (the turn's
 // own opening bubble, which carries `data-turn` once the page has learned it from history or from
-// `turn_saved`). Read when the marker is opened rather than when it is drawn, since a live turn is
+// `turn_saved`). Read when the panel opens rather than when it is drawn, since a live turn is
 // numbered only when it is saved. Null when unknown, which drops the `turn-N-` prefix from a download.
 function enclosingTurn(el) {
   let node = el;
@@ -1596,54 +1600,178 @@ function renderResponse(response, parent) {
   }
 }
 
-// One round: the request the model received and the response it returned, side by side in one marker.
-function renderRequest(call, opts) {
-  const round = (Number.isInteger(call.round) ? call.round : 0) + 1;
+// One round: the request the model received and the response it returned, drawn in the round panel.
+// Nothing here runs until a round is shown, which is what keeps the fetches lazy.
+function renderRoundDetails(record) {
+  const call = record.call;
+  const round = record.round;
   const ref = PAYLOAD_REF.test(call.payload_ref || "") ? call.payload_ref : null;
   const responseRef = PAYLOAD_REF.test(call.response_ref || "") ? call.response_ref : null;
-  const marker = addFoldable("request", {
-    kind: "round " + round,
-    payload: "request and response",
-    metric: requestSummary(call),
-  }, {
-    parent: opts && opts.parent,
-    onFirstExpand: (body) => {
-      const note = document.createElement("div");
-      note.className = "request-note";
-      note.textContent = call.endpoint
-        ? [call.endpoint, call.model].filter(Boolean).join(" · ")
-        : "nearest equivalent: no wire request; inspectable, not replayable";
-      body.appendChild(note);
-      const turn = enclosingTurn(marker.outer);
-      const slug = call.agent ? downloadSlug(call.agent) : "";
-      const stem = (/^\d+$/.test(turn || "") ? `turn-${turn}-` : "") + `round-${round}` + (slug ? "-" + slug : "");
+  roundPanel.replaceChildren();
 
-      const request = roundSection(body, "round-request", "Request", ref, stem + "-request.json", "request-download");
-      request.content.className = "request-tree";
-      if (!ref) request.empty("not captured");
-      else if (call.payload_chars > REQUEST_INLINE_CEILING) request.empty("too large to show here; download it");
-      else {
-        fetch(ref)
-          .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.text(); })
-          .then((text) => renderJsonNode(JSON.parse(text), request.content, 0))
-          .catch(() => request.empty("could not load the request"));
-      }
+  const header = document.createElement("div");
+  header.className = "round-panel-header";
+  const turn = enclosingTurn(record.output);
+  const title = document.createElement("span");
+  title.className = "round-panel-title";
+  title.textContent = (/^\d+$/.test(turn || "") ? `Turn ${turn} · ` : "") + `round ${round}`;
+  const agent = document.createElement("span");
+  agent.className = "round-panel-agent";
+  agent.textContent = record.agent || "";
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "round-panel-close";
+  close.textContent = "×";
+  close.title = "Close";
+  close.setAttribute("aria-label", "Close");
+  close.addEventListener("click", closeRoundPanel);
+  header.append(title, agent, close);
+  roundPanel.appendChild(header);
 
-      const reply = roundSection(body, "round-response", "Response", responseRef, stem + "-response.json", "response-download");
-      if (!responseRef) reply.empty("not captured");
-      else {
-        fetch(responseRef)
-          .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.text(); })
-          .then((text) => renderResponse(JSON.parse(text), reply.content))
-          .catch(() => reply.empty("could not load the response"));
-      }
-    },
-  }, opts && opts.ts);
-  return marker;
+  const summary = document.createElement("div");
+  summary.className = "round-summary";
+  summary.textContent = requestSummary(call);
+  roundPanel.appendChild(summary);
+
+  const note = document.createElement("div");
+  note.className = "request-note";
+  note.textContent = call.endpoint
+    ? [call.endpoint, call.model].filter(Boolean).join(" · ")
+    : "nearest equivalent: no wire request; inspectable, not replayable";
+  roundPanel.appendChild(note);
+
+  if (record.ending) roundPanel.appendChild(roundEndingLine(record.ending));
+
+  const slug = call.agent ? downloadSlug(call.agent) : "";
+  const stem = (/^\d+$/.test(turn || "") ? `turn-${turn}-` : "") + `round-${round}` + (slug ? "-" + slug : "");
+
+  const request = roundSection(roundPanel, "round-request", "Request", ref, stem + "-request.json", "request-download");
+  request.content.className = "request-tree";
+  if (!ref) request.empty("not captured");
+  else if (call.payload_chars > REQUEST_INLINE_CEILING) request.empty("too large to show here; download it");
+  else {
+    fetch(ref)
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.text(); })
+      .then((text) => renderJsonNode(JSON.parse(text), request.content, 0))
+      .catch(() => request.empty("could not load the request"));
+  }
+
+  const reply = roundSection(roundPanel, "round-response", "Response", responseRef, stem + "-response.json", "response-download");
+  if (!responseRef) reply.empty("not captured");
+  else {
+    fetch(responseRef)
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.text(); })
+      .then((text) => renderResponse(JSON.parse(text), reply.content))
+      .catch(() => reply.empty("could not load the response"));
+  }
 }
 
-// How a tool loop ended, worded as the terminal and the Markdown export word it. Not a foldable: one
-// short line. A forced wrap-up names the cap rather than a round.
+function roundEndingLine(ending) {
+  const line = document.createElement("div");
+  line.className = "round-ending";
+  line.textContent = endingText(ending);
+  return line;
+}
+
+// The round whose details the panel shows, or null while it is closed. Closed on every page load and
+// on every history replay, since the log it pointed into is rebuilt.
+let shownRound = null;
+// The top-level log's rounds, oldest first. A sub-agent card keeps its own list on the card.
+let topRounds = [];
+
+function closeRoundPanel() {
+  if (shownRound) {
+    shownRound.output.classList.remove("round-selected");
+    shownRound.button.setAttribute("aria-expanded", "false");
+  }
+  shownRound = null;
+  roundPanel.hidden = true;
+  roundPanel.replaceChildren();
+  document.body.classList.remove("round-panel-open");
+}
+
+function openRoundPanel(record) {
+  if (shownRound) {
+    shownRound.output.classList.remove("round-selected");
+    shownRound.button.setAttribute("aria-expanded", "false");
+  }
+  shownRound = record;
+  record.output.classList.add("round-selected");
+  record.button.setAttribute("aria-expanded", "true");
+  roundPanel.hidden = false;
+  document.body.classList.add("round-panel-open");
+  renderRoundDetails(record);
+  roundPanel.scrollTop = 0;
+}
+
+// What a round button may sit on: the model's own output. A user's bubble, a mid-turn message, the
+// loop's injected-round marker, a phase divider, and the page's notices are not it.
+const ROUND_OUTPUT = ".bubble:not(.user, .mid-turn, .inbox, .loop, .phase, .notice, .approval)";
+
+// One round's button, on the last output in `container`: a request arrives after its round's output,
+// so that is the output it describes. A round that produced none (it failed first, or only the user's
+// bubble precedes it) gets a small row of its own holding the button.
+function addRound(call, container, rounds, agent) {
+  const last = container === log ? lastContentElement() : container.lastElementChild;
+  let output = last && last.matches(ROUND_OUTPUT) ? last : null;
+  const record = { call, round: (Number.isInteger(call.round) ? call.round : 0) + 1, ending: null, agent };
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "round-button";
+  button.textContent = "{ }";
+  button.title = `round ${record.round}: request and response`;
+  button.dataset.round = String(record.round);
+  button.setAttribute("aria-controls", "round-panel");
+  button.setAttribute("aria-expanded", "false");
+  button.addEventListener("click", () => {
+    if (shownRound === record) closeRoundPanel();
+    else openRoundPanel(record);
+  });
+  if (output) bubbleMetaRow(output).appendChild(button);
+  else {
+    output = document.createElement("div");
+    output.className = "round-orphan";
+    output.appendChild(button);
+    appendToLog(output, container === log ? undefined : container);
+  }
+  record.button = button;
+  record.output = output;
+  rounds.push(record);
+  autoscroll();
+  return record;
+}
+
+function renderRequest(call, opts) {
+  const card = opts && opts.card;
+  if (card) {
+    card.rounds = card.rounds || [];
+    return addRound(call, card.body, card.rounds, call.agent || card.role);
+  }
+  return addRound(call, log, topRounds, call.agent);
+}
+
+// An ending belongs to the latest round of its run, so its wording and its warning tint ride that
+// round's button instead of a line in the log. With no such round (capture always records calls, so
+// this should be rare) the old inline line stands, so the information is never lost.
+function renderEnding(ending, opts) {
+  const card = opts && opts.card;
+  let target = null;
+  if (card) target = card.rounds && card.rounds.length ? card.rounds[card.rounds.length - 1] : null;
+  else target = [...topRounds].reverse().find((r) => r.call.run_id === ending.run_id) || null;
+  if (!target) return renderEndingLine(ending, opts);
+  target.ending = ending;
+  if (ending.ended_by === "wrap_up" || ending.ended_by === "error") target.button.classList.add("warn");
+  if (shownRound === target) {
+    const line = roundEndingLine(ending);
+    const existing = roundPanel.querySelector(".round-ending");
+    if (existing) existing.replaceWith(line);
+    else roundPanel.insertBefore(line, roundPanel.querySelector(".round-request"));
+  }
+  return target;
+}
+
+// How a tool loop ended, worded as the terminal and the Markdown export word it. A forced wrap-up
+// names the cap rather than a round.
 function endingText(ending) {
   const limit = ending.max_iterations;
   const ofLimit = limit != null ? ` of ${limit}` : "";
@@ -1657,7 +1785,7 @@ function endingText(ending) {
   return `ended at ${position}`;
 }
 
-function renderEnding(ending, opts) {
+function renderEndingLine(ending, opts) {
   const el = document.createElement("div");
   el.className = "ending";
   el.textContent = endingText(ending);
@@ -2044,6 +2172,8 @@ function handleFrame(event) {
     if (midTurn) midTurn.classList.add("mid-turn");
   } else if (frame.type === "history") {
     // Replay a conversation (on connect or after switching), reusing the live renderers.
+    closeRoundPanel();  // it points into the log being replaced
+    topRounds = [];
     log.innerHTML = "";  // replace any current transcript
     subagentCards = {};  // fresh view: drop any live sub-agent card references
     // Drop the references to the bubbles just removed. Without this they stay live but detached, and

@@ -87,15 +87,17 @@ arrived, not a formatting slip in this page.
 second agent built for the occasion. [Delegation](delegation.md) is that mechanism in full; here it is
 just a tool that took a while to return.
 
-The web UI draws the loop's boundaries too. Each model call leaves a **round marker** (`round 1`,
-`round 2`, counted the way a person counts) under its output, and when the loop stops it prints one
-line saying which rule stopped it: `ended: answered at round 2 of 10`, `ended: tool-use limit of 10
-rounds reached; answered on a forced wrap-up call` for the forced wrap-up, or `ended: error (...) at
-round 3 of 10`. That line is the answer to "why did it stop", and the last marker beside it is the last
-request the model saw. Every surface counts rounds from 1, and the wrap-up line names the cap instead of
-a round, since the forced call is the one that is not counted. Open a marker to read the round's
-request and its response side by side, or use the download links to keep the exact JSON; a request over
-two million characters is download-only. Each user message also carries a `turn N` badge, the number a download is named with.
+The web UI exposes the loop's boundaries too, without drawing them into the conversation. Each model
+call puts a small `{ }` button on its own output (`round 1`, `round 2`, counted the way a person
+counts), and clicking it opens a panel on the right with that round's details. When the loop stops, the
+panel for its last round carries one line saying which rule stopped it: `ended: answered at round 2 of
+10`, `ended: tool-use limit of 10 rounds reached; answered on a forced wrap-up call` for the forced
+wrap-up, or `ended: error (...) at round 3 of 10`. A wrap-up or an error also tints that round's button,
+so a loop that did not end normally is visible without opening anything. That line is the answer to "why
+did it stop", and the last round's request is the last request the model saw. Every surface counts
+rounds from 1, and the wrap-up line names the cap instead of a round, since the forced call is the one
+that is not counted. The panel shows the round's request and its response side by side, with download
+links to keep the exact JSON; a request over two million characters is download-only. Each user message also carries a `turn N` badge, the number a download is named with.
 
 ## In Kokua
 
