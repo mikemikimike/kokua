@@ -19,6 +19,8 @@ from typing import Optional
 
 from aimu.events import ModelTurnFinished
 
+from kokua.core.requests import current_requests
+
 # The running turn's accumulator, set by TurnRunner for the turn's duration and None outside one.
 # A ContextVar rather than a field on anything shared, for the reason ``subagent_events`` is one
 # (see ``core/subagents.py``): turns on different conversations run concurrently, and a shared
@@ -29,7 +31,7 @@ current_metrics: ContextVar[Optional["TurnMetrics"]] = ContextVar("current_metri
 
 
 def record_event(event) -> None:
-    """Hand one event to the running turn's accumulator, if a turn is running.
+    """Hand one event to the running turn's accumulators (cost and requests), if a turn is running.
 
     Every sink seam is wired with *this*, once, where the client or agent is built, rather than with
     a turn's own ``TurnMetrics``. That is what removes any attach-and-detach around a turn: the
@@ -39,6 +41,9 @@ def record_event(event) -> None:
     metrics = current_metrics.get()
     if metrics is not None:
         metrics(event)
+    requests = current_requests.get()
+    if requests is not None:
+        requests(event)
 
 
 # The label for a call no run claimed: every agent run now stamps its name (the entry agent's

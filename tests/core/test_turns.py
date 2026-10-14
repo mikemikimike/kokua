@@ -533,6 +533,70 @@ async def test_stop_cancels_in_flight_turn(tmp_path):
     assert any(m.get("content") == "long task" for m in assistant._agent.model_client.messages)
 
 
+async def test_a_turn_records_its_requests_and_ending(tmp_path):
+    from aimu.events import RequestPrepared
+
+    class _Recording(MockAsyncModelClient):
+        """MockAsyncModelClient never reaches AIMU's request seam, so emit the pair a real provider would."""
+
+        async def _chat(self, *args, **kwargs):
+            from aimu.models._internal.chat_state import _effective_sink
+
+            sink = _effective_sink(self)
+            if sink is not None:
+                sink(RequestPrepared(provider="Mock", model="m", endpoint="http://x", payload={"messages": []}))
+            return await super()._chat(*args, **kwargs)
+
+    assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=_Recording(["hello"]))
+    await assistant._handle(ChannelMessage(text="hello", channel="fake"), conversation_id=assistant._active_id)
+
+    record = next(iter(assistant._store.get(assistant._active_id).metadata["requests"].values()))
+    assert record["calls"][0]["endpoint"] == "http://x" and record["calls"][0]["payload_ref"]
+    assert [e["ended_by"] for e in record["endings"]] == ["answered"]
+
+
+async def test_capture_off_records_no_payload_files(tmp_path):
+    config = _config(tmp_path)
+    config.capture_requests = False
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient(["hello"]))
+    await assistant._handle(ChannelMessage(text="hello", channel="fake"), conversation_id=assistant._active_id)
+
+    record = next(iter(assistant._store.get(assistant._active_id).metadata["requests"].values()))
+    assert all(call["payload_ref"] is None for call in record["calls"])
+    assert record["endings"]
+
+
+async def test_the_turns_request_accumulator_is_cleared_afterwards(tmp_path):
+    from kokua.core.requests import current_requests
+
+    assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient(["hello"]))
+    await assistant._handle(ChannelMessage(text="hello", channel="fake"), conversation_id=assistant._active_id)
+    assert current_requests.get() is None
+
+
+async def test_a_stopped_turn_records_its_entry_agents_cancelled_ending(tmp_path):
+    client = _BlockingStreamClient()
+    channel = _StopChannel(client.started)
+    assistant = await Assistant.create(_config(tmp_path), channel, client=client)
+
+    await assistant._serve_channel()
+    info = assistant._tracker.get(assistant._active_id)
+    if info is not None:
+        await asyncio.gather(info.handle.task, return_exceptions=True)
+
+    record = next(iter(assistant._store.get(assistant._active_id).metadata["requests"].values()))
+    assert [(e["ended_by"], e["error"]) for e in record["endings"]] == [("error", "CancelledError")]
+
+
+async def test_an_unattended_turn_records_its_requests_too(tmp_path):
+    assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient(["done"]))
+
+    await assistant._proactive("remind")
+
+    record = next(iter(assistant._store.get(assistant._active_id).metadata["requests"].values()))
+    assert [e["ended_by"] for e in record["endings"]] == ["answered"]
+
+
 async def test_stop_with_no_active_turn_is_noop(tmp_path):
     class _OnlyStop(Channel):
         name = "fake"

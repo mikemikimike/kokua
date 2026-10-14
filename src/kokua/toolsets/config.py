@@ -300,7 +300,7 @@ def make_config_tools(
         """Change one setting in config.toml, e.g. section="email", key="host", value="smtp.gmail.com".
 
         Pass the value as a string; it is coerced to the setting's real type (numbers, true/false, and
-        comma-separated lists are understood). A hot setting -- [assistant].generate_titles, a planning
+        comma-separated lists are understood). A hot setting -- [assistant].generate_titles or capture_requests, a planning
         flag, or any other setting flagged to apply live -- takes effect immediately in this session. Every other
         setting, the model and the reasoning effort among them, is saved and takes effect only the next
         time Kokua restarts. The result says which of the two happened; pass that on, because a saved

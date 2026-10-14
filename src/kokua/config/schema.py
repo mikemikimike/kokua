@@ -213,6 +213,8 @@ class AssistantConfig:
     # the first message truncated. Runtime-mutable, so it is also a CORE_RUNTIME_SETTINGS entry: the
     # spawn reads it per conversation, which is what makes a change apply with no restart.
     generate_titles: bool = True
+    # Hot: one of ``CORE_RUNTIME_SETTINGS`` (config/table.py); read once per turn by ``TurnRunner``.
+    capture_requests: bool = True
     # Tools that require interactive confirmation before each call (see assistant._approve). These
     # run with full machine access; an empty list disables approval. Proactive turns auto-deny them.
     # Each entry names the toolset providing the tool: "<toolset>" or "<toolset>.*" for all of them,

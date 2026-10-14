@@ -25,7 +25,7 @@ def core_table() -> SettingsTable:
     not about a contributed setting. A test that needs one uses ``build_settings_table()``, or builds its
     own table with the entries it needs.
 
-    Holds Kokua's own runtime settings, which today is ``[assistant].generate_titles`` and nothing else.
+    Holds Kokua's own runtime settings, which today is ``[assistant].generate_titles`` and ``[assistant].capture_requests``.
     A test that needs a hot key it can set freely, rather than a core-only *schema*, wants
     :func:`hot_table` instead.
     """

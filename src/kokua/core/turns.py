@@ -44,11 +44,11 @@ Every rule here was learned from a bug. Read them before changing anything in th
    be set before a turn's first ``await`` and reset only in the ``finally`` alongside
    ``streaming_conversation``, or a spawn racing the set/reset window would report into a stale list
    (or into no list at all) instead of the turn that owns it. ``current_metrics`` (``core/metrics.py``)
-   follows the identical discipline for the same reason: set before the first ``await``, reset only in
-   the ``finally``, so a model call racing the window is never attributed to a finished turn's record or
-   to no turn at all. An unattended run cannot share the reactive path's ``finally`` (it runs in a child
+   and ``current_requests`` (``core/requests.py``) follow the identical discipline for the same reason:
+   set before the first ``await``, reset only in the ``finally``, so a model call racing the window is
+   never attributed to a finished turn's record or to no turn at all. An unattended run cannot share the reactive path's ``finally`` (it runs in a child
    task with no such block of its own), so ``_unattended_body`` opens and resets its own
-   ``current_metrics`` scope around its whole body, the same way it opens its own catch-up record rather
+   ``current_metrics`` and ``current_requests`` scopes around its whole body, the same way it opens its own catch-up record rather
    than reusing the caller's. The channel's catch-up record is opened
    in the same place and for the same reason, but it is *ended by ``_persist``* rather than by the
    ``finally``: the store and the record stand for the same output, so ending it next to the write that
@@ -304,6 +304,7 @@ from kokua.core.errors import describe_error
 from kokua.core.messages import PROVENANCE_MIXED, derive_title, resolve_message_indices, resolve_user_index
 from kokua.core.messaging import ENTRY_SOURCE, Message, MessageBus, current_bus
 from kokua.core.metrics import TurnMetrics, current_metrics, record_event
+from kokua.core.requests import TurnRequests, current_requests
 from kokua.core.subagents import subagent_events
 from kokua.core.turn_registry import TurnInfo
 from kokua.workflows import SettingsView, WorkflowContext, is_rich
@@ -488,6 +489,8 @@ class TurnRunner:
         collector_token = subagent_events.set([])
         metrics = TurnMetrics()
         metrics_token = current_metrics.set(metrics)
+        requests = TurnRequests(payloads_path=self._config.payloads_path, capture=self._config.capture_requests)
+        requests_token = current_requests.set(requests)
         # The turn's auto-approval budget and request text, opened here so a gated tool call reached
         # from anywhere inside the turn can find both. Reactive only: an unattended turn auto-denies a
         # gated call before a reviewer is ever consulted, so a budget there would never be spent.
@@ -608,6 +611,7 @@ class TurnRunner:
                         user_index,
                         thinking=thinking,
                         metrics=metrics,
+                        requests=requests,
                         started=started,
                         message_indices=message_indices,
                     )
@@ -631,6 +635,7 @@ class TurnRunner:
                         user_index,
                         thinking=thinking,
                         metrics=metrics,
+                        requests=requests,
                         started=started,
                         message_indices=message_indices,
                     )
@@ -646,6 +651,7 @@ class TurnRunner:
                         user_index,
                         thinking=thinking,
                         metrics=metrics,
+                        requests=requests,
                         started=started,
                         message_indices=message_indices,
                     )
@@ -661,6 +667,7 @@ class TurnRunner:
                         user_index,
                         thinking=thinking,
                         metrics=metrics,
+                        requests=requests,
                         started=started,
                         message_indices=message_indices,
                     )
@@ -673,6 +680,7 @@ class TurnRunner:
                         user_index,
                         thinking=thinking,
                         metrics=metrics,
+                        requests=requests,
                         started=started,
                         message_indices=message_indices,
                     )
@@ -681,6 +689,7 @@ class TurnRunner:
                 await self._persist(conversation_id, user_index, token=bubble_token)
         finally:
             current_metrics.reset(metrics_token)
+            current_requests.reset(requests_token)
             current_review_context.reset(review_token)
             current_bus.reset(bus_token)
             resubmit, undeliverable = bus.close()
@@ -927,6 +936,7 @@ class TurnRunner:
         *,
         thinking: Optional[Union[bool, str]],
         metrics: Optional[TurnMetrics],
+        requests: Optional[TurnRequests],
         started: Optional[float],
         message_indices: list[int],
     ) -> None:
@@ -952,6 +962,11 @@ class TurnRunner:
         required on the same principle as the two above: a caller that forgot it would record the turn
         as having received no messages, and nothing downstream could tell that apart from a turn that
         genuinely received none.
+
+        ``requests`` is the turn's request accumulator, keyword-only and required like ``metrics``: a
+        caller that forgot it would record a turn as having made no calls and ended no loops. It is
+        drained here, at the same moment as ``metrics``, so a failure path records what happened up to
+        the point it stopped.
         """
         usage = None
         if metrics is not None and started is not None:
@@ -965,6 +980,7 @@ class TurnRunner:
             failure=failure,
             usage=usage,
             messages=message_indices,
+            requests=requests.record() if requests is not None else None,
         )
 
     def _record_undelivered(self, conversation_id: str, user_index: int, messages: list[Message]) -> None:
@@ -1271,6 +1287,8 @@ class TurnRunner:
         # this runs in ends by returning or raising, not by falling through a shared teardown block.
         metrics = TurnMetrics()
         metrics_token = current_metrics.set(metrics)
+        requests = TurnRequests(payloads_path=self._config.payloads_path, capture=self._config.capture_requests)
+        requests_token = current_requests.set(requests)
         try:
             # The run's conversation reaches the sidebar here, at the start, marked as running: it is what
             # the task panel offers a Stop button against, and a firing that only pushed on success left a
@@ -1347,6 +1365,7 @@ class TurnRunner:
                 # effort is both what it would run at and what it did.
                 thinking=self._config.thinking_for(self._config.entry_agent),
                 metrics=metrics,
+                requests=requests,
                 started=started,
                 message_indices=message_indices,
             )
@@ -1362,6 +1381,7 @@ class TurnRunner:
                 raise error
         finally:
             current_metrics.reset(metrics_token)
+            current_requests.reset(requests_token)
 
     @staticmethod
     def _tag_echoed_firing(messages: list[dict], start: int, prompt_index: int) -> None:

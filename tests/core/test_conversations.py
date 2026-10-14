@@ -1202,6 +1202,7 @@ async def test_branch_keeps_only_the_metadata_of_the_turns_it_copied(tmp_path):
     assistant, parent = await _assistant_with_branchable_parent(
         tmp_path,
         usage={"1": {"calls": 1}, "5": {"calls": 2}},
+        requests={"1": {"calls": [], "endings": []}, "5": {"calls": [], "endings": []}},
         model={"1": "ollama:gemma", "5": "ollama:gemma"},
         subagent={"5": [{"task": "check the ferry times"}]},
         # Shaped like `usage`/`model` above, not `subagent`'s list-per-event map, but it rides the
@@ -1217,6 +1218,7 @@ async def test_branch_keeps_only_the_metadata_of_the_turns_it_copied(tmp_path):
 
     branched = assistant._store.get(branch_id)
     assert branched.metadata["usage"] == {"1": {"calls": 1}}
+    assert branched.metadata["requests"] == {"1": {"calls": [], "endings": []}}
     assert branched.metadata["model"] == {"1": "ollama:gemma"}
     assert "subagent" not in branched.metadata
     assert branched.metadata["undelivered"] == {
@@ -1434,6 +1436,7 @@ async def test_truncate_keeps_only_the_metadata_of_the_turns_it_kept(tmp_path):
     assistant, parent = await _assistant_with_branchable_parent(
         tmp_path,
         usage={"1": {"calls": 1}, "5": {"calls": 2}},
+        requests={"1": {"calls": [], "endings": []}, "5": {"calls": [], "endings": []}},
         model={"1": "ollama:gemma", "5": "ollama:gemma"},
         subagent={"5": [{"task": "check the ferry times"}]},
         undelivered={
@@ -1447,6 +1450,7 @@ async def test_truncate_keeps_only_the_metadata_of_the_turns_it_kept(tmp_path):
     kept = assistant._store.get(parent.key).metadata
     # Filtered, not remapped: a prefix cut leaves every surviving index where it was.
     assert kept["usage"] == {"1": {"calls": 1}}
+    assert kept["requests"] == {"1": {"calls": [], "endings": []}}
     assert kept["model"] == {"1": "ollama:gemma"}
     assert "subagent" not in kept
     assert kept["undelivered"] == {"1": [{"sender": "researcher#1", "to": "assistant", "text": "look at the index"}]}

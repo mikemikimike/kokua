@@ -1322,8 +1322,8 @@ patterns and what removing each one permits. `update_config` applies hot-appliab
 Which settings are hot is not a list maintained by hand in several places: it is
 `config/table.py`'s `SettingsTable`, built once at startup from `CORE_RUNTIME_SETTINGS` plus every
 toolset's own hot `Setting`s, and every consumer -- the schema, the incoming-payload sanitizer, the
-live-apply loop, and the persist path -- loops over that one instance. `CORE_RUNTIME_SETTINGS` holds one
-entry, `[assistant].generate_titles`; every other hot setting a run holds arrives from a toolset, so the
+live-apply loop, and the persist path -- loops over that one instance. `CORE_RUNTIME_SETTINGS` holds two
+entries, `[assistant].generate_titles` and `[assistant].capture_requests`; every other hot setting a run holds arrives from a toolset, so the
 table's contents depend on which toolsets are installed. The
 sanitizer predates the removal of the web settings window and outlived it: `update_config` is now its
 only caller, so "panel" in the surrounding code names a surface that no longer exists.

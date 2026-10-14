@@ -52,7 +52,17 @@ COPY_TITLE_PREFIX = "Copy of "
 # transcript, and a key it drops takes its values with it. Nothing points across the cut either way.
 # `undelivered` does not share that further argument: its values are sender/selector/text dicts, not
 # indices, so it only needs the argument every other entry here already makes.
-TURN_KEYED_METADATA = ("subagent", "trace", "model", "thinking", "failure", "usage", "messages", "undelivered")
+TURN_KEYED_METADATA = (
+    "subagent",
+    "trace",
+    "model",
+    "thinking",
+    "failure",
+    "usage",
+    "requests",
+    "messages",
+    "undelivered",
+)
 
 
 class TurnNotFound(Exception):
@@ -733,6 +743,7 @@ class ConversationBook:
         failure: Optional[str] = None,
         usage: Optional[dict] = None,
         messages: Optional[list[int]] = None,
+        requests: Optional[dict] = None,
     ) -> None:
         """Persist what produced a turn's output: its sub-agent activity, the model that answered, the
         reasoning effort it ran at, why it stopped early if it did, what it cost, and which of its
@@ -768,8 +779,12 @@ class ConversationBook:
         guesses from position offers a turn's own controls on a message that has no turn. An empty list
         stays out of the file, like an unconfigured effort, so a turn that received none reads as one
         that never had the question put to it.
+
+        ``requests`` is what ``core.requests.TurnRequests.record`` returned: each model call's exact
+        request (by reference to a payload file) and how each agent loop ended. It sits beside ``usage``
+        because the two answer one question from two sides, what the turn cost and what it was shown.
         """
-        if user_index < 0 or not (events or model or thinking is not None or failure or usage or messages):
+        if user_index < 0 or not (events or model or thinking is not None or failure or usage or messages or requests):
             return
         session = self._store.get(conversation_id)
         if events:
@@ -782,6 +797,8 @@ class ConversationBook:
             session.metadata.setdefault("failure", {})[str(user_index)] = failure
         if usage:
             session.metadata.setdefault("usage", {})[str(user_index)] = usage
+        if requests:
+            session.metadata.setdefault("requests", {})[str(user_index)] = requests
         if messages:
             session.metadata.setdefault("messages", {})[str(user_index)] = list(messages)
         self._store.save(session)

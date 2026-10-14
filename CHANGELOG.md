@@ -137,6 +137,13 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.34.0 or newer
   on every exit branch of a turn: success, cancellation, a connection error, a generic error, with the
   wall-clock figure measured at the moment of recording, so a turn that raised still reports what it
   cost up to the point it stopped.
+- **A turn records every model call's request and every loop's ending.** `core/requests.py`'s
+  `TurnRequests`, fed by the same `record_event` sink as the cost record, stores each call's endpoint and
+  a reference to the exact request and response (files under `$KOKUA_HOME/data/payloads/`) and how each
+  agent loop ended, under `session.metadata["requests"][str(user_index)]`. Recorded on every exit
+  branch, unattended runs included, and dropped or kept with the turn when a conversation is branched or
+  truncated. `[assistant].capture_requests` (default `true`, hot) turns the payload files off; endings
+  are recorded either way. `CORE_RUNTIME_SETTINGS` now holds two entries.
 - **Delegated and reviewed work counts toward that same total, with one named exception.** A spawned
   sub-agent and a workflow critic each build their own client, outside the family a turn's own scoped
   sink reaches, so both were invisible to `TurnMetrics` and a heavily delegating turn read as cheap.

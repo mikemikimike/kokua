@@ -40,6 +40,7 @@ agent_cache_cap = 8
 # conversation runs on. Applies immediately (no restart), and update_config may change it. false leaves
 # the title as that message truncated, which is also the fallback whenever the call fails.
 generate_titles = true
+capture_requests = true  # keep each call's exact request and response on disk; loop endings are recorded either way
 
 # Generation parameters for every agent, per-key overridable by [agents.<name>.generation]. Restart to
 # apply, and keep this sub-table LAST in [assistant] (a plain key after the header would join it).
