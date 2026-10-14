@@ -73,6 +73,12 @@ class RichChannelDouble(BareChannel):
     async def send_subagent(self, event: dict) -> None:
         self.calls.append(("subagent", (event,)))
 
+    async def send_request(self, record: dict) -> None:
+        self.calls.append(("request", (record,)))
+
+    async def send_ending(self, ending: dict) -> None:
+        self.calls.append(("ending", (ending,)))
+
     async def send_message_frame(self, text: str, *, token: Optional[str] = None) -> None:
         self.calls.append(("message_frame", (text, token)))
 
@@ -198,6 +204,8 @@ async def test_rich_channel_receives_every_frame():
     await ui.show_plan("step 1")
     await ui.show_phase("Planner", "drafting")
     await ui.show_subagent({"role": "Plan reviewer"})
+    await ui.show_request({"run_id": "r"})
+    await ui.show_ending({"run_id": "r"})
     await ui.finish_stream()
     assert await ui.stream_activity(_chunks("a", "b"), show_answer=True) == "ab"
 
@@ -211,6 +219,8 @@ async def test_rich_channel_receives_every_frame():
         "plan",
         "phase",
         "subagent",
+        "request",
+        "ending",
         "done",
         "stream_activity",
     ]
@@ -364,3 +374,24 @@ async def test_an_escalation_says_it_is_going_to_the_user():
         "run_command", {"command": "ls"}, approved=False, reason="cannot be undone", model="ollama:b"
     )
     assert "asking you" in channel.sent[0]
+
+
+async def test_a_request_is_a_no_op_and_an_ending_is_one_line_without_a_rich_channel():
+    channel = BareChannel()
+    ui = ChannelUI(channel)
+    await ui.show_request({"run_id": "r", "parent_run_id": None, "round": 0})
+    await ui.show_ending(
+        {"agent": "assistant", "ended_by": "wrap_up", "round": 10, "max_iterations": 10, "error": None}
+    )
+    await ui.show_ending(
+        {"agent": "researcher", "ended_by": "error", "round": 2, "max_iterations": None, "error": "TruncatedTurnError"}
+    )
+    await ui.show_ending(
+        {"agent": "assistant", "ended_by": "answered", "round": 1, "max_iterations": 10, "error": None}
+    )
+
+    assert channel.sent == [
+        "[assistant] ended: tool-use limit reached at round 10 of 10",
+        "[researcher] ended: error (TruncatedTurnError) at round 2",
+        "[assistant] ended: answered at round 1 of 10",
+    ]

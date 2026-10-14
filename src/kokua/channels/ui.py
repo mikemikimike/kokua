@@ -31,6 +31,18 @@ from aimu.aio.channels.base import ChannelMessage
 from aimu.models import StreamChunk
 
 
+def _ending_line(ending: dict) -> str:
+    if ending["ended_by"] == "wrap_up":
+        rule = "tool-use limit reached"
+    elif ending["ended_by"] == "error":
+        rule = f"error ({ending['error']})"
+    else:
+        rule = "answered"
+    limit = ending["max_iterations"]
+    of_limit = f" of {limit}" if limit is not None else ""
+    return f"[{ending['agent']}] ended: {rule} at round {ending['round']}{of_limit}"
+
+
 def _bullets(issues: list[str]) -> str:
     return "\n".join(f"- {issue}" for issue in issues)
 
@@ -49,6 +61,8 @@ class ChannelUI:
         self._phase = getattr(channel, "send_phase", None)
         self._done = getattr(channel, "send_done", None)
         self._subagent = getattr(channel, "send_subagent", None)
+        self._request = getattr(channel, "send_request", None)
+        self._ending = getattr(channel, "send_ending", None)
         self._stream_activity = getattr(channel, "stream_activity", None)
         self._begin_catch_up = getattr(channel, "begin_catch_up", None)
         self._end_catch_up = getattr(channel, "end_catch_up", None)
@@ -313,6 +327,22 @@ class ChannelUI:
         """
         if self._subagent is not None:
             await self._subagent(event)
+
+    async def show_request(self, record: dict) -> None:
+        """Mark one model call of the entry agent's run: its round, endpoint, stop reason, and a
+        reference to the exact request that was sent. A no-op where requests aren't rendered: the
+        terminal shows them only through ``kokua export --turn``."""
+        if self._request is not None:
+            await self._request(record)
+
+    async def show_ending(self, ending: dict) -> None:
+        """Say how an agent's tool loop ended (``ended_by``: ``"answered"``, ``"wrap_up"``, or
+        ``"error"``). Falls back to one plain line, ``[agent] ended: <rule> at round N of M``, on a
+        channel with no frame for it, so the cap being hit is never silent."""
+        if self._ending is not None:
+            await self._ending(ending)
+        else:
+            await self._channel.send(_ending_line(ending))
 
     async def stream_activity(self, chunks: AsyncIterator[StreamChunk], *, show_answer: bool = False) -> str:
         """Stream an agentic loop live and return its generated text.

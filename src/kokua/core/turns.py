@@ -281,6 +281,11 @@ Every rule here was learned from a bug. Read them before changing anything in th
     ``test_a_stopped_turn_still_records_an_undelivered_agent_message``,
     ``test_a_stopped_firing_still_records_an_undelivered_agent_message``,
     ``test_a_delete_racing_the_undelivered_record_does_not_resurrect_the_conversation``.)
+
+Request and ending frames (``TurnRequests``' ``notify``) are scheduled from AIMU's synchronous sink
+onto the event loop as tasks that copy the turn's context. ``RequestPrepared`` fires before the
+provider is called, so a marker reaches the channel before that round's output in practice, but the
+ordering is not guaranteed.
 """
 
 from __future__ import annotations
@@ -424,6 +429,16 @@ def _capped_message_text(text: str) -> str:
     return f"{text[:UNDELIVERED_TEXT_CHARS]}... [message truncated, {len(text)} chars total]"
 
 
+def _card_request_entry(record: dict) -> dict:
+    keys = ("round", "payload_ref", "payload_chars", "message_count", "tool_count", "endpoint", "stop_reason")
+    return {"kind": "request", **{key: record[key] for key in keys}, "error": record["error"], "agent": record["agent"]}
+
+
+def _card_ending_entry(record: dict) -> dict:
+    keys = ("ended_by", "round", "max_iterations", "error")
+    return {"kind": "ending", **{key: record[key] for key in keys}}
+
+
 class TurnRunner:
     def __init__(
         self,
@@ -438,8 +453,13 @@ class TurnRunner:
         delete_conversation,
         spawn_title,
         state=None,
+        reporter=None,
     ):
         self._book = book
+        # Where a sub-agent's request and ending entries are appended to its card.
+        self._reporter = reporter
+        # Frame tasks scheduled from AIMU's synchronous sink, held until done so none is garbage collected.
+        self._frame_tasks: set[asyncio.Task] = set()
         # Where a firing registers itself while it runs, so a stop can reach it. The reactive path's own
         # entries are added by the serve loop, which owns the handle it starts.
         self._tracker = tracker
@@ -460,6 +480,33 @@ class TurnRunner:
         # Shared toolset state, passed through to a workflow's context. Assigned after construction by
         # the composition root, which builds it later (see Assistant.create).
         self.state = state
+
+    def _notify_request(self, kind: str, record: dict) -> None:
+        """Show one request or ending record: on the channel for the entry agent's run, and in the
+        card whose id is the run's id for a sub-agent's. Called synchronously from AIMU's sink, so the
+        frames are scheduled; each task copies the current context, which is what carries the turn's
+        ``streaming_conversation`` (background muting) and ``subagent_events`` (recording)."""
+        in_card = record["parent_run_id"] is not None
+        loop = asyncio.get_running_loop()
+        coroutines = []
+        if kind == "request":
+            if not in_card:
+                coroutines.append(self._ui.show_request(record))
+            elif self._reporter is not None:
+                coroutines.append(self._reporter.append(record["run_id"], _card_request_entry(record)))
+        else:
+            coroutines.append(self._ui.show_ending(record))
+            if in_card and self._reporter is not None:
+                coroutines.append(self._reporter.append(record["run_id"], _card_ending_entry(record)))
+        for coroutine in coroutines:
+            task = loop.create_task(coroutine)
+            self._frame_tasks.add(task)
+            task.add_done_callback(self._frame_task_done)
+
+    def _frame_task_done(self, task: asyncio.Task) -> None:
+        self._frame_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.warning("Showing a request or ending frame failed.", exc_info=task.exception())
 
     # --- reactive -------------------------------------------------------------------------------
 
@@ -489,7 +536,11 @@ class TurnRunner:
         collector_token = subagent_events.set([])
         metrics = TurnMetrics()
         metrics_token = current_metrics.set(metrics)
-        requests = TurnRequests(payloads_path=self._config.payloads_path, capture=self._config.capture_requests)
+        requests = TurnRequests(
+            payloads_path=self._config.payloads_path,
+            capture=self._config.capture_requests,
+            notify=self._notify_request,
+        )
         requests_token = current_requests.set(requests)
         # The turn's auto-approval budget and request text, opened here so a gated tool call reached
         # from anywhere inside the turn can find both. Reactive only: an unattended turn auto-denies a
@@ -1287,7 +1338,11 @@ class TurnRunner:
         # this runs in ends by returning or raising, not by falling through a shared teardown block.
         metrics = TurnMetrics()
         metrics_token = current_metrics.set(metrics)
-        requests = TurnRequests(payloads_path=self._config.payloads_path, capture=self._config.capture_requests)
+        requests = TurnRequests(
+            payloads_path=self._config.payloads_path,
+            capture=self._config.capture_requests,
+            notify=self._notify_request,
+        )
         requests_token = current_requests.set(requests)
         try:
             # The run's conversation reaches the sidebar here, at the start, marked as running: it is what

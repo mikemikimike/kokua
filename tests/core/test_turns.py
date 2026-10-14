@@ -20,6 +20,7 @@ from kokua.workflows import Workflow, WorkflowResult
 from tests.channels import (
     AlertCapturingChannel,
     FakeChannel,
+    SubagentCapturingChannel,
     _ConvCapturingChannel,
     _TurnSavedChannel,
     _config,
@@ -154,7 +155,7 @@ async def test_assistant_proactive_message(tmp_path):
 
     await assistant._proactive("remind")
 
-    assert channel.sent == ["Don't forget lunch."]
+    assert channel.sent == ["Don't forget lunch.", "[assistant] ended: answered at round 0 of 10"]
 
 
 async def test_a_completed_turn_publishes_where_it_starts(tmp_path):
@@ -733,7 +734,7 @@ async def test_proactive_degrades_on_single_conversation_channel(tmp_path):
 
     # No extra conversation; ran in place and pushed the reply.
     assert assistant._store.list_keys() == [active_key]
-    assert channel.sent == ["task output"]
+    assert channel.sent == ["task output", "[assistant] ended: answered at round 0 of 10"]
 
 
 async def test_proactive_new_session_holds_at_most_one_gate_turn(tmp_path):
@@ -3258,3 +3259,50 @@ def test_the_undelivered_cap_is_the_same_number_a_read_caps_one_message_at():
     # And the cut string, which is copied rather than shared, says the same thing in the same shape.
     long_text = "x" * (UNDELIVERED_TEXT_CHARS + 1)
     assert _capped_message_text(long_text).endswith(f"... [message truncated, {len(long_text)} chars total]")
+
+
+class _DelegatingRecordingClient(_RecordingClient):
+    """Emits its own request, then a sub-agent's whole lifecycle (card plus the child run's events)."""
+
+    def __init__(self, replies):
+        super().__init__(replies)
+        self.reporter = None
+
+    async def _chat(self, *args, **kwargs):
+        from aimu.events import ModelTurnFinished, RequestPrepared, RunFinished
+        from aimu.models._internal.chat_state import _effective_sink
+
+        sink = _effective_sink(self)
+        if self.reporter is not None and sink is not None:
+            await self.reporter.spawned("kid-1", "researcher", "find X")
+            common = {"agent": "researcher", "run_id": "kid-1", "parent_run_id": "lead-1"}
+            sink(RequestPrepared(provider="Mock", model="m", endpoint="http://x", payload={"messages": []}, **common))
+            sink(ModelTurnFinished(model="m", text="found", stop_reason="stop", **common))
+            sink(RunFinished(ended_by="answered", max_iterations=5, **common))
+            await asyncio.sleep(0)  # let the scheduled frame tasks run before the card closes
+            await self.reporter.finished("kid-1", "found", None)
+            sink(ModelTurnFinished(model="m", text="done", stop_reason="stop"))
+        return await super()._chat(*args, **kwargs)
+
+
+async def test_a_turn_shows_its_entry_request_and_a_sub_agents_request_and_ending_in_its_card(tmp_path):
+    channel = SubagentCapturingChannel()
+    client = _DelegatingRecordingClient(["done"])
+    assistant = await Assistant.create(_config(tmp_path), channel, client=client)
+    client.reporter = assistant._subagent_reporter
+    await assistant._handle(ChannelMessage(text="hello", channel="fake"), conversation_id=assistant._active_id)
+
+    assert [f["round"] for f in channel.request_frames if f["parent_run_id"] is None] == [0]
+    assert all(f["parent_run_id"] is None or f["run_id"] == "kid-1" for f in channel.request_frames)
+    appended = [e["append"] for e in channel.subagent_frames if e["id"] == "kid-1" and "append" in e]
+    kinds = [a["kind"] for a in appended]
+    assert "request" in kinds and "ending" in kinds
+    request = next(a for a in appended if a["kind"] == "request")
+    assert set(request) == {
+        "kind", "round", "payload_ref", "payload_chars", "message_count", "tool_count",
+        "endpoint", "stop_reason", "error", "agent",
+    }  # fmt: skip
+    assert request["agent"] == "researcher" and request["stop_reason"] == "stop"
+    recorded = assistant._store.get(assistant._active_id).metadata["subagent"]["0"]
+    assert {"request", "ending"} <= {e["append"]["kind"] for e in recorded if "append" in e}
+    assert [e["ended_by"] for e in channel.ending_frames] == ["answered", "answered"]

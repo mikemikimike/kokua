@@ -3157,3 +3157,37 @@ async def test_an_accepted_mid_turn_message_is_caught_up_once_rather_than_twice(
     await channel.send_history([], {})
 
     assert [item["type"] for item in ws.frames[-1]["items"] if item["type"] == "inbox"] == ["inbox"]
+
+
+async def test_web_channel_sends_entry_requests_and_endings_and_drops_sub_agent_ones():
+    ws = _FakeWS()
+    channel = WebChannel(ws)
+    await channel.send_request({"run_id": "lead-1", "parent_run_id": None, "round": 0, "payload_ref": "/payloads/ab"})
+    await channel.send_request({"run_id": "kid-1", "parent_run_id": "lead-1", "round": 0})
+    await channel.send_ending({"run_id": "lead-1", "parent_run_id": None, "ended_by": "answered"})
+    await channel.send_ending({"run_id": "kid-1", "parent_run_id": "lead-1", "ended_by": "answered"})
+
+    assert [f["type"] for f in ws.frames] == ["request", "ending"]
+    assert ws.frames[0]["payload_ref"] == "/payloads/ab"
+
+
+async def test_a_background_turns_request_frame_is_muted_and_caught_up():
+    from kokua.channels.web import streaming_conversation
+
+    ws = _FakeWS()
+    channel = WebChannel(ws)
+    channel.active_conversation_id = "viewed"
+    channel.begin_catch_up("other", "ping")
+
+    token = streaming_conversation.set("other")
+    try:
+        await channel.send_request({"run_id": "lead-1", "parent_run_id": None, "round": 0})
+        await channel.send_ending({"run_id": "lead-1", "parent_run_id": None, "ended_by": "answered"})
+        assert ws.frames == []
+        channel.active_conversation_id = "other"
+        await channel.send_history([], {})
+    finally:
+        streaming_conversation.reset(token)
+
+    items = ws.frames[-1]["items"]
+    assert [item["type"] for item in items] == ["user", "request", "ending"]

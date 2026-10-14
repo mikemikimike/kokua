@@ -144,6 +144,11 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.34.0 or newer
   branch, unattended runs included, and dropped or kept with the turn when a conversation is branched or
   truncated. `[assistant].capture_requests` (default `true`, hot) turns the payload files off; endings
   are recorded either way. `CORE_RUNTIME_SETTINGS` now holds two entries.
+- **Those records reach the channel live.** `ChannelUI.show_request` / `show_ending` and the optional
+  `RichChannel.send_request` / `send_ending` carry a `request` frame per completed entry-agent call and an
+  `ending` frame per loop; a sub-agent's appear as `request` and `ending` entries in its own card
+  (`SubagentReporter.append`). A channel without the frames shows no request marker and gets one plain
+  line per ending, such as `[assistant] ended: tool-use limit reached at round 10 of 10`.
 - **Delegated and reviewed work counts toward that same total, with one named exception.** A spawned
   sub-agent and a workflow critic each build their own client, outside the family a turn's own scoped
   sink reaches, so both were invisible to `TurnMetrics` and a heavily delegating turn read as cheap.

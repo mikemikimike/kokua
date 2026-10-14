@@ -118,6 +118,14 @@ class RichChannel(Protocol):
     async def send_subagent(self, event: dict) -> None:
         """Render a sub-agent (reviewer) activity card, updated in place by its ``id``."""
 
+    async def send_request(self, record: dict) -> None:
+        """Mark one completed model call of the entry agent's run (round, endpoint, stop reason, and a
+        ``payload_ref`` to the exact request). Optional: a channel without it shows no markers."""
+
+    async def send_ending(self, ending: dict) -> None:
+        """Say how the entry agent's tool loop ended (``ended_by``, ``round``, ``max_iterations``).
+        Optional: a channel without it gets one plain ``send()`` line instead."""
+
     async def stream_activity(self, chunks: AsyncIterator[StreamChunk], *, show_answer: bool = False) -> str:
         """Stream an agentic loop live without terminating it, returning the generated text."""
 

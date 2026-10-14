@@ -70,9 +70,17 @@ class SubagentCapturingChannel(FakeChannel):
     def __init__(self):
         super().__init__()
         self.subagent_frames: list[dict] = []
+        self.request_frames: list[dict] = []
+        self.ending_frames: list[dict] = []
 
     async def send_subagent(self, event: dict) -> None:
         self.subagent_frames.append(event)
+
+    async def send_request(self, record: dict) -> None:
+        self.request_frames.append(record)
+
+    async def send_ending(self, ending: dict) -> None:
+        self.ending_frames.append(ending)
 
 
 @lru_cache(maxsize=1)
