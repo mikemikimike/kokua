@@ -3319,9 +3319,10 @@ async def test_a_turn_shows_its_entry_request_and_a_sub_agents_request_and_endin
     request = next(a for a in appended if a["kind"] == "request")
     assert set(request) == {
         "kind", "round", "payload_ref", "payload_chars", "message_count", "tool_count",
-        "endpoint", "model", "stop_reason", "error", "agent",
+        "endpoint", "model", "stop_reason", "error", "agent", "response_ref",
     }  # fmt: skip
     assert request["agent"] == "researcher" and request["stop_reason"] == "stop"
+    assert request["response_ref"]  # a round's card entry can show its response, not only its request
     recorded = assistant._store.get(assistant._active_id).metadata["subagent"]["0"]
     assert {"request", "ending"} <= {e["append"]["kind"] for e in recorded if "append" in e}
     assert [e["ended_by"] for e in channel.ending_frames] == ["answered", "answered"]

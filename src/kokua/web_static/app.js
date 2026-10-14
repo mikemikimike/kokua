@@ -1484,7 +1484,8 @@ function renderToolOutput(parent, response, opts) {
 }
 
 // --- What the model saw -------------------------------------------------------------------
-// One marker per model call, under the round's output. A single request can be 120 KB at 30k tokens
+// One marker per model call, under the round's output, holding the round's two halves: the request the
+// model was sent and the response it returned (a small file, fetched on first expand). A single request can be 120 KB at 30k tokens
 // of context and megabytes once images ride along (base64, repeated on every call), so the viewer
 // costs the page only what the reader opens: the summary line is drawn from the call record with no
 // fetch, the tree is fetched on first expand and rendered a level at a time, long strings are cut,
@@ -1526,12 +1527,83 @@ function downloadSlug(text) {
   return String(text).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
 }
 
+// One section of a round (its request, or its response): a title, a download link when the file was
+// captured, and a container the caller fills. `empty` writes a one-line explanation into it instead.
+function roundSection(body, cls, title, ref, downloadName, downloadClass) {
+  const section = document.createElement("div");
+  section.className = "round-section " + cls;
+  const heading = document.createElement("div");
+  heading.className = "round-section-title";
+  heading.textContent = title;
+  section.appendChild(heading);
+  if (ref) {
+    const link = document.createElement("a");
+    link.className = downloadClass;
+    link.href = ref + "?download=" + downloadName;
+    link.download = downloadName;
+    link.textContent = "download";
+    section.appendChild(link);
+  }
+  const content = document.createElement("div");
+  section.appendChild(content);
+  body.appendChild(section);
+  const empty = (text) => {
+    const line = document.createElement("div");
+    line.className = "request-empty";
+    line.textContent = text;
+    content.appendChild(line);
+  };
+  return { content, empty };
+}
+
+// What the model returned for this round, from the recorded response file: its reasoning, the tool
+// calls it asked for (each name with its arguments as a tree), and its text. A round that only asked
+// for tools has no text, which is exactly why the calls are shown here rather than left to the tool
+// cards elsewhere in the turn.
+function renderResponse(response, parent) {
+  let shown = false;
+  if (!response || typeof response !== "object") response = {};
+  if (typeof response.thinking === "string" && response.thinking) {
+    const block = document.createElement("div");
+    block.className = "response-thinking";
+    renderJsonString(response.thinking, block);
+    parent.appendChild(block);
+    shown = true;
+  }
+  for (const call of Array.isArray(response.tool_calls) ? response.tool_calls : []) {
+    const block = document.createElement("div");
+    block.className = "response-tool";
+    const name = document.createElement("div");
+    name.className = "response-tool-name";
+    name.textContent = call && call.name != null ? String(call.name) : "(unnamed tool)";
+    block.appendChild(name);
+    if (call && call.arguments != null) renderJsonNode(call.arguments, block, 0);
+    parent.appendChild(block);
+    shown = true;
+  }
+  if (typeof response.text === "string" && response.text) {
+    const block = document.createElement("div");
+    block.className = "response-text";
+    renderJsonString(response.text, block);
+    parent.appendChild(block);
+    shown = true;
+  }
+  if (!shown) {
+    const line = document.createElement("div");
+    line.className = "request-empty";
+    line.textContent = "the model returned nothing";
+    parent.appendChild(line);
+  }
+}
+
+// One round: the request the model received and the response it returned, side by side in one marker.
 function renderRequest(call, opts) {
   const round = (Number.isInteger(call.round) ? call.round : 0) + 1;
   const ref = PAYLOAD_REF.test(call.payload_ref || "") ? call.payload_ref : null;
+  const responseRef = PAYLOAD_REF.test(call.response_ref || "") ? call.response_ref : null;
   const marker = addFoldable("request", {
     kind: "round " + round,
-    payload: "what the model saw",
+    payload: "request and response",
     metric: requestSummary(call),
   }, {
     parent: opts && opts.parent,
@@ -1542,33 +1614,28 @@ function renderRequest(call, opts) {
         ? [call.endpoint, call.model].filter(Boolean).join(" · ")
         : "nearest equivalent: no wire request; inspectable, not replayable";
       body.appendChild(note);
-      if (ref) {
-        const turn = enclosingTurn(marker.outer);
-        const slug = call.agent ? downloadSlug(call.agent) : "";
-        const name = (/^\d+$/.test(turn || "") ? `turn-${turn}-` : "") + `round-${round}` + (slug ? "-" + slug : "") + ".json";
-        const link = document.createElement("a");
-        link.className = "request-download";
-        link.href = ref + "?download=" + name;
-        link.download = name;
-        link.textContent = "download";
-        body.appendChild(link);
-      }
-      const tree = document.createElement("div");
-      tree.className = "request-tree";
-      body.appendChild(tree);
-      const empty = (text) => {
-        const line = document.createElement("div");
-        line.className = "request-empty";
-        line.textContent = text;
-        tree.appendChild(line);
-      };
-      if (!ref) empty("not captured");
-      else if (call.payload_chars > REQUEST_INLINE_CEILING) empty("too large to show here; download it");
+      const turn = enclosingTurn(marker.outer);
+      const slug = call.agent ? downloadSlug(call.agent) : "";
+      const stem = (/^\d+$/.test(turn || "") ? `turn-${turn}-` : "") + `round-${round}` + (slug ? "-" + slug : "");
+
+      const request = roundSection(body, "round-request", "Request", ref, stem + "-request.json", "request-download");
+      request.content.className = "request-tree";
+      if (!ref) request.empty("not captured");
+      else if (call.payload_chars > REQUEST_INLINE_CEILING) request.empty("too large to show here; download it");
       else {
         fetch(ref)
           .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.text(); })
-          .then((text) => renderJsonNode(JSON.parse(text), tree, 0))
-          .catch(() => empty("could not load the request"));
+          .then((text) => renderJsonNode(JSON.parse(text), request.content, 0))
+          .catch(() => request.empty("could not load the request"));
+      }
+
+      const reply = roundSection(body, "round-response", "Response", responseRef, stem + "-response.json", "response-download");
+      if (!responseRef) reply.empty("not captured");
+      else {
+        fetch(responseRef)
+          .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.text(); })
+          .then((text) => renderResponse(JSON.parse(text), reply.content))
+          .catch(() => reply.empty("could not load the response"));
       }
     },
   }, opts && opts.ts);
