@@ -2961,3 +2961,58 @@ def test_a_live_turn_draws_a_round_button_and_numbers_the_user_bubble(page, live
     expect(page.locator("#log .bubble.assistant .round-button")).to_have_count(1)
     _open_round(page)
     expect(page.locator("#round-panel .round-summary")).to_be_visible()
+
+
+def test_a_round_button_looks_past_a_mid_turn_message_to_the_output_above_it(page, live_server):
+    """Live, a message typed into the running turn is drawn at once (marked `sent-mid-turn`, the server's
+    `mid-turn` mark comes later) and can sit between a round's output and its request."""
+    _open(page, live_server(seed=_request_seed()))
+    page.evaluate(
+        """() => {
+          const typed = addBubble("user", "typed mid-turn", new Date());
+          typed.classList.add("sent-mid-turn");
+          notice("a notice");
+          renderRequest({ round: 1, run_id: "entry-1", agent: "assistant", payload_chars: 1, message_count: 1 });
+        }"""
+    )
+    expect(page.locator("#log .round-orphan")).to_have_count(0)
+    expect(page.locator("#log > .bubble.assistant .round-button")).to_have_count(2)
+
+
+def test_a_turn_opening_user_bubble_still_orphans_a_round(page, live_server):
+    _open(page, live_server(seed=_request_seed()))
+    page.evaluate(
+        """() => {
+          addBubble("user", "a fresh turn", new Date());
+          renderRequest({ round: 0, run_id: "entry-2", agent: "assistant", payload_chars: 1, message_count: 1 });
+        }"""
+    )
+    expect(page.locator("#log > .round-orphan")).to_have_count(1)
+
+
+def test_the_panel_scrolls_on_its_own_and_returns_focus_when_closed(page, live_server):
+    page.set_viewport_size({"width": 1400, "height": 600})
+    body = {"messages": [{"role": "user", "content": f"message {n}"} for n in range(60)]}
+    _open(page, live_server(seed=_request_seed(body)))
+    panel = _open_round(page)
+    messages = panel.locator(".json-node", has_text="messages").first
+    messages.locator("> summary").click()
+    expect(panel.locator(".json-node")).to_have_count(61)
+    for node in panel.locator(".json-node").all()[1:]:
+        node.locator("> summary").click()
+    sizes = page.evaluate(
+        """() => {
+          const panel = document.getElementById("round-panel");
+          const root = document.documentElement;
+          return { own: panel.scrollHeight - panel.clientHeight, page: root.scrollHeight - root.clientHeight,
+                   scrolled: window.scrollY };
+        }"""
+    )
+    assert sizes["own"] > 0  # the panel scrolls itself
+    assert sizes["page"] <= 0 and sizes["scrolled"] == 0  # and the page does not
+
+    page.keyboard.press("Escape")
+    expect(page.locator("#log button.round-button")).to_be_focused()
+    _open_round(page)
+    page.locator("#round-panel .round-panel-close").click()
+    expect(page.locator("#log button.round-button")).to_be_focused()

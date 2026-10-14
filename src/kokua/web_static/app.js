@@ -152,7 +152,7 @@ function dismissAlert(index) {
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape" || e.defaultPrevented) return;
   if (alerts.length) dismissAlert(0);
-  else if (shownRound) closeRoundPanel();
+  else if (shownRound) closeRoundPanel(true);
 });
 
 // The inline "working" indicator: a dim row saying a turn is under way, pinned to the foot of the
@@ -1624,7 +1624,7 @@ function renderRoundDetails(record) {
   close.textContent = "×";
   close.title = "Close";
   close.setAttribute("aria-label", "Close");
-  close.addEventListener("click", closeRoundPanel);
+  close.addEventListener("click", () => closeRoundPanel(true));
   header.append(title, agent, close);
   roundPanel.appendChild(header);
 
@@ -1652,8 +1652,8 @@ function renderRoundDetails(record) {
   else {
     fetch(ref)
       .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.text(); })
-      .then((text) => renderJsonNode(JSON.parse(text), request.content, 0))
-      .catch(() => request.empty("could not load the request"));
+      .then((text) => { if (shownRound === record) renderJsonNode(JSON.parse(text), request.content, 0); })
+      .catch(() => { if (shownRound === record) request.empty("could not load the request"); });
   }
 
   const reply = roundSection(roundPanel, "round-response", "Response", responseRef, stem + "-response.json", "response-download");
@@ -1661,8 +1661,8 @@ function renderRoundDetails(record) {
   else {
     fetch(responseRef)
       .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.text(); })
-      .then((text) => renderResponse(JSON.parse(text), reply.content))
-      .catch(() => reply.empty("could not load the response"));
+      .then((text) => { if (shownRound === record) renderResponse(JSON.parse(text), reply.content); })
+      .catch(() => { if (shownRound === record) reply.empty("could not load the response"); });
   }
 }
 
@@ -1679,15 +1679,19 @@ let shownRound = null;
 // The top-level log's rounds, oldest first. A sub-agent card keeps its own list on the card.
 let topRounds = [];
 
-function closeRoundPanel() {
-  if (shownRound) {
-    shownRound.output.classList.remove("round-selected");
-    shownRound.button.setAttribute("aria-expanded", "false");
+// `refocus` hands keyboard focus back to the round's button, for a close from inside the panel (its close
+// button, or Escape) where focus would otherwise be left on an element that just went away.
+function closeRoundPanel(refocus) {
+  const closing = shownRound;
+  if (closing) {
+    closing.output.classList.remove("round-selected");
+    closing.button.setAttribute("aria-expanded", "false");
   }
   shownRound = null;
   roundPanel.hidden = true;
   roundPanel.replaceChildren();
   document.body.classList.remove("round-panel-open");
+  if (refocus && closing && closing.button.isConnected) closing.button.focus();
 }
 
 function openRoundPanel(record) {
@@ -1706,14 +1710,27 @@ function openRoundPanel(record) {
 
 // What a round button may sit on: the model's own output. A user's bubble, a mid-turn message, the
 // loop's injected-round marker, a phase divider, and the page's notices are not it.
-const ROUND_OUTPUT = ".bubble:not(.user, .mid-turn, .inbox, .loop, .phase, .notice, .approval)";
+const ROUND_OUTPUT = ".bubble:not(.user, .phase, .notice, .approval, .inbox, .loop, .mid-turn)";
 
-// One round's button, on the last output in `container`: a request arrives after its round's output,
-// so that is the output it describes. A round that produced none (it failed first, or only the user's
-// bubble precedes it) gets a small row of its own holding the button.
+// Blocks that can sit between a round's output and its request without being either: a message the user
+// typed into the running turn (`.sent-mid-turn` is added when the page draws it, since the server's
+// `.mid-turn` mark only arrives later), the injected-round marker, a delivered note, and the page's own
+// notices and approval prompts. Anything else that is not output (a turn-opening user bubble, a phase
+// divider) ends the search.
+const ROUND_PASSTHROUGH = ".mid-turn, .sent-mid-turn, .inbox, .loop, .notice, .approval";
+
+// The model's own output a request describes: the nearest one above the end of `container`, looking past
+// ROUND_PASSTHROUGH blocks. Null when a turn boundary comes first (the round produced nothing).
+function roundOutputIn(container) {
+  let el = container === log ? lastContentElement() : container.lastElementChild;
+  while (el && el.matches(ROUND_PASSTHROUGH)) el = el.previousElementSibling;
+  return el && el.matches(ROUND_OUTPUT) ? el : null;
+}
+
+// One round's button, on the output its request arrived after. A round that produced none (it failed
+// first, or only the user's bubble precedes it) gets a small row of its own holding the button.
 function addRound(call, container, rounds, agent) {
-  const last = container === log ? lastContentElement() : container.lastElementChild;
-  let output = last && last.matches(ROUND_OUTPUT) ? last : null;
+  let output = roundOutputIn(container);
   const record = { call, round: (Number.isInteger(call.round) ? call.round : 0) + 1, ending: null, agent };
   const button = document.createElement("button");
   button.type = "button";
@@ -2037,7 +2054,7 @@ function handleFrame(event) {
     // Arrives when the call completes, so it sits after that round's output; like a tool block it ends
     // the answer segment above it.
     thinkingBlock = null;
-    renderRequest(frame, { ts: new Date() });
+    renderRequest(frame);
   } else if (frame.type === "ending") {
     thinkingBlock = null;
     renderEnding(frame);
@@ -2227,7 +2244,7 @@ function handleFrame(event) {
           stampTurnStart(bubble);
         }
       }
-      else if (item.type === "request") renderRequest(item, { ts: item.ts });
+      else if (item.type === "request") renderRequest(item);
       else if (item.type === "ending") renderEnding(item);
       else if (item.type === "thinking") {
         const f = addFoldable("thinking", { kind: "thinking" }, undefined, item.ts);
@@ -2667,6 +2684,10 @@ form.addEventListener("submit", (e) => {
   // The first bubble this message draws is the turn's opening bubble, whichever it is: an image-only
   // message has no text bubble, so its control has to land on the image instead.
   let opening = text ? addBubble("user", text, now) : null;  // the user's own words, not the /plan wrapper
+  // Sent while a turn is running, so it is a mid-turn message even before the server says so: round
+  // buttons look past it to the output above (see ROUND_PASSTHROUGH).
+  const sentMidTurn = !stopBtn.classList.contains("hidden");
+  if (opening && sentMidTurn) opening.classList.add("sent-mid-turn");
   for (const item of attached) {
     const bubble = addImageBubble(item.dataUrl, "user", now);  // echo attachments locally
     if (!opening) opening = bubble;

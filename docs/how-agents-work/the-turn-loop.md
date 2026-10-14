@@ -97,7 +97,8 @@ so a loop that did not end normally is visible without opening anything. That li
 did it stop", and the last round's request is the last request the model saw. Every surface counts
 rounds from 1, and the wrap-up line names the cap instead of a round, since the forced call is the one
 that is not counted. The panel shows the round's request and its response side by side, with download
-links to keep the exact JSON; a request over two million characters is download-only. Each user message also carries a `turn N` badge, the number a download is named with.
+links to keep the exact JSON; a request over two million characters is download-only. The terminal
+still prints each loop's ending line, since it has no panel to put it in. Each user message also carries a `turn N` badge, the number a download is named with.
 
 ## In Kokua
 

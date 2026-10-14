@@ -153,14 +153,15 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.34.0 or newer
   are recorded either way. `CORE_RUNTIME_SETTINGS` now holds two entries.
 - **The web UI shows what the model saw.** A `{ }` button per model call on that round's own output, which
   opens a collapsible right panel (it narrows the conversation, and overlays it below 900px; Escape, the
-  close button, or the same button closes it). Its summary is drawn without a fetch; the panel shows the round's two halves, the request (fetched once and
-  rendered a level at a time) and the response the model returned (reasoning, requested tool calls, text),
-  with long strings cut behind "show all", image data labeled, and no inline request tree above two million
-  characters. Each half links `/payloads/<sha256>?download=<name>` (accepted only for
-  `^[A-Za-z0-9._-]{1,100}\Z`, served as an attachment), each loop's `ended: ...` wording (as the terminal and export word it, rounds counted from 1)
-  appears in the panel of its last round, a wrap-up or error tinting that round's button, with the old inline
-  line kept only for an ending with no round to ride; the user bubble carries a `turn N` badge. No marker
-  rows or ending lines are drawn in the log, and the terminal still prints every ending.
+  close button, or the same button closes it). Its summary is drawn without a fetch; the panel shows the
+  round's two halves, the request (fetched once and rendered a level at a time) and the response the model
+  returned (reasoning, requested tool calls, text), with long strings cut behind "show all", image data
+  labeled, and no inline request tree above two million characters. Each half links
+  `/payloads/<sha256>?download=<name>` (accepted only for `^[A-Za-z0-9._-]{1,100}\Z`, served as an
+  attachment). Each loop's `ended: ...` wording (as the terminal and export word it, rounds counted from 1)
+  appears in the panel of its last round, a wrap-up or error tinting that round's button, with the old
+  inline line kept only for an ending with no round to ride; the user bubble carries a `turn N` badge. No
+  marker rows or ending lines are drawn in the log, and the terminal still prints every ending.
 - **Those records reach the channel live.** `ChannelUI.show_request` / `show_ending` and the optional
   `RichChannel.send_request` / `send_ending` carry a `request` frame per completed entry-agent call and an
   `ending` frame per loop; a sub-agent's appear as `request` and `ending` entries in its own card
