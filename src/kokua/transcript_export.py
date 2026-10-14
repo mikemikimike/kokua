@@ -136,6 +136,19 @@ def _loop_line(item: dict, max_payload_chars: Optional[int]) -> str:
     return f"_[{label}: {_capped(item.get('text', ''), max_payload_chars)}]_"
 
 
+# The rule behind each way a tool loop can end, as the export words it. The terminal's one-line
+# fallback (`channels/ui.py`) says the same rules, so a loop's ending reads alike in both.
+_ENDING_RULES = {"wrap_up": "tool-use limit reached", "answered": "answered"}
+
+
+def _ending_line(ending: dict) -> str:
+    """How the entry agent's tool loop ended, as one italic line, with the cap when one applied."""
+    rule = _ENDING_RULES.get(ending.get("ended_by"), f"error ({ending.get('error')})")
+    limit = ending.get("max_iterations")
+    of_limit = f" of {limit}" if limit is not None else ""
+    return f"_[ended: {rule} at round {ending.get('round')}{of_limit}]_"
+
+
 def render_markdown(
     session: Session,
     *,
@@ -169,6 +182,7 @@ def render_markdown(
         failure=metadata.get("failure"),
         mid_turn=metadata.get("messages"),
         undelivered=metadata.get("undelivered"),
+        requests=metadata.get("requests"),
     )
     lines.extend(_render_body(items, metadata, max_payload_chars, payloads_path))
     return "\n".join(lines) + "\n"
@@ -547,6 +561,10 @@ def _render_item(item: dict, max_payload_chars: Optional[int], payloads_path: Op
         return [f"_[image: {url}]_" if url else "_[image]_"]
     if item_type == "loop":
         return [_loop_line(item, max_payload_chars)]
+    if item_type == "request":
+        return []  # a round marker is for the page; the export's evidence is the turn's own content
+    if item_type == "ending":
+        return [_ending_line(item)]
     if item_type == "inbox":
         # A label rather than ``loop``'s italic machine note, and uncapped like the turn's own user
         # text: a message sent into a turn that was already running is somebody's words either way. It
@@ -649,7 +667,6 @@ def _render_body(
     index is seen (tracked in ``open_index``), not on every item carrying one.
     """
     lines: list[str] = []
-    turn_number = 0
     open_index: object = object()  # sentinel: no real message_index (an int, or None) ever equals it
     index = 0
     while index < len(items):
@@ -662,8 +679,7 @@ def _render_body(
         message_index = item.get("message_index")
         if message_index is not None and message_index != open_index:
             open_index = message_index
-            turn_number += 1
-            lines.append(f"## Turn {turn_number}{_when_suffix(item)}")
+            lines.append(f"## Turn {item['turn']}{_when_suffix(item)}")
             meta_line = _turn_meta_line(message_index, metadata)
             if meta_line:
                 lines.append("")

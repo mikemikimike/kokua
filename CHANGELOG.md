@@ -149,6 +149,13 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.34.0 or newer
   `ending` frame per loop; a sub-agent's appear as `request` and `ending` entries in its own card
   (`SubagentReporter.append`). A channel without the frames shows no request marker and gets one plain
   line per ending, such as `[assistant] ended: tool-use limit reached at round 10 of 10`.
+- **Turns are numbered once, and replay shows the markers.** `core/conversations.py`'s `turn_numbers`
+  gives each turn its ordinal, skipping loop nudges, agents' messages, and messages typed mid-turn, and the
+  live `[turn N]` line (`ChannelUI.show_turn`; the web page defines `send_turn` as a no-op), the
+  `turn_saved` frame's new `turn` field, the history `user` item's `turn`, and the export's `## Turn N`
+  headings all read it. A reloaded conversation replays each entry-agent round's `request` item right
+  after that round's assistant message and the loop's `ending` at the turn's end, as the live frames
+  arrived; the export renders the ending as `_[ended: tool-use limit reached at round 10 of 10]_`.
 - **Delegated and reviewed work counts toward that same total, with one named exception.** A spawned
   sub-agent and a workflow critic each build their own client, outside the family a turn's own scoped
   sink reaches, so both were invisible to `TurnMetrics` and a heavily delegating turn read as cheap.

@@ -32,7 +32,7 @@ class _TurnSavedDouble(BareChannel):
         super().__init__()
         self.saved: list[tuple[str, int, Optional[str]]] = []
 
-    async def send_turn_saved(self, conversation_id, message_index, *, token=None):
+    async def send_turn_saved(self, conversation_id, message_index, *, token=None, turn=None):
         self.saved.append((conversation_id, message_index, token))
 
 
@@ -395,3 +395,9 @@ async def test_a_request_is_a_no_op_and_an_ending_is_one_line_without_a_rich_cha
         "[researcher] ended: error (TruncatedTurnError) at round 2",
         "[assistant] ended: answered at round 1 of 10",
     ]
+
+
+async def test_show_turn_falls_back_to_a_plain_line_on_a_bare_channel():
+    channel = BareChannel()
+    await ChannelUI(channel).show_turn(3)
+    assert channel.sent == ["[turn 3]"]

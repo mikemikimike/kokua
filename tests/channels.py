@@ -28,6 +28,12 @@ class FakeChannel(Channel):
     def __init__(self, inbound: list[str] | None = None):
         self._inbound = inbound or []
         self.sent: list[str] = []
+        self.turns: list[int] = []
+
+    async def send_turn(self, number: int) -> None:
+        # Recorded apart from `sent` so a test of what the user was told is not about the turn marker;
+        # a bare channel with no `send_turn` gets "[turn N]" as a plain line instead (see ChannelUI).
+        self.turns.append(number)
 
     async def receive(self) -> AsyncIterator[ChannelMessage]:
         for text in self._inbound:
@@ -59,9 +65,13 @@ class _TurnSavedChannel(FakeChannel):
     def __init__(self):
         super().__init__()
         self.turns_saved: list[tuple[str, int, str | None]] = []
+        self.turn_ordinals: list[int | None] = []
 
-    async def send_turn_saved(self, conversation_id: str, message_index: int, *, token: str | None = None) -> None:
+    async def send_turn_saved(
+        self, conversation_id: str, message_index: int, *, token: str | None = None, turn: int | None = None
+    ) -> None:
         self.turns_saved.append((conversation_id, message_index, token))
+        self.turn_ordinals.append(turn)
 
 
 class SubagentCapturingChannel(FakeChannel):

@@ -1523,7 +1523,7 @@ each resyncs the view rather than describing what changed, so the applying task 
 about a diff. `delete` takes that same path even when the conversation it removes is not the one on
 screen, where the resync only refreshes the sidebar; the four share one mechanism regardless of which of
 them actually changes what the user sees.
-Among the frames the server pushes, `turn_saved` (`{"conversation_id", "message_index", "token"?}`)
+Among the frames the server pushes, `turn_saved` (`{"conversation_id", "message_index", "token"?, "turn"?}`)
 takes no such resync, because it names one turn that already rendered rather than replacing anything: it
 exists only to say where that turn now lives in the store, so a bubble already on screen can grow a
 branch control. The optional `token` says *which* bubble, and is absent for any turn the page did not

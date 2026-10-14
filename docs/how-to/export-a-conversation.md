@@ -51,7 +51,8 @@ Each turn after that is one `## Turn N` section: the user's message, the model's
 run streamed a `thinking` block or a verbose trace's `reasoning` segments), its answer, and, for
 each tool call, the tool's name, its arguments, and what it returned. A line under the turn heading
 names the model and reasoning effort it ran at, when either was recorded, and a line beneath that
-reports what the turn cost. A sub-agent the turn spawned gets its own nested card with the same
+reports what the turn cost. When a turn's tool loop ended early, a closing italic line says which rule
+ended it, such as `_[ended: tool-use limit reached at round 10 of 10]_`. A sub-agent the turn spawned gets its own nested card with the same
 shape: its own reasoning, tool calls, and answer. If a turn stopped short (a tool call was
 denied, a reviewer sent it back for revision, an error cut it off), the reason appears as a quoted
 note where the turn stopped.

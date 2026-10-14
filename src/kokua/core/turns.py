@@ -305,6 +305,7 @@ from kokua.channels.web import proactive_turn, streaming_conversation
 from kokua.config.file import thinking_request
 from kokua.core.auto_approval import ReviewContext, current_review_context
 from kokua.core.build import model_label
+from kokua.core.conversations import turn_numbers
 from kokua.core.errors import describe_error
 from kokua.core.messages import PROVENANCE_MIXED, derive_title, resolve_message_indices, resolve_user_index
 from kokua.core.messaging import ENTRY_SOURCE, Message, MessageBus, current_bus
@@ -606,6 +607,12 @@ class TurnRunner:
             async with self._gate.turn(conversation_id):  # invariant 1
                 logger.info("turn %s gate entered (%s)", tid, conversation_id)
                 try:
+                    # Counted here, inside the gate, because the stored transcript holds every earlier
+                    # turn by now (each persists before releasing it) and this turn's own message is not
+                    # in it yet; the number is therefore one past what is stored, and `_persist` reads
+                    # the same count back from the stored transcript once this turn is in it.
+                    session = self._book.get(conversation_id)
+                    await self._ui.show_turn(1 + len(turn_numbers(session.messages, session.metadata)))
                     if workflow is not None:
                         ctx = self._workflow_context(agent, msg, workflow)
                         runner = workflow.build(ctx)
@@ -1528,4 +1535,6 @@ class TurnRunner:
             # replaces it (with a push of its own) whenever the model answers.
             self._spawn_title(conversation_id)
         if self._book.branchable(conversation_id, user_index):
-            await self._ui.turn_saved(conversation_id, user_index, token=token)
+            session = self._book.get(conversation_id)
+            turn = turn_numbers(session.messages, session.metadata).get(user_index)
+            await self._ui.turn_saved(conversation_id, user_index, token=token, turn=turn)

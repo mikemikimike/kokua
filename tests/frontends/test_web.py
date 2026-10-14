@@ -579,7 +579,7 @@ def test_replay_items_replays_verbose_trace_not_committed_answer():
     }
     items = replay_items(messages, trace=trace)
     assert items == [
-        {"type": "user", "text": "do X", "message_index": 0},
+        {"type": "user", "text": "do X", "message_index": 0, "turn": 1},
         {"type": "phase", "label": "Planner", "detail": "drafting a plan"},
         {"type": "reasoning", "text": "THE PLAN"},
         {"type": "phase", "label": "Plan reviewer", "detail": "round 1"},
@@ -1047,7 +1047,7 @@ def test_replay_items_full_replay():
     # message_index is 1, not 0: _CONVERSATION's leading system message shifts the user message
     # one position later, which is exactly the off-by-one the stamping has to get right.
     assert items == [
-        {"type": "user", "text": "what's 2+2?", "message_index": 1},
+        {"type": "user", "text": "what's 2+2?", "message_index": 1, "turn": 1},
         {"type": "thinking", "text": "adding the numbers"},
         {"type": "message", "text": "4", "proactive": False},
         {"type": "tool", "name": "calc", "arguments": {"x": 2}, "response": "4"},
@@ -3191,3 +3191,89 @@ async def test_a_background_turns_request_frame_is_muted_and_caught_up():
 
     items = ws.frames[-1]["items"]
     assert [item["type"] for item in items] == ["user", "request", "ending"]
+
+
+def _entry_call(round_, **extra):
+    return {"run_id": "e", "parent_run_id": None, "round": round_, "endpoint": "m", **extra}
+
+
+def _two_round_messages():
+    return [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "1", "function": {"name": "f", "arguments": {}}}]},
+        {"role": "tool", "tool_call_id": "1", "content": "out"},
+        {"role": "assistant", "content": "done"},
+    ]
+
+
+def _types(items):
+    return [item["type"] for item in items]
+
+
+def test_replay_items_user_item_carries_its_turn_number():
+    messages = [
+        {"role": "user", "content": "one"},
+        {"role": "assistant", "content": "a"},
+        {"role": "user", "content": "mid"},
+        {"role": "user", "content": "two"},
+    ]
+    items = replay_items(messages, mid_turn={"0": [2]})
+    assert [(i["text"], i["turn"]) for i in items if i["type"] == "user"] == [("one", 1), ("two", 2)]
+
+
+def test_replay_items_places_each_entry_round_after_its_assistant_message_and_the_ending_last():
+    requests = {
+        "0": {
+            "entry_run_id": "e",
+            "calls": [_entry_call(0), _entry_call(1), {**_entry_call(0), "run_id": "w", "parent_run_id": "e"}],
+            "endings": [
+                {"run_id": "e", "parent_run_id": None, "agent": "assistant", "ended_by": "answered", "round": 1},
+                {"run_id": "w", "parent_run_id": "e", "agent": "worker", "ended_by": "answered", "round": 0},
+            ],
+        }
+    }
+    items = replay_items(_two_round_messages(), requests=requests, failure={"0": "boom"})
+    assert _types(items) == ["user", "tool", "request", "message", "request", "ending", "notice"]
+    assert [i["round"] for i in items if i["type"] == "request"] == [0, 1]
+    assert items[-2]["agent"] == "assistant"
+
+
+def test_replay_items_puts_a_leftover_round_at_the_turn_end():
+    messages = _two_round_messages()[:3]  # the second round failed before any assistant message
+    requests = {"0": {"entry_run_id": "e", "calls": [_entry_call(0), _entry_call(1)], "endings": []}}
+    items = replay_items(messages, requests=requests)
+    assert _types(items) == ["user", "tool", "request", "request"]
+
+
+def test_replay_items_gives_a_workflow_turn_no_top_level_requests_or_endings():
+    requests = {
+        "0": {
+            "entry_run_id": None,
+            "calls": [_entry_call(0)],
+            "endings": [{"run_id": "e", "parent_run_id": None, "agent": "a", "ended_by": "answered", "round": 0}],
+        }
+    }
+    items = replay_items(_two_round_messages(), requests=requests)
+    assert "request" not in _types(items) and "ending" not in _types(items)
+
+
+def test_replay_items_requests_are_per_turn():
+    messages = [
+        {"role": "user", "content": "one"},
+        {"role": "assistant", "content": "a"},
+        {"role": "user", "content": "two"},
+        {"role": "assistant", "content": "b"},
+    ]
+    requests = {"2": {"entry_run_id": "e", "calls": [_entry_call(0)], "endings": []}}
+    assert _types(replay_items(messages, requests=requests)) == ["user", "message", "user", "message", "request"]
+
+
+async def test_web_channel_show_turn_sends_nothing_and_turn_saved_carries_the_number():
+    from kokua.channels.ui import ChannelUI
+
+    ws = _FakeWS()
+    channel = WebChannel(ws)
+    await ChannelUI(channel).show_turn(3)
+    assert ws.frames == []
+    await channel.send_turn_saved("c1", 4, turn=2)
+    assert ws.frames == [{"type": "turn_saved", "conversation_id": "c1", "message_index": 4, "turn": 2}]

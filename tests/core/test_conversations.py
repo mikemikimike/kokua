@@ -1850,3 +1850,33 @@ async def test_a_turn_that_only_has_messages_to_record_is_still_recorded(tmp_pat
     assistant._book.record_turn_provenance([], "", 0, assistant._active_id, messages=[3])
 
     assert assistant._store.get(assistant._active_id).metadata["messages"] == {"0": [3]}
+
+
+def test_turn_numbers_skip_loop_nudges_agent_messages_and_mid_turn_messages():
+    from aimu.models import PROVENANCE_CONTINUATION, PROVENANCE_KEY
+
+    from kokua.core.conversations import turn_numbers
+
+    messages = [
+        {"role": "user", "content": "first"},  # 0 -> turn 1
+        {"role": "assistant", "content": "a"},
+        {"role": "user", "content": "nudge", PROVENANCE_KEY: PROVENANCE_CONTINUATION},
+        {"role": "user", "content": "typed mid-turn"},  # 3, recorded mid-turn
+        {"role": "assistant", "content": "b"},
+        {"role": "user", "content": "second"},  # 5 -> turn 2
+    ]
+    assert turn_numbers(messages, {"messages": {"0": [3]}}) == {0: 1, 5: 2}
+
+
+def test_turn_numbers_skip_a_mixed_delivery_which_replay_also_does_not_open_a_turn_at():
+    from aimu.models import PROVENANCE_KEY
+
+    from kokua.core.conversations import turn_numbers
+    from kokua.core.messages import PROVENANCE_MIXED
+
+    messages = [
+        {"role": "user", "content": "first"},
+        {"role": "user", "content": "both", PROVENANCE_KEY: PROVENANCE_MIXED},
+        {"role": "user", "content": "second"},
+    ]
+    assert turn_numbers(messages, {}) == {0: 1, 2: 2}

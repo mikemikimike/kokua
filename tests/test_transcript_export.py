@@ -980,3 +980,50 @@ def test_a_mixed_message_is_exported_as_mixed_not_user_end_to_end():
     assert out.count("## Turn ") == 1
     assert "**Mixed (mid-turn):** use the cache\n\n[message from researcher#1] and the index" in out
     assert "**User (mid-turn):**" not in out
+
+
+def test_an_ending_renders_as_one_italic_line_inside_its_turn_and_a_request_renders_nothing():
+    session = _session(
+        [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": "partial"},
+        ],
+        {
+            "requests": {
+                "0": {
+                    "entry_run_id": "e",
+                    "calls": [{"run_id": "e", "parent_run_id": None, "round": 0, "endpoint": "m"}],
+                    "endings": [
+                        {
+                            "run_id": "e",
+                            "parent_run_id": None,
+                            "agent": "assistant",
+                            "ended_by": "wrap_up",
+                            "round": 10,
+                            "max_iterations": 10,
+                            "error": None,
+                        }
+                    ],
+                }
+            }
+        },
+    )
+    out = render_markdown(session)
+    assert "_[ended: tool-use limit reached at round 10 of 10]_" in out
+    assert out.index("partial") < out.index("_[ended:")
+    assert "unrendered" not in out
+
+
+def test_turn_headings_skip_a_mid_turn_message():
+    session = _session(
+        [
+            {"role": "user", "content": "one"},
+            {"role": "user", "content": "typed while it ran"},
+            {"role": "assistant", "content": "a"},
+            {"role": "user", "content": "two"},
+            {"role": "assistant", "content": "b"},
+        ],
+        {"messages": {"0": [1]}},
+    )
+    out = render_markdown(session)
+    assert "## Turn 1" in out and "## Turn 2" in out and "## Turn 3" not in out

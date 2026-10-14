@@ -18,11 +18,18 @@ from datetime import datetime
 from typing import Callable, Optional, Union
 
 from aimu import aio
+from aimu.models import PROVENANCE_KEY
 from aimu.sessions import Session, SessionSummary, TinyDBSessionStore
 
 from kokua.core.agent_registry import AgentRegistry
 from kokua.config import AssistantConfig
-from kokua.core.messages import TITLE_MAX, compact_message_images, derive_title, is_user_turn
+from kokua.core.messages import (
+    PROVENANCE_MIXED,
+    TITLE_MAX,
+    compact_message_images,
+    derive_title,
+    is_user_turn,
+)
 from kokua.core.turn_gate import TurnGate
 
 
@@ -114,6 +121,25 @@ def mid_turn_indices(metadata: dict) -> frozenset[int]:
     hardening one of them alone would only move where the failure surfaces.
     """
     return frozenset(index for indices in metadata.get("messages", {}).values() for index in indices)
+
+
+def turn_numbers(messages: list[dict], metadata: dict) -> dict[int, int]:
+    """Each turn's user-message index mapped to its 1-based ordinal in the conversation.
+
+    One count for every surface that shows a turn number (the live marker, the page's history, the
+    Markdown export), so they cannot disagree. A turn is opened by a message the user sent to start
+    it: not a loop nudge or an agent's message (:func:`kokua.core.messages.is_user_turn`), not a
+    delivery that mixed the two (it carries ``PROVENANCE_MIXED`` and is untagged by ``is_user_turn``
+    on purpose), and not a message the user typed into a turn already running
+    (:func:`mid_turn_indices`).
+    """
+    mid_turn = mid_turn_indices(metadata)
+    opening = (
+        index
+        for index, message in enumerate(messages)
+        if is_user_turn(message) and message.get(PROVENANCE_KEY) != PROVENANCE_MIXED and index not in mid_turn
+    )
+    return {index: ordinal for ordinal, index in enumerate(opening, start=1)}
 
 
 def turn_end(messages: list[dict], user_index: int, *, mid_turn: frozenset[int] = frozenset()) -> Optional[int]:

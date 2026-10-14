@@ -39,7 +39,9 @@ class RichChannel(Protocol):
         A duration rather than a flag plus a duration, so "idle, and it has been going 12 seconds"
         cannot be expressed."""
 
-    async def send_turn_saved(self, conversation_id: str, message_index: int, *, token: Optional[str] = None) -> None:
+    async def send_turn_saved(
+        self, conversation_id: str, message_index: int, *, token: Optional[str] = None, turn: Optional[int] = None
+    ) -> None:
         """Say that a turn's transcript has reached the store, and where that turn starts.
 
         The index is the position of the turn's user message, which is what identifies a turn to
@@ -48,7 +50,9 @@ class RichChannel(Protocol):
 
         ``token`` is whatever the front end sent with the message this turn was made of, echoed back
         so it can match the two. None for a turn no front end started, which is why a front end that
-        mints tokens must treat an absent one as "not mine" rather than as the next one waiting."""
+        mints tokens must treat an absent one as "not mine" rather than as the next one waiting.
+
+        ``turn`` is the turn's 1-based ordinal in its conversation, for a front end that captions turns."""
 
     async def send_message_frame(self, text: str, *, token: Optional[str] = None) -> None:
         """Say that a message has joined the turn already running instead of starting one of its own.

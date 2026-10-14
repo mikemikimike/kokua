@@ -171,6 +171,17 @@ async def test_a_completed_turn_publishes_where_it_starts(tmp_path):
     assert stored.messages[index]["role"] == "user"
 
 
+async def test_each_turn_is_announced_and_saved_under_its_ordinal(tmp_path):
+    channel = _TurnSavedChannel()
+    assistant = await Assistant.create(_config(tmp_path), channel, client=MockAsyncModelClient(["one", "two"]))
+
+    for text in ("first", "second"):
+        await assistant._handle(ChannelMessage(text=text, channel="fake"), conversation_id=assistant._active_id)
+
+    assert channel.turns == [1, 2]
+    assert channel.turn_ordinals == [1, 2]
+
+
 async def test_a_completed_turn_echoes_the_token_of_the_message_that_started_it(tmp_path):
     """The front end drew a message of its own and is waiting to hear which turn it became, so the
     token it sent with that message rides back out on the turn's own frame."""
