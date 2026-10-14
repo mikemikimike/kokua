@@ -126,6 +126,16 @@ HNSW index binaries, which is what makes a similarity search fast. The `store_me
 numbered directory; the two `sqlite3` queries pull the stored string back out, byte for byte as the
 model wrote it.
 
+In the web UI the context itself is one click away. After each model call a **round marker** appears
+under that round's output, its summary line giving the message count, the tool count, the size, and how the call stopped.
+In a long turn, watch the message count and the size grow round by round: that is the context filling,
+and it is the number the window limit is measured against. Open a round to see the request exactly as
+it was sent (the message list, the system prompt, the tool schemas), drawn one level at a time so a large
+request costs the page only what you open. Strings over 4,000 characters are cut behind a **show all**
+button, and image data is labeled as such rather than printed. Every marker carries a **download** link
+for the whole request as JSON; a request over two million characters (a conversation with images in it,
+resent on every call) is download-only and draws no tree.
+
 ## In Kokua
 
 **The conversation.** Each conversation owns its own agent and its own model client, and the client

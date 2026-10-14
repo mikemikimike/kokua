@@ -87,6 +87,15 @@ arrived, not a formatting slip in this page.
 second agent built for the occasion. [Delegation](delegation.md) is that mechanism in full; here it is
 just a tool that took a while to return.
 
+The web UI draws the loop's boundaries too. Each model call leaves a **round marker** (`round 1`,
+`round 2`, counted the way a person counts) under its output, and when the loop stops it prints one
+line saying which rule stopped it: `ended: answered at round 2 of 10`, `ended: tool-use limit reached
+at round 10 of 10` for the forced wrap-up, or `ended: error (...)`. That line is the answer to "why did
+it stop", and the last marker beside it is the last request the model saw. The ending's round is the
+loop's own counter, which starts at 0 and equals the cap on a wrap-up. Open a marker to read its
+request, or use its download link to keep the exact JSON; a request over two million characters is
+download-only. Each user message also carries a `turn N` badge, the number a download is named with.
+
 ## In Kokua
 
 The loop itself is not in this repository. It belongs to

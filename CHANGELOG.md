@@ -144,6 +144,12 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.34.0 or newer
   branch, unattended runs included, and dropped or kept with the turn when a conversation is branched or
   truncated. `[assistant].capture_requests` (default `true`, hot) turns the payload files off; endings
   are recorded either way. `CORE_RUNTIME_SETTINGS` now holds two entries.
+- **The web UI shows what the model saw.** A round marker per model call under that round's output, its
+  summary drawn without a fetch; opening it fetches the request once and renders it a level at a time,
+  with long strings cut behind "show all", image data labeled, and no inline tree above two million
+  characters. Each marker links `/payloads/<sha256>?download=<name>` (accepted only for
+  `^[A-Za-z0-9._-]{1,100}\Z`, served as an attachment), each loop ends with an `ended: ...` line worded as
+  the terminal and export word it, and the user bubble carries a `turn N` badge.
 - **Those records reach the channel live.** `ChannelUI.show_request` / `show_ending` and the optional
   `RichChannel.send_request` / `send_ending` carry a `request` frame per completed entry-agent call and an
   `ending` frame per loop; a sub-agent's appear as `request` and `ending` entries in its own card

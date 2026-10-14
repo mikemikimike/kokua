@@ -80,8 +80,10 @@ class _SlowClient(MockAsyncModelClient):
         thinking: str = "",
         blank_lead: str = "",
         lead_delay: float = 0.0,
+        emit_request: bool = False,
     ):
         super().__init__([])
+        self._emit_request = emit_request
         self._delay = delay
         self._lead_delay = lead_delay
         self._reply = reply
@@ -101,6 +103,14 @@ class _SlowClient(MockAsyncModelClient):
 
     async def _chat_streamed(self, user_message, generate_kwargs=None, use_tools=True, images=None):
         self.messages.append({"role": "user", "content": user_message})
+        if self._emit_request:
+            # MockAsyncModelClient never reaches AIMU's request seam, so emit what a provider would.
+            from aimu.events import RequestPrepared
+            from aimu.models._internal.chat_state import _effective_sink
+
+            sink = _effective_sink(self)
+            if sink is not None:
+                sink(RequestPrepared(provider="Mock", model="qwen", endpoint="http://x", payload={"messages": []}))
         await asyncio.sleep(self._lead_delay)  # the silence a sent message opens with
         if self._thinking:
             yield StreamChunk(StreamingContentType.THINKING, self._thinking)
@@ -178,6 +188,7 @@ def live_server():
         thinking: str = "",
         blank_lead: str = "",
         lead_delay: float = 0.0,
+        emit_request: bool = False,
     ) -> str:
         config = AssistantConfig(agents=example_agents(), entry_agent="assistant")
         if seed is not None:
@@ -193,6 +204,7 @@ def live_server():
                 thinking=thinking,
                 blank_lead=blank_lead,
                 lead_delay=lead_delay,
+                emit_request=emit_request,
             ),
         )
         return _serve(app, _free_port(), started)
@@ -299,7 +311,8 @@ def test_an_answer_stays_above_a_tool_call_that_followed_it(page, live_server):
 
     tail = page.locator(".bubble.assistant", has_text="And here is what it said.")
     expect(tail).to_be_visible(timeout=10_000)
-    blocks = page.locator("#log > .bubble")
+    # The round marker the call's completion draws after the output is not one of the blocks being ordered.
+    blocks = page.locator("#log > .bubble:not(.request)")
     # user, the first answer, the tool card, the second answer -- in the order they were emitted.
     expect(blocks).to_have_count(4)
     expect(blocks.nth(1)).to_contain_text(REPLY)
@@ -2566,3 +2579,203 @@ def test_alert_cards_group_and_guard_their_controls(page, live_server):
 
     raise_alert(text="authorize at https://auth.example/x", url="https://auth.example/x")
     expect(cards.first.locator(".alert-link")).to_have_attribute("href", "https://auth.example/x")
+
+
+# --- What the model saw: round markers, the size-safe viewer, endings, turn badges ---------------
+
+_REQUEST_BODY = {
+    "messages": [
+        {"role": "system", "content": "line one\nline two"},
+        {"role": "user", "content": "hi"},
+    ],
+    "tools": [{"name": "t"}],
+}
+
+
+def _request_seed(body=None, *, call=None, ending=None, subagent=None, saved=True):
+    """A seeded conversation whose one turn recorded a request and its ending, as `replay_items` reads them."""
+    from aimu.sessions import Session, TinyDBSessionStore
+
+    from kokua import payloads
+
+    def seed(config):
+        text = json.dumps(_REQUEST_BODY if body is None else body)
+        record = {
+            "run_id": "entry-1",
+            "parent_run_id": None,
+            "agent": "assistant",
+            "round": 0,
+            "provider": "Mock",
+            "endpoint": "http://batlin.local:8000/v1",
+            "model": "qwen",
+            "message_count": 2,
+            "tool_count": 1,
+            "payload_chars": len(text),
+            "payload_ref": payloads.save_text(config.payloads_path, text) if saved else None,
+            "stop_reason": "stop",
+            "response_ref": None,
+            "error": None,
+            "ts": "2026-08-10T00:00:00",
+        }
+        record.update(call or {})
+        ending_record = {
+            "run_id": "entry-1",
+            "parent_run_id": None,
+            "agent": "assistant",
+            "ended_by": "answered",
+            "round": 0,
+            "max_iterations": 10,
+            "error": None,
+            "ts": "2026-08-10T00:00:00",
+        }
+        ending_record.update(ending or {})
+        metadata = {
+            "title": "seeded",
+            "created_at": "2026-08-10T00:00:00",
+            "updated_at": "2026-08-10T00:00:00",
+            "requests": {"0": {"entry_run_id": "entry-1", "calls": [record], "endings": [ending_record]}},
+        }
+        if subagent:
+            metadata["subagent"] = {"0": subagent}
+        TinyDBSessionStore(str(config.sessions_path)).save(
+            Session(
+                key="seeded",
+                messages=[{"role": "user", "content": "go"}, {"role": "assistant", "content": "done"}],
+                metadata=metadata,
+            )
+        )
+
+    return seed
+
+
+def _open_first_message(marker):
+    """Open the request's `messages` node, then its first message, so that message's strings render."""
+    messages = marker.locator(".json-node", has_text="messages").first
+    messages.locator("> summary").click()
+    messages.locator(".json-node").first.locator("> summary").click()
+    return messages
+
+
+def test_a_round_marker_summarizes_without_fetching_and_expands_lazily(page, live_server):
+    requested = []
+    page.on("request", lambda request: requested.append(request.url))
+    _open(page, live_server(seed=_request_seed()))
+
+    marker = page.locator("#log .bubble.request").first
+    expect(marker.locator(".fold-kind")).to_have_text("round 1")
+    expect(marker.locator(".fold-metric")).to_contain_text("2 messages · 1 tools")
+    assert not any("/payloads/" in url for url in requested)  # summary drawn without a fetch
+
+    marker.locator("> .fold-header").click()
+    expect(marker.locator(".request-note")).to_contain_text("batlin.local")
+    expect(marker.locator(".request-download")).to_have_attribute("href", re.compile(r"\?download=turn-1-round-1"))
+    messages = marker.locator(".json-node", has_text="messages").first
+    expect(messages.locator(".json-string")).to_have_count(0)  # children not rendered until opened
+    messages.locator("> summary").click()
+    expect(messages.locator(".json-string")).to_have_count(0)  # the first message is still unopened
+    messages.locator(".json-node").first.locator("> summary").click()
+    expect(marker.locator(".json-string", has_text="line one")).to_be_visible()
+    assert "\\n" not in marker.locator(".json-string", has_text="line one").inner_text()
+    expect(page.locator("#log .ending")).to_contain_text("ended: answered at round 0 of 10")
+    expect(page.locator(".bubble.user .turn-badge").first).to_have_text("turn 1")
+
+
+def test_a_long_string_is_clamped_until_show_all(page, live_server):
+    body = {"messages": [{"role": "user", "content": "x" * 10_000}]}
+    _open(page, live_server(seed=_request_seed(body)))
+    marker = page.locator("#log .bubble.request").first
+    marker.locator("> .fold-header").click()
+    _open_first_message(marker)
+    content = marker.locator(".json-string", has_text="xxxx")
+    assert len(content.inner_text()) == 4000
+    expect(marker.locator(".json-more")).to_have_text("show all (10000 chars)")
+    marker.locator(".json-more").click()
+    expect(marker.locator(".json-more")).to_have_count(0)
+    assert len(content.inner_text()) == 10_000
+
+
+def test_a_long_image_data_string_shows_as_image_data(page, live_server):
+    data = "data:image/png;base64," + "A" * 4978
+    body = {"messages": [{"role": "user", "content": data}]}
+    _open(page, live_server(seed=_request_seed(body)))
+    marker = page.locator("#log .bubble.request").first
+    marker.locator("> .fold-header").click()
+    _open_first_message(marker)
+    expect(marker.locator(".json-image")).to_contain_text("image data")
+    expect(marker.locator(".json-more")).to_have_text("show all (5000 chars)")
+
+
+def test_a_request_over_the_ceiling_is_download_only(page, live_server):
+    requested = []
+    page.on("request", lambda request: requested.append(request.url))
+    _open(page, live_server(seed=_request_seed(call={"payload_chars": 3_000_000})))
+    marker = page.locator("#log .bubble.request").first
+    marker.locator("> .fold-header").click()
+    expect(marker.locator(".request-empty")).to_contain_text("too large to show here")
+    expect(marker.locator(".request-download")).to_have_count(1)
+    assert not any("/payloads/" in url for url in requested)
+
+
+def test_a_request_with_no_payload_says_not_captured(page, live_server):
+    _open(page, live_server(seed=_request_seed(saved=False)))
+    marker = page.locator("#log .bubble.request").first
+    marker.locator("> .fold-header").click()
+    expect(marker.locator(".request-empty")).to_have_text("not captured")
+    expect(marker.locator(".request-download")).to_have_count(0)
+
+
+def test_a_request_with_no_endpoint_names_its_nearest_equivalent(page, live_server):
+    _open(page, live_server(seed=_request_seed(call={"endpoint": None})))
+    marker = page.locator("#log .bubble.request").first
+    marker.locator("> .fold-header").click()
+    expect(marker.locator(".request-note")).to_contain_text("nearest equivalent: no wire request")
+
+
+def test_an_error_ending_is_worded_like_the_terminal(page, live_server):
+    ending = {"ended_by": "error", "error": "boom", "round": 3, "max_iterations": None}
+    _open(page, live_server(seed=_request_seed(ending=ending)))
+    expect(page.locator("#log .ending")).to_have_text("ended: error (boom) at round 3")
+
+
+def test_a_wrap_up_ending_reads_as_the_tool_use_limit(page, live_server):
+    ending = {"ended_by": "wrap_up", "round": 10, "max_iterations": 10}
+    _open(page, live_server(seed=_request_seed(ending=ending)))
+    expect(page.locator("#log .ending")).to_have_text("ended: tool-use limit reached at round 10 of 10")
+
+
+def test_a_subagent_card_shows_its_request_marker_and_ending_inside_its_body(page, live_server):
+    entries = [
+        {"id": "r-1", "role": "researcher", "task": "compare pricing", "status": "running"},
+        {
+            "id": "r-1",
+            "append": {
+                "kind": "request",
+                "round": 0,
+                "payload_ref": None,
+                "payload_chars": 100,
+                "message_count": 3,
+                "tool_count": 0,
+                "endpoint": "http://x",
+                "stop_reason": "stop",
+                "error": None,
+                "agent": "researcher",
+            },
+        },
+        {"id": "r-1", "status": "done"},
+        {"id": "r-1", "append": {"kind": "ending", "ended_by": "answered", "round": 0, "max_iterations": 5}},
+    ]
+    _open(page, live_server(seed=_request_seed(subagent=entries)))
+    card = page.locator(".bubble.subagent")
+    card.locator("> .fold-header").click()
+    expect(card.locator("> .fold-body > .bubble.request")).to_have_count(1)
+    expect(card.locator("> .fold-body > .bubble.request .fold-metric")).to_contain_text("3 messages")
+    expect(card.locator("> .fold-body > .ending")).to_have_text("ended: answered at round 0 of 5")
+
+
+def test_a_live_turn_draws_a_round_marker_and_numbers_the_user_bubble(page, live_server):
+    _open(page, live_server(emit_request=True))
+    page.fill("#msg", "hello")
+    page.click("#send")
+    expect(page.locator("#log .bubble.request")).to_have_count(1, timeout=10_000)
+    expect(page.locator("#log .ending")).to_have_count(1)
+    expect(page.locator(".bubble.user .turn-badge").first).to_have_text("turn 1")

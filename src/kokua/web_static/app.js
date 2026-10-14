@@ -899,6 +899,17 @@ function appendSubagentEntry(card, entry) {
     return;
   }
   card.reasoning = null;
+  // Both can land after the card's terminal status (frames are scheduled tasks), and are drawn anyway.
+  if (entry.kind === "request") {
+    card.answer = null;
+    renderRequest(entry, { parent: card.body });
+    return;
+  }
+  if (entry.kind === "ending") {
+    card.answer = null;
+    renderEnding(entry, { parent: card.body });
+    return;
+  }
   if (entry.kind === "loop") {
     card.answer = null;
     renderLoop(entry.text, undefined, { parent: card.body, reason: entry.reason });
@@ -1472,6 +1483,217 @@ function renderToolOutput(parent, response, opts) {
   });
 }
 
+// --- What the model saw -------------------------------------------------------------------
+// One marker per model call, under the round's output. A single request can be 120 KB at 30k tokens
+// of context and megabytes once images ride along (base64, repeated on every call), so the viewer
+// costs the page only what the reader opens: the summary line is drawn from the call record with no
+// fetch, the tree is fetched on first expand and rendered a level at a time, long strings are cut,
+// and above a ceiling there is no inline tree at all, only the download.
+const REQUEST_INLINE_CEILING = 2_000_000;  // characters; a request above this is download-only
+const JSON_STRING_CLAMP = 4000;  // characters of a string shown before "show all"
+const IMAGE_DATA_MIN = 1000;  // a string this long that is a data:image/ URL or all base64 is image data
+// The only reference shape the server hands out (payloads.save_text's name), checked so a stored
+// record cannot point the fetch or the download link anywhere else.
+const PAYLOAD_REF = /^\/payloads\/[0-9a-f]{64}$/;
+const BASE64_ONLY = /^[A-Za-z0-9+/=]+$/;
+
+// Round markers are the one 1-based display: a person counts the first call as round 1. The ending
+// line below shows the loop's own `iteration` raw (it counts from 0 and equals max_iterations on the
+// uncounted wrap-up call), so "round 10 of 10" reads correctly there.
+function requestSummary(call) {
+  const parts = [];
+  if (call.message_count != null) parts.push(`${call.message_count} messages`);
+  if (call.tool_count != null) parts.push(`${call.tool_count} tools`);
+  if (call.payload_chars != null) parts.push(formatPayloadSize(call.payload_chars));
+  if (call.stop_reason) parts.push(call.stop_reason);
+  if (call.error) parts.push(call.error);
+  return parts.join(" · ");
+}
+
+// The number of the turn a block belongs to, read from the nearest user bubble above it (the turn's
+// own opening bubble, which carries `data-turn` once the page has learned it from history or from
+// `turn_saved`). Read when the marker is opened rather than when it is drawn, since a live turn is
+// numbered only when it is saved. Null when unknown, which drops the `turn-N-` prefix from a download.
+function enclosingTurn(el) {
+  let node = el;
+  while (node && node.parentElement !== log) node = node.parentElement;
+  for (node = node && node.previousElementSibling; node; node = node.previousElementSibling) {
+    if (node.matches(".bubble.user:not(.mid-turn)")) return node.dataset.turn || null;
+  }
+  return null;
+}
+
+// Only characters the download-name allowlist on the server accepts, so the name survives the route.
+function downloadSlug(text) {
+  return String(text).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+}
+
+function renderRequest(call, opts) {
+  const round = (Number.isInteger(call.round) ? call.round : 0) + 1;
+  const ref = PAYLOAD_REF.test(call.payload_ref || "") ? call.payload_ref : null;
+  const marker = addFoldable("request", {
+    kind: "round " + round,
+    payload: "what the model saw",
+    metric: requestSummary(call),
+  }, {
+    parent: opts && opts.parent,
+    onFirstExpand: (body) => {
+      const note = document.createElement("div");
+      note.className = "request-note";
+      note.textContent = call.endpoint
+        ? [call.endpoint, call.model].filter(Boolean).join(" · ")
+        : "nearest equivalent: no wire request; inspectable, not replayable";
+      body.appendChild(note);
+      if (ref) {
+        const turn = enclosingTurn(marker.outer);
+        const slug = call.agent ? downloadSlug(call.agent) : "";
+        const name = (/^\d+$/.test(turn || "") ? `turn-${turn}-` : "") + `round-${round}` + (slug ? "-" + slug : "") + ".json";
+        const link = document.createElement("a");
+        link.className = "request-download";
+        link.href = ref + "?download=" + name;
+        link.download = name;
+        link.textContent = "download";
+        body.appendChild(link);
+      }
+      const tree = document.createElement("div");
+      tree.className = "request-tree";
+      body.appendChild(tree);
+      const empty = (text) => {
+        const line = document.createElement("div");
+        line.className = "request-empty";
+        line.textContent = text;
+        tree.appendChild(line);
+      };
+      if (!ref) empty("not captured");
+      else if (call.payload_chars > REQUEST_INLINE_CEILING) empty("too large to show here; download it");
+      else {
+        fetch(ref)
+          .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.text(); })
+          .then((text) => renderJsonNode(JSON.parse(text), tree, 0))
+          .catch(() => empty("could not load the request"));
+      }
+    },
+  }, opts && opts.ts);
+  return marker;
+}
+
+// How a tool loop ended, worded as the terminal and the Markdown export word it. The round is the
+// loop's own `iteration`, shown raw (see the note above renderRequest). Not a foldable: one short line.
+const ENDING_RULES = { answered: "answered", wrap_up: "tool-use limit reached" };
+
+function renderEnding(ending, opts) {
+  const rule = Object.prototype.hasOwnProperty.call(ENDING_RULES, ending.ended_by)
+    ? ENDING_RULES[ending.ended_by]
+    : `error (${ending.error})`;
+  const limit = ending.max_iterations != null ? ` of ${ending.max_iterations}` : "";
+  const el = document.createElement("div");
+  el.className = "ending";
+  el.textContent = `ended: ${rule} at round ${ending.round}${limit}`;
+  if (ending.agent) el.title = ending.agent;
+  appendToLog(el, opts && opts.parent);
+  autoscroll();
+  return el;
+}
+
+function jsonSizeHint(length) {
+  return length >= 1000 ? `${Math.round(length / 1000)}k chars` : `${length} chars`;
+}
+
+function jsonKey(parent, key, hint) {
+  const span = document.createElement("span");
+  span.className = "json-key";
+  span.textContent = key == null ? "" : String(key);
+  parent.appendChild(span);
+  if (hint) {
+    const size = document.createElement("span");
+    size.className = "json-size";
+    size.textContent = " " + hint;
+    parent.appendChild(size);
+  }
+}
+
+function isImageData(text) {
+  if (text.length < IMAGE_DATA_MIN) return false;
+  if (text.startsWith("data:image/")) return true;
+  // Bare base64 has no marker of its own, and "xxxx..." is valid base64 too, so a run of a few
+  // distinct characters is prose-like or padding, not an encoded image.
+  return BASE64_ONLY.test(text) && new Set(text.slice(0, 200)).size >= 16;
+}
+
+function renderJsonString(text, parent) {
+  const image = isImageData(text);
+  const el = document.createElement(image ? "div" : "pre");
+  el.className = image ? "json-image" : "json-string";
+  const clamped = text.length > JSON_STRING_CLAMP;
+  el.textContent = image ? `image data, ${formatPayloadSize(text.length)}` : text.slice(0, JSON_STRING_CLAMP);
+  parent.appendChild(el);
+  if (!clamped && !image) return;
+  const more = document.createElement("button");
+  more.type = "button";
+  more.className = "json-more";
+  more.textContent = `show all (${text.length} chars)`;
+  more.addEventListener("click", () => {
+    el.textContent = text;
+    el.classList.add("json-full");
+    more.remove();
+  });
+  parent.appendChild(more);
+}
+
+// A parsed request as a tree, a level at a time. An object or array is a <details> whose children are
+// built on its first `toggle` open, so an unopened subtree costs one element however much it holds;
+// depth 0 (the request itself) lists its own children at once, the summary the reader asked for.
+// Everything from the payload reaches the DOM through textContent: it is model and user content.
+function renderJsonNode(value, parent, depth, key) {
+  if (value !== null && typeof value === "object") {
+    const entries = Array.isArray(value)
+      ? value.map((item, index) => [index, item])
+      : Object.entries(value);
+    if (depth === 0) {
+      for (const [childKey, child] of entries) renderJsonNode(child, parent, 1, childKey);
+      return;
+    }
+    const node = document.createElement("details");
+    node.className = "json-node";
+    const summary = document.createElement("summary");
+    jsonKey(summary, key, Array.isArray(value) ? `[${entries.length}]` : `{${entries.length}}`);
+    node.appendChild(summary);
+    let filled = false;
+    node.addEventListener("toggle", () => {
+      if (!node.open || filled) return;
+      filled = true;
+      const children = document.createElement("div");
+      children.className = "json-children";
+      node.appendChild(children);
+      for (const [childKey, child] of entries) renderJsonNode(child, children, depth + 1, childKey);
+    });
+    parent.appendChild(node);
+    return;
+  }
+  const row = document.createElement("div");
+  row.className = "json-leaf";
+  const isString = typeof value === "string";
+  jsonKey(row, key, isString && value.length > JSON_STRING_CLAMP ? `(${jsonSizeHint(value.length)})` : "");
+  if (isString) renderJsonString(value, row);
+  else {
+    const scalar = document.createElement("span");
+    scalar.className = "json-scalar";
+    scalar.textContent = String(value);
+    row.appendChild(scalar);
+  }
+  parent.appendChild(row);
+}
+
+// A turn's number on its opening bubble, in the meta row beside the datetime and turn controls.
+function addTurnBadge(bubble, turn) {
+  if (!Number.isInteger(turn) || bubble.dataset.turn) return;
+  bubble.dataset.turn = String(turn);
+  const badge = document.createElement("span");
+  badge.className = "turn-badge";
+  badge.textContent = `turn ${turn}`;
+  bubbleMetaRow(bubble).appendChild(badge);
+}
+
 // Foldable tool / continuation blocks. The header carries the call and its condensed arguments, so a
 // folded row says what was called without being opened; the body holds the full untruncated arguments
 // and, for a tool call, the result it returned. Shared by live frames, history replay, and (via
@@ -1611,6 +1833,14 @@ function handleFrame(event) {
     // next tokens open their own bubble below this marker.
     thinkingBlock = null;
     renderLoop(frame.text, new Date(), { reason: frame.reason });
+  } else if (frame.type === "request") {
+    // Arrives when the call completes, so it sits after that round's output; like a tool block it ends
+    // the answer segment above it.
+    thinkingBlock = null;
+    renderRequest(frame, { ts: new Date() });
+  } else if (frame.type === "ending") {
+    thinkingBlock = null;
+    renderEnding(frame);
   } else if (frame.type === "token") {
     thinkingBlock = null;
     // A block that landed since the last token (a tool call, a loop marker, an image) ended the answer
@@ -1711,6 +1941,7 @@ function handleFrame(event) {
         // two would otherwise say the message both did and did not become a turn.
         pending.classList.remove("mid-turn");
         stampTurnControls(pending, frame.message_index, frame.conversation_id);
+        addTurnBadge(pending, frame.turn);
       }
     }
   } else if (frame.type === "inbox") {
@@ -1774,7 +2005,11 @@ function handleFrame(event) {
         replayTurnIndex = item.message_index;
         replayTurnStamped = false;
       }
-      if (item.type === "user") stampTurnStart(addBubble("user", item.text, item.ts));
+      if (item.type === "user") {
+        const bubble = addBubble("user", item.text, item.ts);
+        addTurnBadge(bubble, item.turn);
+        stampTurnStart(bubble);
+      }
       // An in-flight turn's answer so far: left open (and unstamped), so the rest streams into it.
       else if (item.type === "partial" && !isBlank(item.text)) {
         streamingText = item.text;
@@ -1785,8 +2020,13 @@ function handleFrame(event) {
         const bubble = addImageBubble(item.url, item.from === "assistant" ? "assistant" : "user", item.ts);
         // An image the user uploaded can be a turn's opening bubble (an image-only message emits no
         // "user" item at all); one the assistant generated is mid-turn and never opens it.
-        if (item.from !== "assistant") stampTurnStart(bubble);
+        if (item.from !== "assistant") {
+          addTurnBadge(bubble, item.turn);
+          stampTurnStart(bubble);
+        }
       }
+      else if (item.type === "request") renderRequest(item, { ts: item.ts });
+      else if (item.type === "ending") renderEnding(item);
       else if (item.type === "thinking") {
         const f = addFoldable("thinking", { kind: "thinking" }, undefined, item.ts);
         f.body.textContent = item.text || "";

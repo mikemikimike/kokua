@@ -1483,6 +1483,18 @@ vendored `marked` + `DOMPurify`
 typeset after sanitization with `trust:false` once the turn completes. The server allowlists these assets: JS/CSS by name, the
 woff2 fonts under `/fonts/`.
 
+What a turn recorded about its model calls (`core/requests.py`) reaches the page as `request` and
+`ending` frames, on replay as items of the same names, and inside a sub-agent's card as `request` and
+`ending` entries, which can arrive after the card's terminal status and are drawn anyway. A `request`
+renders as a foldable round marker under the round's output, whose summary line is drawn from the call
+record with no fetch. The viewer is size-safe because a request can be megabytes: the payload is
+fetched once, on first expand, from `/payloads/<sha256>`; the tree is built a level at a time (an
+unopened subtree is one element); strings are cut at 4,000 characters; image data is labeled; above
+`REQUEST_INLINE_CEILING` characters there is no tree, only the download link (`?download=<name>`, served
+as an attachment only for a name matching `^[A-Za-z0-9._-]{1,100}\Z`). Every payload-derived string
+reaches the DOM through `textContent`, since a request is model and user content. `turn_saved` carries
+the turn's number, which the user bubble wears as a `turn N` badge.
+
 The page sends an `input` frame (`{"type": "input", "text", "token", "images"?, "thinking"?}`) for
 **every** message the composer sends, text-only ones included, and the bare string only for its own
 control replies: the Stop button's `/stop`, an approval's Allow/Deny, and a plan review's verdict. It

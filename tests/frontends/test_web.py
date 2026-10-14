@@ -3277,3 +3277,39 @@ async def test_web_channel_show_turn_sends_nothing_and_turn_saved_carries_the_nu
     assert ws.frames == []
     await channel.send_turn_saved("c1", 4, turn=2)
     assert ws.frames == [{"type": "turn_saved", "conversation_id": "c1", "message_index": 4, "turn": 2}]
+
+
+def _payload_client(tmp_path):
+    from starlette.testclient import TestClient
+
+    from kokua import payloads
+
+    config = _config(tmp_path)
+    reference = payloads.save_text(config.payloads_path, '{"a": 1}')
+    return TestClient(build_app(config, client=MockAsyncModelClient([]))), reference
+
+
+def test_a_payload_downloads_as_an_attachment_when_asked(tmp_path):
+    client, reference = _payload_client(tmp_path)
+    response = client.get(reference + "?download=turn-1-round-1.json")
+    assert response.headers["content-disposition"] == 'attachment; filename="turn-1-round-1.json"'
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.text == '{"a": 1}'
+
+
+def test_a_payload_without_a_download_name_stays_inline(tmp_path):
+    client, reference = _payload_client(tmp_path)
+    response = client.get(reference)
+    assert "content-disposition" not in response.headers
+    assert response.headers["content-type"].startswith("text/plain")
+
+
+@pytest.mark.parametrize("name", ["../../etc/passwd", 'a"b.json', "a/b.json", "", "x" * 101 + ".json", "a.json\n"])
+def test_an_unsafe_download_name_is_ignored(tmp_path, name):
+    from urllib.parse import quote
+
+    client, reference = _payload_client(tmp_path)
+    response = client.get(reference + "?download=" + quote(name, safe=""))
+    assert response.status_code == 200
+    assert "content-disposition" not in response.headers
+    assert response.headers["content-type"].startswith("text/plain")
