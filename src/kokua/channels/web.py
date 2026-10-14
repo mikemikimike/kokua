@@ -664,13 +664,14 @@ class WebChannel(BaseWebChannel):
 
     async def send_request(self, record: dict) -> None:
         """Mark one completed model call. Only the entry agent's run (no ``parent_run_id``) is sent; a
-        sub-agent's calls appear in its own card instead. Muted for a background turn."""
+        sub-agent's calls appear in its own card instead. ``TurnRunner`` decides which records reach here.
+        Muted for a background turn."""
         if record.get("parent_run_id") is None:
             await self.send_frame({"type": "request", **record})
 
     async def send_ending(self, ending: dict) -> None:
         """Say how the entry agent's tool loop ended; a sub-agent's ending appears in its card.
-        Muted for a background turn."""
+        ``TurnRunner`` decides which records reach here. Muted for a background turn."""
         if ending.get("parent_run_id") is None:
             await self.send_frame({"type": "ending", **ending})
 

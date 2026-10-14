@@ -3272,16 +3272,24 @@ class _DelegatingRecordingClient(_RecordingClient):
         from aimu.events import ModelTurnFinished, RequestPrepared, RunFinished
         from aimu.models._internal.chat_state import _effective_sink
 
+        from kokua.core.metrics import current_requests
+
         sink = _effective_sink(self)
+        entry = current_requests.get().entry_run_id
         if self.reporter is not None and sink is not None:
             await self.reporter.spawned("kid-1", "researcher", "find X")
-            common = {"agent": "researcher", "run_id": "kid-1", "parent_run_id": "lead-1"}
+            common = {"agent": "researcher", "run_id": "kid-1", "parent_run_id": entry}
             sink(RequestPrepared(provider="Mock", model="m", endpoint="http://x", payload={"messages": []}, **common))
             sink(ModelTurnFinished(model="m", text="found", stop_reason="stop", **common))
             sink(RunFinished(ended_by="answered", max_iterations=5, **common))
-            await asyncio.sleep(0)  # let the scheduled frame tasks run before the card closes
+            # Frames are scheduled tasks, so in production a card's ending entry can land after its
+            # terminal status; renderers handle appends after one. Yielding here only makes this test
+            # deterministic about what was delivered, not about the order.
+            await asyncio.sleep(0)
             await self.reporter.finished("kid-1", "found", None)
-            sink(ModelTurnFinished(model="m", text="done", stop_reason="stop"))
+            sink(ModelTurnFinished(model="m", text="done", stop_reason="stop", run_id=entry))
+            # An unparented run that is not the entry's, as a workflow critic's is.
+            sink(RunFinished(agent="critic", run_id="critic-1", ended_by="answered", max_iterations=6))
         return await super()._chat(*args, **kwargs)
 
 
@@ -3306,3 +3314,9 @@ async def test_a_turn_shows_its_entry_request_and_a_sub_agents_request_and_endin
     recorded = assistant._store.get(assistant._active_id).metadata["subagent"]["0"]
     assert {"request", "ending"} <= {e["append"]["kind"] for e in recorded if "append" in e}
     assert [e["ended_by"] for e in channel.ending_frames] == ["answered", "answered"]
+    assert all(e["run_id"] != "critic-1" for e in channel.ending_frames)  # a critic's ending is not shown live
+    record = next(iter(assistant._store.get(assistant._active_id).metadata["requests"].values()))
+    assert record["entry_run_id"] is not None
+    assert any(e["run_id"] == "critic-1" for e in record["endings"])  # but it is still recorded
+    entry_calls = [c for c in record["calls"] if c["parent_run_id"] is None]
+    assert {c["run_id"] for c in entry_calls} <= {record["entry_run_id"], None}

@@ -283,9 +283,8 @@ Every rule here was learned from a bug. Read them before changing anything in th
     ``test_a_delete_racing_the_undelivered_record_does_not_resurrect_the_conversation``.)
 
 Request and ending frames (``TurnRequests``' ``notify``) are scheduled from AIMU's synchronous sink
-onto the event loop as tasks that copy the turn's context. ``RequestPrepared`` fires before the
-provider is called, so a marker reaches the channel before that round's output in practice, but the
-ordering is not guaranteed.
+onto the event loop as tasks that copy the turn's context. Markers are emitted when a call completes, so
+each follows the output it explains; delivery relative to other frames is not guaranteed.
 """
 
 from __future__ import annotations
@@ -295,6 +294,7 @@ import logging
 import time
 from dataclasses import dataclass, replace
 from typing import Optional, Union
+from uuid import uuid4
 
 from aimu import PROVENANCE_KEY, PROVENANCE_PROACTIVE
 from aimu.aio import ModelConnectionError, ModelRefusalError, RunHandle
@@ -429,6 +429,10 @@ def _capped_message_text(text: str) -> str:
     return f"{text[:UNDELIVERED_TEXT_CHARS]}... [message truncated, {len(text)} chars total]"
 
 
+def _new_run_id(agent_name: Optional[str]) -> str:
+    return f"{agent_name or 'assistant'}-{uuid4().hex[:8]}"
+
+
 def _card_request_entry(record: dict) -> dict:
     keys = ("round", "payload_ref", "payload_chars", "message_count", "tool_count", "endpoint", "stop_reason")
     return {"kind": "request", **{key: record[key] for key in keys}, "error": record["error"], "agent": record["agent"]}
@@ -486,11 +490,15 @@ class TurnRunner:
         card whose id is the run's id for a sub-agent's. Called synchronously from AIMU's sink, so the
         frames are scheduled; each task copies the current context, which is what carries the turn's
         ``streaming_conversation`` (background muting) and ``subagent_events`` (recording)."""
+        requests = current_requests.get()
+        is_entry = requests is not None and record["run_id"] == requests.entry_run_id
         in_card = record["parent_run_id"] is not None
+        if not is_entry and not in_card:
+            return  # a critic's run, or any run of a turn with no named entry: recorded, not shown live
         loop = asyncio.get_running_loop()
         coroutines = []
         if kind == "request":
-            if not in_card:
+            if is_entry:
                 coroutines.append(self._ui.show_request(record))
             elif self._reporter is not None:
                 coroutines.append(self._reporter.append(record["run_id"], _card_request_entry(record)))
@@ -536,10 +544,14 @@ class TurnRunner:
         collector_token = subagent_events.set([])
         metrics = TurnMetrics()
         metrics_token = current_metrics.set(metrics)
+        # Named before the run so the entry agent's records can be told from a critic's, which is also
+        # unparented. Only a plain turn has one: a workflow drives its own agents.
+        entry_run_id = _new_run_id(self._config.entry_agent) if workflow is None else None
         requests = TurnRequests(
             payloads_path=self._config.payloads_path,
             capture=self._config.capture_requests,
             notify=self._notify_request,
+            entry_run_id=entry_run_id,
         )
         requests_token = current_requests.set(requests)
         # The turn's auto-approval budget and request text, opened here so a gated tool call reached
@@ -638,6 +650,7 @@ class TurnRunner:
                                 images=msg.images,
                                 thinking=thinking,
                                 inbox=ENTRY_SOURCE,
+                                run_id=entry_run_id,
                             )
                             await self._ui.send(stream, reply_to=msg)
                         finally:
@@ -1338,10 +1351,12 @@ class TurnRunner:
         # this runs in ends by returning or raising, not by falling through a shared teardown block.
         metrics = TurnMetrics()
         metrics_token = current_metrics.set(metrics)
+        entry_run_id = _new_run_id(self._config.entry_agent)
         requests = TurnRequests(
             payloads_path=self._config.payloads_path,
             capture=self._config.capture_requests,
             notify=self._notify_request,
+            entry_run_id=entry_run_id,
         )
         requests_token = current_requests.set(requests)
         try:
@@ -1380,7 +1395,7 @@ class TurnRunner:
                 # The conversation's own cursor, not a worker's independent one: what a user who
                 # switched into this conversation types is the conversation having seen it, and `close`
                 # measures the leftovers from this cursor's position.
-                reply = await agent.run(prompt, inbox=ENTRY_SOURCE)
+                reply = await agent.run(prompt, inbox=ENTRY_SOURCE, run_id=entry_run_id)
                 if spec.echo_reply:
                     await self._ui.send(reply)
             except asyncio.CancelledError:

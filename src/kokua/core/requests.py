@@ -49,7 +49,17 @@ def _count(payload, key: str) -> Optional[int]:
 class TurnRequests:
     """One turn's model calls and loop endings; see the module docstring."""
 
-    def __init__(self, *, payloads_path: Path, capture: bool, notify: Optional[Callable[[str, dict], None]] = None):
+    def __init__(
+        self,
+        *,
+        payloads_path: Path,
+        capture: bool,
+        notify: Optional[Callable[[str, dict], None]] = None,
+        entry_run_id: Optional[str] = None,
+    ):
+        # The entry agent's own run, named by the turn before it runs. Parentage alone cannot say which
+        # run that is: a workflow critic's run has no parent either.
+        self.entry_run_id = entry_run_id
         self._payloads_path = payloads_path
         self._capture = capture
         self._notify = notify
@@ -72,7 +82,7 @@ class TurnRequests:
         """This turn's calls and endings, or None when it has neither (so nothing is written)."""
         if not self._calls and not self._endings:
             return None
-        return {"calls": list(self._calls), "endings": list(self._endings)}
+        return {"entry_run_id": self.entry_run_id, "calls": list(self._calls), "endings": list(self._endings)}
 
     def _request(self, event: RequestPrepared) -> None:
         text = self._serialized(event.payload)

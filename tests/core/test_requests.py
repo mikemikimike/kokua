@@ -195,3 +195,9 @@ def test_a_raising_notify_does_not_lose_the_record(tmp_path):
     requests(_prepared())
     requests(_finished())
     assert len(requests.record()["calls"]) == 1
+
+
+def test_the_record_names_the_entry_run(tmp_path):
+    requests = TurnRequests(payloads_path=tmp_path, capture=False, entry_run_id="lead-1")
+    requests(_prepared())
+    assert requests.record()["entry_run_id"] == "lead-1"
