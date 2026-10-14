@@ -127,14 +127,17 @@ numbered directory; the two `sqlite3` queries pull the stored string back out, b
 model wrote it.
 
 In the web UI the context itself is one click away. After each model call a **round marker** appears
-under that round's output, its summary line giving the message count, the tool count, the size, and how the call stopped.
+under that round's output. A round is one request and the one response it got, and the marker's summary
+line gives the request's message count, tool count, and size, and how the call stopped.
 In a long turn, watch the message count and the size grow round by round: that is the context filling,
-and it is the number the window limit is measured against. Open a round to see the request exactly as
-it was sent (the message list, the system prompt, the tool schemas), drawn one level at a time so a large
-request costs the page only what you open. Strings over 4,000 characters are cut behind a **show all**
-button, and image data is labeled as such rather than printed. Every marker carries a **download** link
-for the whole request as JSON; a request over two million characters (a conversation with images in it,
-resent on every call) is download-only and draws no tree.
+and it is the number the window limit is measured against. Open a round to see both halves: the
+**request** exactly as it was sent (the message list, the system prompt, the tool schemas), drawn one
+level at a time so a large request costs the page only what you open, and the **response** the model
+returned (its reasoning, the tool calls it asked for, and its text). Round two's request is round one's
+plus round one's response and the tool results that followed it. Strings over 4,000 characters are cut
+behind a **show all** button, and image data is labeled as such rather than printed. Each half carries a
+**download** link for the whole file as JSON; a request over two million characters (a conversation with
+images in it, resent on every call) is download-only and draws no tree.
 
 ## In Kokua
 

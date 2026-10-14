@@ -93,9 +93,9 @@ line saying which rule stopped it: `ended: answered at round 2 of 10`, `ended: t
 rounds reached; answered on a forced wrap-up call` for the forced wrap-up, or `ended: error (...) at
 round 3 of 10`. That line is the answer to "why did it stop", and the last marker beside it is the last
 request the model saw. Every surface counts rounds from 1, and the wrap-up line names the cap instead of
-a round, since the forced call is the one that is not counted. Open a marker to read its
-request, or use its download link to keep the exact JSON; a request over two million characters is
-download-only. Each user message also carries a `turn N` badge, the number a download is named with.
+a round, since the forced call is the one that is not counted. Open a marker to read the round's
+request and its response side by side, or use the download links to keep the exact JSON; a request over
+two million characters is download-only. Each user message also carries a `turn N` badge, the number a download is named with.
 
 ## In Kokua
 

@@ -88,11 +88,13 @@ the offset, "JST") came from that message and from nowhere else. The model then 
 and the turn ends after two model calls, which is [the turn loop](the-turn-loop.md) with a single round
 of tools in it.
 
-In the web UI you can open the request behind each of those rounds. A round marker sits under the
-round's output; open it and the `tools` list is the schema the model was shown (every tool's name,
-description, and parameters), and the `messages` list ends with the result of the previous round's
-call, which is where round two's quote came from. The same marker's download link saves the whole
-request as JSON, and a request over two million characters is download-only. A model's reasoning
+In the web UI you can open each of those rounds: the request the model was sent and the response it
+returned. A round marker sits under the round's output; open it and, in the request, the `tools` list is
+the schema the model was shown (every tool's name, description, and parameters), and the `messages` list
+ends with the result of the previous round's call, which is where round two's quote came from. The
+response shows the tool call the model asked for, with its arguments: the half a tools-only round
+otherwise leaves invisible. Each half has a download link that saves it as JSON, and a request over two
+million characters is download-only. A model's reasoning
 beside it is not a faithful account of why it chose a tool: the request is what it was shown, and the
 reasoning is more text it generated.
 

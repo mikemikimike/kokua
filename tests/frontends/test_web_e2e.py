@@ -2592,14 +2592,18 @@ _REQUEST_BODY = {
 }
 
 
-def _request_seed(body=None, *, call=None, ending=None, subagent=None, saved=True):
-    """A seeded conversation whose one turn recorded a request and its ending, as `replay_items` reads them."""
+def _request_seed(body=None, *, call=None, ending=None, subagent=None, saved=True, response=None):
+    """A seeded conversation whose one turn recorded a request and its ending, as `replay_items` reads them.
+
+    `response`, when given, is saved as the round's recorded response (`{"text", "thinking", "tool_calls"}`).
+    """
     from aimu.sessions import Session, TinyDBSessionStore
 
     from kokua import payloads
 
     def seed(config):
         text = json.dumps(_REQUEST_BODY if body is None else body)
+        response_ref = payloads.save_text(config.payloads_path, json.dumps(response)) if response else None
         record = {
             "run_id": "entry-1",
             "parent_run_id": None,
@@ -2613,7 +2617,7 @@ def _request_seed(body=None, *, call=None, ending=None, subagent=None, saved=Tru
             "payload_chars": len(text),
             "payload_ref": payloads.save_text(config.payloads_path, text) if saved else None,
             "stop_reason": "stop",
-            "response_ref": None,
+            "response_ref": response_ref,
             "error": None,
             "ts": "2026-08-10T00:00:00",
         }
@@ -2711,7 +2715,7 @@ def test_a_request_over_the_ceiling_is_download_only(page, live_server):
     _open(page, live_server(seed=_request_seed(call={"payload_chars": 3_000_000})))
     marker = page.locator("#log .bubble.request").first
     marker.locator("> .fold-header").click()
-    expect(marker.locator(".request-empty")).to_contain_text("too large to show here")
+    expect(marker.locator(".round-request .request-empty")).to_contain_text("too large to show here")
     expect(marker.locator(".request-download")).to_have_count(1)
     assert not any("/payloads/" in url for url in requested)
 
@@ -2720,8 +2724,42 @@ def test_a_request_with_no_payload_says_not_captured(page, live_server):
     _open(page, live_server(seed=_request_seed(saved=False)))
     marker = page.locator("#log .bubble.request").first
     marker.locator("> .fold-header").click()
-    expect(marker.locator(".request-empty")).to_have_text("not captured")
+    expect(marker.locator(".round-request .request-empty")).to_have_text("not captured")
     expect(marker.locator(".request-download")).to_have_count(0)
+
+
+def test_a_round_shows_its_request_and_its_response(page, live_server):
+    """A round is one request and the one response it got; both belong in the same marker."""
+    response = {
+        "text": "done",
+        "thinking": "I should look it up first",
+        "tool_calls": [{"name": "lookup", "arguments": {"q": "aimu"}, "id": "x"}],
+    }
+    _open(page, live_server(seed=_request_seed(response=response)))
+    marker = page.locator("#log .bubble.request").first
+    expect(marker.locator(".fold-payload")).to_have_text("request and response")
+    marker.locator("> .fold-header").click()
+
+    request = marker.locator(".round-request")
+    expect(request.locator(".round-section-title")).to_have_text("Request")
+    expect(request.locator(".request-download")).to_have_attribute("href", re.compile(r"-request\.json$"))
+    expect(request.locator(".json-node", has_text="messages")).to_have_count(1)
+
+    reply = marker.locator(".round-response")
+    expect(reply.locator(".round-section-title")).to_have_text("Response")
+    expect(reply.locator(".response-download")).to_have_attribute("href", re.compile(r"-response\.json$"))
+    expect(reply.locator(".response-thinking")).to_contain_text("I should look it up first")
+    expect(reply.locator(".response-tool .response-tool-name")).to_have_text("lookup")
+    expect(reply.locator(".response-tool .json-string")).to_have_text("aimu")
+    expect(reply.locator(".response-text")).to_have_text("done")
+
+
+def test_a_round_with_no_recorded_response_says_so(page, live_server):
+    _open(page, live_server(seed=_request_seed()))
+    marker = page.locator("#log .bubble.request").first
+    marker.locator("> .fold-header").click()
+    expect(marker.locator(".round-response .request-empty")).to_have_text("not captured")
+    expect(marker.locator(".round-response .response-download")).to_have_count(0)
 
 
 def test_a_request_with_no_endpoint_names_its_nearest_equivalent(page, live_server):

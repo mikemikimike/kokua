@@ -361,13 +361,21 @@ header { display: flex; align-items: center; justify-content: space-between; gap
    note instead of a second button, since retrying would hit the same file. */
 .tool-output .output-more.output-error { color: var(--danger); border-color: transparent; padding-left: 0;
   cursor: default; }
-/* A round marker: the same dimmed machine-event row as a tool call, whose body is the request the
-   model was sent. The tree is built a level at a time (see renderJsonNode), so the row stays cheap
-   however large the request; strings wrap rather than scroll sideways, and long ones are clamped. */
+/* A round marker: the same dimmed machine-event row as a tool call, whose body is one round, the
+   request the model was sent and the response it returned. The request tree is built a level at a
+   time (see renderJsonNode), so the row stays cheap however large the request; strings wrap rather
+   than scroll sideways, and long ones are clamped. */
 .request { color: var(--fg-dim); margin: 1px 0 1px 14px; max-width: var(--row-measure); font-size: 0.85em; }
 .request .request-note, .request .request-empty { margin: 2px 0; }
-.request .request-download { display: inline-block; margin: 2px 0 4px; color: inherit; text-decoration: underline; }
-.request-tree { font-family: ui-monospace, monospace; font-size: 0.95em; }
+.request .request-download, .request .response-download { display: inline-block; margin: 2px 0 4px;
+  color: inherit; text-decoration: underline; }
+.round-section { margin: 4px 0 6px; }
+.round-section-title { color: var(--fg); font-weight: 600; }
+.request-tree, .round-response { font-family: ui-monospace, monospace; font-size: 0.95em; }
+.round-section-title { font-family: inherit; }
+.response-thinking { font-style: italic; }
+.response-tool-name { color: var(--fg); }
+.response-tool-name::after { content: "(...)"; color: var(--fg-faint); }
 .json-node > summary { cursor: pointer; }
 .json-children { margin-left: 14px; }
 .json-key { color: var(--fg); }
