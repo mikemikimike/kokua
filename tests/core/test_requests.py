@@ -129,12 +129,35 @@ def test_a_failed_write_records_the_call_without_a_reference(tmp_path, monkeypat
     assert sum("could not be saved" in r.getMessage() for r in caplog.records) == 1  # once per turn
 
 
-def test_an_unserializable_payload_is_recorded_without_a_reference(tmp_path):
+def test_an_unserializable_payload_is_recorded_without_a_reference(tmp_path, caplog):
     requests = TurnRequests(payloads_path=tmp_path, capture=True)
     requests(_prepared(payload={"bad": object()}))
     requests(_finished())
 
     assert requests.record()["calls"][0]["payload_ref"] is None
+    assert sum("could not be serialized" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_a_response_is_not_serialized_when_capture_is_off(tmp_path, caplog):
+    requests = TurnRequests(payloads_path=tmp_path, capture=False)
+    requests(_prepared())
+    requests(_finished(tool_calls=[object()]))
+
+    assert requests.record()["calls"][0]["response_ref"] is None
+    assert not any("could not be serialized" in r.getMessage() for r in caplog.records)
+
+
+def test_a_response_pairs_with_its_runs_most_recent_request_and_an_orphan_stays_unanswered(tmp_path):
+    requests = TurnRequests(payloads_path=tmp_path, capture=True)
+    requests(_prepared(endpoint="http://a"))
+    requests(_prepared(endpoint="http://b"))
+    requests(_finished(text="answer"))
+
+    by_endpoint = {c["endpoint"]: c for c in requests.record()["calls"]}
+    assert by_endpoint["http://a"]["response_ref"] is None
+    assert by_endpoint["http://a"]["stop_reason"] is None
+    response = json.loads(payloads.read_text(tmp_path, by_endpoint["http://b"]["response_ref"]))
+    assert response["text"] == "answer"
 
 
 def test_a_finished_turn_with_no_request_is_still_a_call(tmp_path):

@@ -8,12 +8,15 @@ truncated or branched. See docs/explanation/architecture.md.
 Shaped like ``core/metrics.py``'s ``TurnMetrics`` and fed by the same ``record_event`` seam: a turn
 opens one accumulator in ``current_requests``, and every agent run in the turn (entry agent,
 sub-agents, critics) reports into it. Calls pair by ``run_id``, because concurrent sub-agents
-interleave their events. A call is a list entry, not a dict keyed by (run, round): a FallbackClient
+interleave their events. Within one run a response pairs with that run's most recent open request,
+because a run's model calls are sequential: a request left without an answer is older than the one
+that is answered, so it stays in the record unanswered rather than shifting every later answer onto
+the wrong request. A call is a list entry, not a dict keyed by (run, round): a FallbackClient
 records one request per client it tries within a round, and those failed attempts are kept.
 
 Bytes go to content-addressed files under ``payloads/`` (see ``kokua/payloads.py``); the session
-holds only the small records. Observation must not break the turn it observes, so a write that
-fails is logged once per turn and the call is recorded without a reference.
+holds only the small records. Observation must not break the turn it observes, so a write or a
+serialization that fails is logged once per turn and the call is recorded without a reference.
 """
 
 from __future__ import annotations
@@ -55,6 +58,7 @@ class TurnRequests:
         # Per run, the calls whose request has arrived but whose answer has not, oldest first.
         self._open: dict[Optional[str], list[dict]] = {}
         self._write_failure_logged = False
+        self._serialization_failure_logged = False
 
     def __call__(self, event) -> None:
         if isinstance(event, RequestPrepared):
@@ -94,7 +98,7 @@ class TurnRequests:
     def _finished(self, event: ModelTurnFinished) -> None:
         pending = self._open.get(event.run_id)
         if pending:
-            call = pending.pop(0)
+            call = pending.pop()
         else:
             call = {
                 "run_id": event.run_id,
@@ -115,8 +119,9 @@ class TurnRequests:
             self._calls.append(call)
         call["stop_reason"] = event.stop_reason
         call["error"] = type(event.error).__name__ if event.error is not None else None
-        response = {"text": event.text, "thinking": event.thinking, "tool_calls": list(event.tool_calls or [])}
-        call["response_ref"] = self._saved(self._serialized(response))
+        if self._capture:
+            response = {"text": event.text, "thinking": event.thinking, "tool_calls": list(event.tool_calls or [])}
+            call["response_ref"] = self._saved(self._serialized(response))
         self._emit("request", call)
 
     def _ending(self, event: RunFinished) -> None:
@@ -135,8 +140,8 @@ class TurnRequests:
     def _serialized(self, value) -> Optional[str]:
         try:
             return json.dumps(value, ensure_ascii=False)
-        except (TypeError, ValueError):
-            self._log_write_failure("a value could not be serialized")
+        except (TypeError, ValueError) as exc:
+            self._log_serialization_failure(str(exc))
             return None
 
     def _saved(self, text: Optional[str]) -> Optional[str]:
@@ -152,6 +157,13 @@ class TurnRequests:
         if not self._write_failure_logged:
             self._write_failure_logged = True
             logger.warning("A model request record could not be saved (%s); the turn continues without it.", reason)
+
+    def _log_serialization_failure(self, reason: str) -> None:
+        if not self._serialization_failure_logged:
+            self._serialization_failure_logged = True
+            logger.warning(
+                "A model request record could not be serialized (%s); the turn continues without it.", reason
+            )
 
     def _emit(self, kind: str, record: dict) -> None:
         if self._notify is None:
