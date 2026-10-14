@@ -170,6 +170,10 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.34.0 or newer
   reached; answered on a forced wrap-up call`. Kokua's terminal channel defines `send_turn` and
   `send_ending` itself and prints every ending and the `[turn N]` line; no other channel gets the turn
   line. Every surface counts rounds from 1.
+- **Round buttons, turn badges, and tool character counts wait for a hover.** A round button's tooltip reads
+  `turn X, round Y`, and the button, the turn badge, and a tool card's character count are revealed when
+  their card is hovered or focused (a warning-tinted button stays visible, since endings now live in the
+  panel). On every row the right edge reads info, buttons, then the timestamp, in one column.
 - **Turns are numbered once, and replay shows the round buttons.** `core/conversations.py`'s `turn_numbers`
   gives each turn its ordinal, skipping loop nudges, agents' messages, and messages typed mid-turn, and the
   live `[turn N]` line (`ChannelUI.show_turn`; printed by the terminal channel only), the

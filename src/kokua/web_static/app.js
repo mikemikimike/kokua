@@ -1727,6 +1727,15 @@ function roundOutputIn(container) {
   return el && el.matches(ROUND_OUTPUT) ? el : null;
 }
 
+// The button's tooltip and accessible name: the turn it belongs to and its round, or the round alone
+// while the turn is not yet numbered.
+function labelRoundButton(button, record, output) {
+  const turn = output ? enclosingTurn(output) : null;
+  const label = (/^\d+$/.test(turn || "") ? `turn ${turn}, ` : "") + `round ${record.round}`;
+  button.title = label;
+  button.setAttribute("aria-label", label);
+}
+
 // One round's button, on the output its request arrived after. A round that produced none (it failed
 // first, or only the user's bubble precedes it) gets a small row of its own holding the button.
 function addRound(call, container, rounds, agent) {
@@ -1736,10 +1745,15 @@ function addRound(call, container, rounds, agent) {
   button.type = "button";
   button.className = "round-button";
   button.textContent = "{ }";
-  button.title = `round ${record.round}: request and response`;
+  labelRoundButton(button, record, output);
   button.dataset.round = String(record.round);
   button.setAttribute("aria-controls", "round-panel");
   button.setAttribute("aria-expanded", "false");
+  // The turn is numbered only once it is saved, so a live button is drawn before its turn is known;
+  // the label is recomputed when someone is about to read it.
+  const relabel = () => labelRoundButton(button, record, record.output);
+  button.addEventListener("mouseenter", relabel);
+  button.addEventListener("focus", relabel);
   button.addEventListener("click", () => {
     if (shownRound === record) closeRoundPanel();
     else openRoundPanel(record);
@@ -1754,7 +1768,11 @@ function addRound(call, container, rounds, agent) {
       slot.className = "round-slot";
       output.appendChild(slot);
     }
-    slot.appendChild(button);
+    // Info, buttons, timestamp: the caption leaves the header (where it would sit left of the buttons)
+    // and rides the end of the slot, after the buttons, at the same right edge it had.
+    const caption = output.querySelector(":scope > .fold-header > .fold-ts");
+    if (caption) slot.appendChild(caption);
+    slot.insertBefore(button, slot.querySelector(".fold-ts"));
     output.style.setProperty("--round-buttons", String(slot.children.length));
   } else if (output) bubbleMetaRow(output).appendChild(button);
   else {
