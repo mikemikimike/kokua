@@ -1497,9 +1497,7 @@ const IMAGE_DATA_MIN = 1000;  // a string this long that is a data:image/ URL or
 const PAYLOAD_REF = /^\/payloads\/[0-9a-f]{64}$/;
 const BASE64_ONLY = /^[A-Za-z0-9+/=]+$/;
 
-// Round markers are the one 1-based display: a person counts the first call as round 1. The ending
-// line below shows the loop's own `iteration` raw (it counts from 0 and equals max_iterations on the
-// uncounted wrap-up call), so "round 10 of 10" reads correctly there.
+// Every surface counts rounds from 1: markers, endings, and the export. AIMU's own counter starts at 0.
 function requestSummary(call) {
   const parts = [];
   if (call.message_count != null) parts.push(`${call.message_count} messages`);
@@ -1577,18 +1575,25 @@ function renderRequest(call, opts) {
   return marker;
 }
 
-// How a tool loop ended, worded as the terminal and the Markdown export word it. The round is the
-// loop's own `iteration`, shown raw (see the note above renderRequest). Not a foldable: one short line.
-const ENDING_RULES = { answered: "answered", wrap_up: "tool-use limit reached" };
+// How a tool loop ended, worded as the terminal and the Markdown export word it. Not a foldable: one
+// short line. A forced wrap-up names the cap rather than a round.
+function endingText(ending) {
+  const limit = ending.max_iterations;
+  const ofLimit = limit != null ? ` of ${limit}` : "";
+  const position = `round ${ending.round + 1}${ofLimit}`;
+  if (ending.ended_by === "answered") return `ended: answered at ${position}`;
+  if (ending.ended_by === "wrap_up") {
+    const cap = limit != null ? `limit of ${limit} rounds` : "limit";
+    return `ended: tool-use ${cap} reached; answered on a forced wrap-up call`;
+  }
+  if (ending.ended_by === "error") return `ended: error${ending.error ? ` (${ending.error})` : ""} at ${position}`;
+  return `ended at ${position}`;
+}
 
 function renderEnding(ending, opts) {
-  const rule = Object.prototype.hasOwnProperty.call(ENDING_RULES, ending.ended_by)
-    ? ENDING_RULES[ending.ended_by]
-    : `error (${ending.error})`;
-  const limit = ending.max_iterations != null ? ` of ${ending.max_iterations}` : "";
   const el = document.createElement("div");
   el.className = "ending";
-  el.textContent = `ended: ${rule} at round ${ending.round}${limit}`;
+  el.textContent = endingText(ending);
   if (ending.agent) el.title = ending.agent;
   appendToLog(el, opts && opts.parent);
   autoscroll();

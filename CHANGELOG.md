@@ -156,19 +156,22 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.34.0 or newer
   with long strings cut behind "show all", image data labeled, and no inline tree above two million
   characters. Each marker links `/payloads/<sha256>?download=<name>` (accepted only for
   `^[A-Za-z0-9._-]{1,100}\Z`, served as an attachment), each loop ends with an `ended: ...` line worded as
-  the terminal and export word it, and the user bubble carries a `turn N` badge.
+  the terminal and export word it (rounds counted from 1), and the user bubble carries a `turn N` badge.
 - **Those records reach the channel live.** `ChannelUI.show_request` / `show_ending` and the optional
   `RichChannel.send_request` / `send_ending` carry a `request` frame per completed entry-agent call and an
   `ending` frame per loop; a sub-agent's appear as `request` and `ending` entries in its own card
   (`SubagentReporter.append`). A channel without the frames shows no request marker and gets one plain
-  line per ending, such as `[assistant] ended: tool-use limit reached at round 10 of 10`.
+  line for a `wrap_up` or `error` ending only, such as `[assistant] ended: tool-use limit of 10 rounds
+  reached; answered on a forced wrap-up call`. Kokua's terminal channel defines `send_turn` and
+  `send_ending` itself and prints every ending and the `[turn N]` line; no other channel gets the turn
+  line. Every surface counts rounds from 1.
 - **Turns are numbered once, and replay shows the markers.** `core/conversations.py`'s `turn_numbers`
   gives each turn its ordinal, skipping loop nudges, agents' messages, and messages typed mid-turn, and the
-  live `[turn N]` line (`ChannelUI.show_turn`; the web page defines `send_turn` as a no-op), the
+  live `[turn N]` line (`ChannelUI.show_turn`; printed by the terminal channel only), the
   `turn_saved` frame's new `turn` field, the history `user` item's `turn`, and the export's `## Turn N`
   headings all read it. A reloaded conversation replays each entry-agent round's `request` item right
   after that round's assistant message and the loop's `ending` at the turn's end, as the live frames
-  arrived; the export renders the ending as `_[ended: tool-use limit reached at round 10 of 10]_`.
+  arrived; the export renders each ending, a sub-agent card's included, as `_[ended: answered at round 2 of 10]_` or `_[ended: tool-use limit of 10 rounds reached; answered on a forced wrap-up call]_`.
 - **Delegated and reviewed work counts toward that same total, with one named exception.** A spawned
   sub-agent and a workflow critic each build their own client, outside the family a turn's own scoped
   sink reaches, so both were invisible to `TurnMetrics` and a heavily delegating turn read as cheap.

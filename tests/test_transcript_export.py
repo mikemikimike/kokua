@@ -446,6 +446,60 @@ def test_a_cards_message_entry_is_not_dropped():
     assert "**Message (mid-turn):** [message from assistant] use the index" in out
 
 
+def test_a_cards_ending_is_rendered_and_its_request_adds_nothing():
+    events = [
+        {"id": "r-1", "role": "researcher", "task": "compare pricing", "status": "running"},
+        {"id": "r-1", "append": {"kind": "request", "round": 0, "payload_ref": None}},
+        {
+            "id": "r-1",
+            "append": {"kind": "ending", "ended_by": "wrap_up", "round": 5, "max_iterations": 5, "error": None},
+        },
+        {"id": "r-1", "status": "done"},
+    ]
+    lines = _render_subagent(events, None)
+    assert "_[ended: tool-use limit of 5 rounds reached; answered on a forced wrap-up call]_" in lines
+    ending_at = lines.index("_[ended: tool-use limit of 5 rounds reached; answered on a forced wrap-up call]_")
+    assert lines[ending_at - 1] == ""
+    assert lines[ending_at - 2] != ""  # the request entry left no blank line of its own
+
+
+def test_the_export_words_every_ending_the_way_the_terminal_does():
+    from kokua.transcript_export import _ending_line
+
+    base = {"round": 0, "max_iterations": 10, "error": None}
+    assert _ending_line({**base, "ended_by": "answered"}) == "_[ended: answered at round 1 of 10]_"
+    assert _ending_line({**base, "ended_by": "wrap_up", "max_iterations": None}) == (
+        "_[ended: tool-use limit reached; answered on a forced wrap-up call]_"
+    )
+    assert _ending_line({**base, "ended_by": "error", "error": "boom"}) == "_[ended: error (boom) at round 1 of 10]_"
+    assert _ending_line({**base, "ended_by": "error"}) == "_[ended: error at round 1 of 10]_"
+    assert _ending_line({**base, "ended_by": None, "max_iterations": None}) == "_[ended at round 1]_"
+
+
+def test_a_payload_with_no_system_prompt_shape_says_so_once_per_agent_per_turn(tmp_path):
+    odd = _save(tmp_path, {"prompt": "raw"})
+    session = _session(
+        [
+            {"role": "user", "content": "q0"},
+            {"role": "assistant", "content": "a0"},
+            {"role": "user", "content": "q1"},
+            {"role": "assistant", "content": "a1"},
+        ],
+        {
+            "requests": {
+                "2": {
+                    "entry_run_id": "e",
+                    "calls": [_call("e", "assistant", 0, odd), _call("e", "assistant", 1, odd)],
+                    "endings": [],
+                }
+            }
+        },
+    )
+    out = render_markdown(session, payloads_path=tmp_path)
+    note = "_(system prompt not found in the recorded request; see kokua export --turn 2)_"
+    assert out.count(note) == 1
+
+
 def test_a_cards_message_entry_is_capped_like_its_siblings():
     events = [
         {"id": "r-1", "role": "researcher", "task": "compare pricing", "status": "running"},
@@ -1009,7 +1063,7 @@ def test_an_ending_renders_as_one_italic_line_inside_its_turn_and_a_request_rend
         },
     )
     out = render_markdown(session)
-    assert "_[ended: tool-use limit reached at round 10 of 10]_" in out
+    assert "_[ended: tool-use limit of 10 rounds reached; answered on a forced wrap-up call]_" in out
     assert out.index("partial") < out.index("_[ended:")
     assert "unrendered" not in out
 
@@ -1135,7 +1189,7 @@ def _two_turn_session(tmp_path):
                             "parent_run_id": None,
                             "agent": "assistant",
                             "ended_by": "answered",
-                            "round": 1,
+                            "round": 0,
                             "max_iterations": 10,
                             "error": None,
                         }
@@ -1168,6 +1222,13 @@ def test_turn_markdown_survives_an_unreadable_payload(tmp_path):
     session.metadata["requests"]["2"]["calls"][1]["payload_ref"] = "/payloads/" + "0" * 64
     out = render_turn_markdown(session, 2, payloads_path=tmp_path)
     assert out.count("_not captured_") >= 2
+
+
+def test_turn_markdown_says_when_the_turn_recorded_no_calls(tmp_path):
+    from kokua.transcript_export import render_turn_markdown
+
+    out = render_turn_markdown(_two_turn_session(tmp_path), 1, payloads_path=tmp_path)
+    assert out.endswith("**User:** first\n\n_No model calls were recorded for this turn._\n")
 
 
 def test_turn_markdown_rejects_a_turn_out_of_range(tmp_path):

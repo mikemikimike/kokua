@@ -31,6 +31,7 @@ and ``Assistant.schedule_rename`` is what turns that deadlock into a write queue
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Union
 
@@ -357,7 +358,10 @@ def make_conversation_tools(
         session = book.resolve(conversation_id)
         if session is None:
             return _unknown(conversation_id)
-        markdown = render_markdown(
+        # Off the event loop: rendering reads and parses every recorded payload file, which would stall
+        # every other conversation's turn for as long as a large conversation takes.
+        markdown = await asyncio.to_thread(
+            render_markdown,
             session,
             max_payload_chars=None if full else DEFAULT_MAX_PAYLOAD_CHARS,
             payloads_path=payloads_path,

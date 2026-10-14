@@ -376,7 +376,7 @@ async def test_an_escalation_says_it_is_going_to_the_user():
     assert "asking you" in channel.sent[0]
 
 
-async def test_a_request_is_a_no_op_and_an_ending_is_one_line_without_a_rich_channel():
+async def test_a_request_is_a_no_op_and_only_a_wrap_up_or_error_ending_is_a_line_on_a_bare_channel():
     channel = BareChannel()
     ui = ChannelUI(channel)
     await ui.show_request({"run_id": "r", "parent_run_id": None, "round": 0})
@@ -391,13 +391,29 @@ async def test_a_request_is_a_no_op_and_an_ending_is_one_line_without_a_rich_cha
     )
 
     assert channel.sent == [
-        "[assistant] ended: tool-use limit reached at round 10 of 10",
-        "[researcher] ended: error (TruncatedTurnError) at round 2",
-        "[assistant] ended: answered at round 1 of 10",
+        "[assistant] ended: tool-use limit of 10 rounds reached; answered on a forced wrap-up call",
+        "[researcher] ended: error (TruncatedTurnError) at round 3",
     ]
 
 
-async def test_show_turn_falls_back_to_a_plain_line_on_a_bare_channel():
+def test_ending_lines_count_rounds_from_one_and_need_no_counter_for_a_wrap_up():
+    from kokua.channels.ui import ending_line
+
+    base = {"agent": "a", "round": 0, "max_iterations": 10, "error": None}
+    assert ending_line({**base, "ended_by": "answered"}) == "[a] ended: answered at round 1 of 10"
+    assert ending_line({**base, "ended_by": "answered", "max_iterations": None}) == "[a] ended: answered at round 1"
+    wrap = {**base, "ended_by": "wrap_up", "round": 10}
+    assert ending_line(wrap) == "[a] ended: tool-use limit of 10 rounds reached; answered on a forced wrap-up call"
+    assert ending_line({**wrap, "max_iterations": None}) == (
+        "[a] ended: tool-use limit reached; answered on a forced wrap-up call"
+    )
+    error = {**base, "ended_by": "error", "error": "boom", "round": 2}
+    assert ending_line(error) == "[a] ended: error (boom) at round 3 of 10"
+    assert ending_line({**error, "error": None}) == "[a] ended: error at round 3 of 10"
+    assert ending_line({**base, "ended_by": None}) == "[a] ended at round 1 of 10"
+
+
+async def test_show_turn_is_a_no_op_on_a_bare_channel():
     channel = BareChannel()
     await ChannelUI(channel).show_turn(3)
-    assert channel.sent == ["[turn 3]"]
+    assert channel.sent == []

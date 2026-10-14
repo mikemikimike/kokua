@@ -138,17 +138,23 @@ def _loop_line(item: dict, max_payload_chars: Optional[int]) -> str:
     return f"_[{label}: {_capped(item.get('text', ''), max_payload_chars)}]_"
 
 
-# The rule behind each way a tool loop can end, as the export words it. The terminal's one-line
-# fallback (`channels/ui.py`) says the same rules, so a loop's ending reads alike in both.
-_ENDING_RULES = {"wrap_up": "tool-use limit reached", "answered": "answered"}
-
-
 def _ending_line(ending: dict) -> str:
-    """How the entry agent's tool loop ended, as one italic line, with the cap when one applied."""
-    rule = _ENDING_RULES.get(ending.get("ended_by"), f"error ({ending.get('error')})")
+    """How a tool loop ended, as one italic line. Worded as the terminal and the page word it, and like
+    them counts rounds from 1 (AIMU's own counter starts at 0); a forced wrap-up names the cap instead."""
     limit = ending.get("max_iterations")
     of_limit = f" of {limit}" if limit is not None else ""
-    return f"_[ended: {rule} at round {ending.get('round')}{of_limit}]_"
+    round_ = ending.get("round")
+    position = f"round {round_ + 1 if isinstance(round_, int) else round_}{of_limit}"
+    ended_by = ending.get("ended_by")
+    if ended_by == "answered":
+        return f"_[ended: answered at {position}]_"
+    if ended_by == "wrap_up":
+        cap = f"limit of {limit} rounds" if limit is not None else "limit"
+        return f"_[ended: tool-use {cap} reached; answered on a forced wrap-up call]_"
+    if ended_by == "error":
+        error = f" ({ending['error']})" if ending.get("error") else ""
+        return f"_[ended: error{error} at {position}]_"
+    return f"_[ended at {position}]_"
 
 
 def render_markdown(
@@ -435,8 +441,12 @@ def _render_subagent(
         if append is None:
             continue
         kind = append.get("kind")
+        if kind == "request":
+            continue  # a round marker is for the page, as at the top level
         lines.append("")
-        if kind == "tool":
+        if kind == "ending":
+            lines.append(_ending_line(append))
+        elif kind == "tool":
             lines.extend(_render_tool(append, max_payload_chars, payloads_path))
         elif kind == "reasoning":
             lines.append("**Reasoning:**")
@@ -698,7 +708,9 @@ def _render_body(
                 lines.extend(block)
             if payloads_path is not None:
                 calls = (requests.get(str(message_index)) or {}).get("calls") or []
-                for block in _system_prompt_blocks(calls, previous_prompts, max_payload_chars, payloads_path):
+                for block in _system_prompt_blocks(
+                    item["turn"], calls, previous_prompts, max_payload_chars, payloads_path
+                ):
                     lines.append("")
                     lines.extend(block)
             lines.append("")
@@ -759,6 +771,7 @@ def _read_json(payloads_path: Path, reference: Optional[str]) -> Any:
 
 
 def _system_prompt_blocks(
+    turn: int,
     calls: list[dict],
     previous: dict[str, str],
     max_payload_chars: Optional[int],
@@ -776,8 +789,14 @@ def _system_prompt_blocks(
         agent = call.get("agent") or "agent"
         if agent in seen:
             continue
-        prompt = system_prompt_of(_read_json(payloads_path, call.get("payload_ref")))
+        payload = _read_json(payloads_path, call.get("payload_ref"))
+        prompt = system_prompt_of(payload)
         if prompt is None:
+            if payload is not None:
+                # Readable but of a shape this cannot read: say so, rather than let the turn look
+                # like it ran with no system prompt. A missing or unreadable payload stays silent.
+                seen.add(agent)
+                blocks.append([f"_(system prompt not found in the recorded request; see kokua export --turn {turn})_"])
             continue
         seen.add(agent)
         if previous.get(agent) == prompt:
@@ -846,6 +865,8 @@ def render_turn_markdown(session: Session, turn: int, *, payloads_path: Path) ->
     if entry_run_id is not None and entry_run_id in run_ids:
         run_ids.remove(entry_run_id)
         run_ids.insert(0, entry_run_id)
+    if not calls:
+        lines += ["", "_No model calls were recorded for this turn._"]
     for run_id in run_ids:
         for call in (call for call in calls if call.get("run_id") == run_id):
             lines += [""] + _call_heading_lines(call)

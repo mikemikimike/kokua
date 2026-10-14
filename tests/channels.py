@@ -32,7 +32,7 @@ class FakeChannel(Channel):
 
     async def send_turn(self, number: int) -> None:
         # Recorded apart from `sent` so a test of what the user was told is not about the turn marker;
-        # a bare channel with no `send_turn` gets "[turn N]" as a plain line instead (see ChannelUI).
+        # a bare channel with no `send_turn` hears nothing about turn numbers (see ChannelUI).
         self.turns.append(number)
 
     async def receive(self) -> AsyncIterator[ChannelMessage]:

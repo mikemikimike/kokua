@@ -31,16 +31,22 @@ from aimu.aio.channels.base import ChannelMessage
 from aimu.models import StreamChunk
 
 
-def _ending_line(ending: dict) -> str:
-    if ending["ended_by"] == "wrap_up":
-        rule = "tool-use limit reached"
-    elif ending["ended_by"] == "error":
-        rule = f"error ({ending['error']})"
-    else:
-        rule = "answered"
+def ending_line(ending: dict) -> str:
+    """One line saying how an agent's tool loop ended. Every surface counts rounds from 1 (AIMU's own
+    counter starts at 0, hence the ``+ 1``), and a forced wrap-up names the cap instead of a round."""
     limit = ending["max_iterations"]
     of_limit = f" of {limit}" if limit is not None else ""
-    return f"[{ending['agent']}] ended: {rule} at round {ending['round']}{of_limit}"
+    position = f"round {ending['round'] + 1}{of_limit}"
+    if ending["ended_by"] == "answered":
+        rule = f"answered at {position}"
+    elif ending["ended_by"] == "wrap_up":
+        cap = f"limit of {limit} rounds" if limit is not None else "limit"
+        rule = f"tool-use {cap} reached; answered on a forced wrap-up call"
+    elif ending["ended_by"] == "error":
+        rule = f"error ({ending['error']}) at {position}" if ending["error"] else f"error at {position}"
+    else:
+        return f"[{ending['agent']}] ended at {position}"
+    return f"[{ending['agent']}] ended: {rule}"
 
 
 def _bullets(issues: list[str]) -> str:
@@ -165,14 +171,11 @@ class ChannelUI:
             await self._turn_saved(conversation_id, message_index, token=token, turn=turn)
 
     async def show_turn(self, number: int) -> None:
-        """Announce which turn of the conversation is starting, before its reply streams. A channel
-        with no ``send_turn`` gets one plain line, so a terminal shows the same numbers the export and
-        the page do; a page that learns the number from ``turn_saved`` and history defines ``send_turn``
-        as a no-op to suppress the line."""
+        """Announce which turn of the conversation is starting, before its reply streams. A no-op for a
+        channel with no ``send_turn``: the terminal channel defines one that prints ``[turn N]``, and a
+        page learns the number from ``turn_saved`` and history instead."""
         if self._turn is not None:
             await self._turn(number)
-        else:
-            await self._channel.send(f"[turn {number}]")
 
     async def message_taken(self, text: str, *, token: Optional[str] = None) -> None:
         """Report that this message joined the turn already running instead of starting one.
@@ -353,12 +356,13 @@ class ChannelUI:
 
     async def show_ending(self, ending: dict) -> None:
         """Say how an agent's tool loop ended (``ended_by``: ``"answered"``, ``"wrap_up"``, or
-        ``"error"``). Falls back to one plain line, ``[agent] ended: <rule> at round N of M``, on a
-        channel with no frame for it, so the cap being hit is never silent."""
+        ``"error"``). A channel with no ``send_ending`` still gets one plain line for the two endings that
+        are not routine (``"wrap_up"`` and ``"error"``), so the cap being hit is never silent; an
+        ``"answered"`` ending is the ordinary case and says nothing there."""
         if self._ending is not None:
             await self._ending(ending)
-        else:
-            await self._channel.send(_ending_line(ending))
+        elif ending["ended_by"] in ("wrap_up", "error"):
+            await self._channel.send(ending_line(ending))
 
     async def stream_activity(self, chunks: AsyncIterator[StreamChunk], *, show_answer: bool = False) -> str:
         """Stream an agentic loop live and return its generated text.

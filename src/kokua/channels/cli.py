@@ -29,6 +29,8 @@ from typing import AsyncIterator, Optional
 from aimu.aio import CLIChannel as BaseCLIChannel
 from aimu.aio.channels.base import ChannelMessage
 
+from kokua.channels.ui import ending_line
+
 _ATTACH_PREFIX = "/attach "
 _THINK_COMMAND = "/think"
 # The words `/think` takes, in the order they are offered. "default" is the one that is not a level: it
@@ -60,7 +62,14 @@ def _apply_think(argument: str, current: Optional[str]) -> Optional[str]:
 
 
 class CLIChannel(BaseCLIChannel):
-    """AIMU's ``CLIChannel`` with ``/attach <path>`` and ``/think <level>``."""
+    """AIMU's ``CLIChannel`` with ``/attach <path>`` and ``/think <level>``, and the two plain lines a
+    terminal needs to follow a turn: its number and how each tool loop ended."""
+
+    async def send_turn(self, number: int) -> None:
+        await self.send(f"[turn {number}]")
+
+    async def send_ending(self, ending: dict) -> None:
+        await self.send(ending_line(ending))
 
     async def receive(self) -> AsyncIterator[ChannelMessage]:
         pending: list[str] = []

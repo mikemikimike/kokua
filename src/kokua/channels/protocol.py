@@ -127,8 +127,13 @@ class RichChannel(Protocol):
         ``payload_ref`` to the exact request). Optional: a channel without it shows no markers."""
 
     async def send_ending(self, ending: dict) -> None:
-        """Say how the entry agent's tool loop ended (``ended_by``, ``round``, ``max_iterations``).
-        Optional: a channel without it gets one plain ``send()`` line instead."""
+        """Say how an agent's tool loop ended (``ended_by``, ``round``, ``max_iterations``). May receive a
+        sub-agent's ending as well as the entry agent's (``parent_run_id`` tells them apart; the web
+        channel drops the sub-agent's, since its card shows it). Optional: a channel without it gets one
+        plain ``send()`` line for a ``wrap_up`` or ``error`` ending only."""
+
+    async def send_turn(self, number: int) -> None:
+        """Announce which turn is starting. Optional: a channel without it says nothing."""
 
     async def stream_activity(self, chunks: AsyncIterator[StreamChunk], *, show_answer: bool = False) -> str:
         """Stream an agentic loop live without terminating it, returning the generated text."""

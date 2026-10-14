@@ -251,7 +251,7 @@ async def test_an_unrecognized_command_runs_a_plain_turn(tmp_path):
 
     await _run_one_message(assistant, channel)
 
-    assert channel.sent == ["a reply", "[assistant] ended: answered at round 0 of 10"]
+    assert channel.sent == ["a reply"]
     assert assistant._agent.model_client.messages[0]["content"] == "/foo bar"
 
 

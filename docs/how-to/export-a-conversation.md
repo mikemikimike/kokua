@@ -52,9 +52,10 @@ Each turn after that is one `## Turn N` section: the user's message, the model's
 run streamed a `thinking` block or a verbose trace's `reasoning` segments), its answer, and, for
 each tool call, the tool's name, its arguments, and what it returned. A line under the turn heading
 names the model and reasoning effort it ran at, when either was recorded, and a line beneath that
-reports what the turn cost. When a turn's tool loop ended early, a closing italic line says which rule
-ended it, such as `_[ended: tool-use limit reached at round 10 of 10]_`. A sub-agent the turn spawned gets its own nested card with the same
-shape: its own reasoning, tool calls, and answer. If a turn stopped short (a tool call was
+reports what the turn cost. Every tool loop ends with a closing italic line saying which rule ended it,
+such as `_[ended: answered at round 2 of 10]_` or `_[ended: tool-use limit of 10 rounds reached; answered
+on a forced wrap-up call]_`. A sub-agent the turn spawned gets its own nested card with the same
+shape (its own ending line included): its own reasoning, tool calls, and answer. If a turn stopped short (a tool call was
 denied, a reviewer sent it back for revision, an error cut it off), the reason appears as a quoted
 note where the turn stopped.
 
@@ -62,7 +63,7 @@ A turn's block also shows the system prompt each agent ran under, as a `**System
 heading and a fenced block, but only where it is news: the first time that agent appears in the
 conversation, and again whenever it differs from that agent's previous one. The entry agent and each
 sub-agent are tracked separately, so a sub-agent's prompt is never compared against the entry agent's.
-Prompts come from the recorded request payloads, so a turn whose payload was not captured shows none, and each is capped like any payload unless you pass `--full`. A turn shows each agent's prompt from its first readable call, so a change between rounds of one turn is not shown. The web download and the assistant's `export_conversation` file include them too.
+Prompts come from the recorded request payloads, so a turn whose payload was not captured shows none, and a payload that is readable but holds no system prompt Kokua can find (an in-process provider's raw prompt, say) shows `_(system prompt not found in the recorded request; see kokua export --turn N)_` once for that agent instead, and each is capped like any payload unless you pass `--full`. A turn shows each agent's prompt from its first readable call, so a change between rounds of one turn is not shown. The web download and the assistant's `export_conversation` file include them too.
 
 ## One turn, in full
 
@@ -72,7 +73,8 @@ holds the user's message, then every model call the turn made, grouped by run wi
 first, each under a `### agent · round R` heading naming the run, provider, endpoint, model, and how
 the call stopped. Under each is the request as recorded, pretty-printed, and the response: text,
 reasoning, and tool calls. The loop's ending follows. Nothing is truncated, so `--full` is accepted and
-changes nothing.
+changes nothing (a one-line note on stderr says so). A turn with no recorded calls (it predates capture)
+reads `_No model calls were recorded for this turn._` after the user's message.
 
 The request is exactly what was sent. A provider that runs in-process has no wire request, so its
 entry says `no wire request (nearest equivalent; not replayable)`: the payload shown is the nearest

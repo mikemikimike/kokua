@@ -455,6 +455,8 @@ def _export(args: argparse.Namespace, config: AssistantConfig) -> int:
         return 2
 
     if args.turn is not None:
+        if args.full:
+            print("note: --full has no effect with --turn; a per-turn export is always whole.", file=sys.stderr)
         try:
             markdown = render_turn_markdown(session, args.turn, payloads_path=config.payloads_path)
         except ValueError as error:

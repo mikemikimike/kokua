@@ -2676,7 +2676,7 @@ def test_a_round_marker_summarizes_without_fetching_and_expands_lazily(page, liv
     messages.locator(".json-node").first.locator("> summary").click()
     expect(marker.locator(".json-string", has_text="line one")).to_be_visible()
     assert "\\n" not in marker.locator(".json-string", has_text="line one").inner_text()
-    expect(page.locator("#log .ending")).to_contain_text("ended: answered at round 0 of 10")
+    expect(page.locator("#log .ending")).to_contain_text("ended: answered at round 1 of 10")
     expect(page.locator(".bubble.user .turn-badge").first).to_have_text("turn 1")
 
 
@@ -2734,13 +2734,21 @@ def test_a_request_with_no_endpoint_names_its_nearest_equivalent(page, live_serv
 def test_an_error_ending_is_worded_like_the_terminal(page, live_server):
     ending = {"ended_by": "error", "error": "boom", "round": 3, "max_iterations": None}
     _open(page, live_server(seed=_request_seed(ending=ending)))
-    expect(page.locator("#log .ending")).to_have_text("ended: error (boom) at round 3")
+    expect(page.locator("#log .ending")).to_have_text("ended: error (boom) at round 4")
 
 
 def test_a_wrap_up_ending_reads_as_the_tool_use_limit(page, live_server):
     ending = {"ended_by": "wrap_up", "round": 10, "max_iterations": 10}
     _open(page, live_server(seed=_request_seed(ending=ending)))
-    expect(page.locator("#log .ending")).to_have_text("ended: tool-use limit reached at round 10 of 10")
+    expect(page.locator("#log .ending")).to_have_text(
+        "ended: tool-use limit of 10 rounds reached; answered on a forced wrap-up call"
+    )
+
+
+def test_an_ending_with_no_known_cause_or_error_name_reads_plainly(page, live_server):
+    ending = {"ended_by": None, "round": 1, "max_iterations": 10}
+    _open(page, live_server(seed=_request_seed(ending=ending)))
+    expect(page.locator("#log .ending")).to_have_text("ended at round 2 of 10")
 
 
 def test_a_subagent_card_shows_its_request_marker_and_ending_inside_its_body(page, live_server):
@@ -2769,7 +2777,7 @@ def test_a_subagent_card_shows_its_request_marker_and_ending_inside_its_body(pag
     card.locator("> .fold-header").click()
     expect(card.locator("> .fold-body > .bubble.request")).to_have_count(1)
     expect(card.locator("> .fold-body > .bubble.request .fold-metric")).to_contain_text("3 messages")
-    expect(card.locator("> .fold-body > .ending")).to_have_text("ended: answered at round 0 of 5")
+    expect(card.locator("> .fold-body > .ending")).to_have_text("ended: answered at round 1 of 5")
 
 
 def test_a_live_turn_draws_a_round_marker_and_numbers_the_user_bubble(page, live_server):

@@ -155,7 +155,7 @@ async def test_assistant_proactive_message(tmp_path):
 
     await assistant._proactive("remind")
 
-    assert channel.sent == ["Don't forget lunch.", "[assistant] ended: answered at round 0 of 10"]
+    assert channel.sent == ["Don't forget lunch."]
 
 
 async def test_a_completed_turn_publishes_where_it_starts(tmp_path):
@@ -745,7 +745,7 @@ async def test_proactive_degrades_on_single_conversation_channel(tmp_path):
 
     # No extra conversation; ran in place and pushed the reply.
     assert assistant._store.list_keys() == [active_key]
-    assert channel.sent == ["task output", "[assistant] ended: answered at round 0 of 10"]
+    assert channel.sent == ["task output"]
 
 
 async def test_proactive_new_session_holds_at_most_one_gate_turn(tmp_path):

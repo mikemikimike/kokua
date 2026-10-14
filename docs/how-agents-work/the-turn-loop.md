@@ -89,10 +89,11 @@ just a tool that took a while to return.
 
 The web UI draws the loop's boundaries too. Each model call leaves a **round marker** (`round 1`,
 `round 2`, counted the way a person counts) under its output, and when the loop stops it prints one
-line saying which rule stopped it: `ended: answered at round 2 of 10`, `ended: tool-use limit reached
-at round 10 of 10` for the forced wrap-up, or `ended: error (...)`. That line is the answer to "why did
-it stop", and the last marker beside it is the last request the model saw. The ending's round is the
-loop's own counter, which starts at 0 and equals the cap on a wrap-up. Open a marker to read its
+line saying which rule stopped it: `ended: answered at round 2 of 10`, `ended: tool-use limit of 10
+rounds reached; answered on a forced wrap-up call` for the forced wrap-up, or `ended: error (...) at
+round 3 of 10`. That line is the answer to "why did it stop", and the last marker beside it is the last
+request the model saw. Every surface counts rounds from 1, and the wrap-up line names the cap instead of
+a round, since the forced call is the one that is not counted. Open a marker to read its
 request, or use its download link to keep the exact JSON; a request over two million characters is
 download-only. Each user message also carries a `turn N` badge, the number a download is named with.
 
@@ -224,8 +225,10 @@ toward. That seam is marked now, though where it shows up depends on whose round
 channel inherits with no code of its own. A *worker's* rounds never reach that method: they arrive as
 `subagent` card entries by way of `ChannelUI.show_subagent`, and the terminal offers no frame for those,
 so the call is a documented no-op there. What the terminal does get is the ending itself:
-`ChannelUI.show_ending` prints one line (`[researcher] ended: tool-use limit reached at round 10 of 10`)
-for every entry-agent and sub-agent loop. A worker's boundary is drawn in full in the web UI's sub-agent card,
+the terminal channel prints one line per ending
+(`[researcher] ended: tool-use limit of 10 rounds reached; answered on a forced wrap-up call`) for every
+entry-agent and sub-agent loop, and a channel with no ending frame of its own is told only of the two
+endings that are not routine (the cap and an error). A worker's boundary is drawn in full in the web UI's sub-agent card,
 carrying which injection it was and the exact words the worker was given (see
 [Delegation](delegation.md)). Either way the record says why the answer is thinner rather than reading
 as one that simply ran short.
