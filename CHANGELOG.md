@@ -153,6 +153,9 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.34.0 or newer
   emits no turn event on any client, so wiring `client.events` closes the gap for every other direct
   client call but not this one. A `/plan` turn's recorded cost is short by exactly one call per review
   round, with no qualifier able to say so.
+- **The per-agent cost breakdown names the entry agent by its configured name.** The entry agent's own
+  event sink is now wired beside its client's, so its calls carry its name (`assistant` by default,
+  whatever `[assistant].agent` says otherwise) and a call no run claimed is labelled `unattributed`.
 - **`kokua export` writes a conversation as Markdown.** `transcript_export.render_markdown` renders a
   saved conversation's header, each turn's user message, reasoning, tool calls with their arguments
   and results, sub-agent cards, and what it cost, into one Markdown document a person can read, diff,

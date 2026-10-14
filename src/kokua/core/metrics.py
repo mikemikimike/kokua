@@ -41,24 +41,18 @@ def record_event(event) -> None:
         metrics(event)
 
 
+# The label for a call no run claimed: every agent run now stamps its name (the entry agent's
+# included, since its own sink is wired), so this marks a call made outside any run.
+UNATTRIBUTED = "unattributed"
+
+
 class TurnMetrics:
     """One turn's model calls, accumulated as they finish.
 
     Attribution is by the events' ``agent`` field, which mirrors ``StreamChunk.agent`` for exactly
     this purpose, so an entry agent's calls, a workflow critic's, and a spawned worker's stay
-    distinguishable in a single sink. ``None`` is the entry agent, which is the only agent that
-    names itself by not having a name.
+    distinguishable in a single sink. The entry agent appears under its configured name.
     """
-
-    # A fixed label, not read from config: the entry agent's actual name is whatever `[assistant].agent`
-    # names it, which this module has no way to look up (and should not import `kokua.config` to do).
-    # It exists at all only because `turns.py` wires `agent.model_client.events`, not `agent.events`, for
-    # the entry agent's client; a sink on the client sees that client's own turn events unattributed
-    # (`event.agent` is `None`), which is what this mapping labels. Wiring `agent.events` instead would
-    # attribute those calls to the agent's configured name (the entry agent is always built with one, see
-    # `core/build.py`'s `SkillAgent(name=agent_name, ...)`), and this mapping from `None` would never fire.
-    # `[assistant].agent` can still change the label: a rename changes what the export prints.
-    ENTRY_AGENT = "assistant"
 
     def __init__(self) -> None:
         self._calls: list[dict] = []
@@ -69,7 +63,7 @@ class TurnMetrics:
         usage = event.usage if isinstance(event.usage, dict) else None
         self._calls.append(
             {
-                "agent": event.agent or self.ENTRY_AGENT,
+                "agent": event.agent or UNATTRIBUTED,
                 "model": str(event.model or ""),
                 "seconds": float(event.duration_s or 0.0),
                 "input_tokens": _int_or_none(usage, "input_tokens"),

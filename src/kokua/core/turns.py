@@ -510,11 +510,16 @@ class TurnRunner:
         # Recorded on the tracker entry the serve loop already added for this conversation, so routing
         # can find this turn's bus by conversation id alone.
         self._tracker.attach_bus(conversation_id, bus)
-        # The client carries the forwarder, not this turn's accumulator: the forwarder holds no turn
-        # state, so it is safe as the durable client-wide setting AIMU calls it, and the contextvar
-        # above is what keeps concurrent turns on other conversations out of this record. Assigned
-        # here rather than at agent build time only because a test may inject its own client.
+        # The forwarder is wired twice, and each does a different job. The client carries it for events
+        # emitted outside a run. The agent carries it so AIMU's loop installs it as the run's scoped sink,
+        # which stamps the agent's name, round, and run id on every event (the client's included) and
+        # sends the loop's own events (`RunFinished`, `ToolCalled`) there; wired on the client alone, the
+        # entry agent's ending never reached Kokua. The forwarder holds no turn state, so it is safe as a
+        # durable setting; the contextvar above is what keeps concurrent turns on other conversations out
+        # of this record. Assigned here rather than at agent build time only because a test may inject
+        # its own client.
         agent.model_client.events = record_event
+        agent.events = record_event
         # Record this turn's output for a user who switches into its conversation before it finishes;
         # ended below by `_persist` (and again in the `finally`, for a turn that never got that far).
         self._ui.begin_catch_up(conversation_id, msg.text, msg.images)
@@ -1283,6 +1288,7 @@ class TurnRunner:
             # See the identical assignment (and its comment) in `reactive`: the forwarder is the durable,
             # client-wide setting, and the contextvar above is what keeps this run's record isolated.
             agent.model_client.events = record_event
+            agent.events = record_event
             # The agent doesn't reset on run (the system prompt lives on the client), so the
             # pre-run length is a stable start index for the exchange.
             start = len(agent.model_client.messages)

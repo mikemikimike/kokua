@@ -1508,6 +1508,23 @@ async def test_an_unattended_turn_opens_a_catch_up_record_for_the_conversation_i
     assert channel.calls.index(("end", task_id)) > channel.calls.index(("begin", task_id, "run the report"))
 
 
+async def test_the_entry_agents_own_run_events_reach_the_turns_sink(tmp_path, monkeypatch):
+    """The loop emits RunFinished to the agent's sink, not the client's; without wiring it the
+    entry agent's ending was invisible to everything Kokua records."""
+    from aimu.events import RunFinished
+
+    from kokua.core import metrics
+
+    seen = []
+    original = metrics.record_event
+    monkeypatch.setattr("kokua.core.turns.record_event", lambda event: (seen.append(event), original(event)))
+    assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient(["hello"]))
+    await assistant._handle(ChannelMessage(text="hello", channel="fake"), conversation_id=assistant._active_id)
+
+    finished = [event for event in seen if isinstance(event, RunFinished)]
+    assert len(finished) == 1 and finished[0].ended_by == "answered"
+
+
 async def test_a_turn_records_what_it_cost(tmp_path):
     """The sink is attached for the turn, so its model calls land in the conversation's metadata."""
     assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient(["hello"]))
