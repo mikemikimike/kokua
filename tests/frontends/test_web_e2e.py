@@ -311,8 +311,7 @@ def test_an_answer_stays_above_a_tool_call_that_followed_it(page, live_server):
 
     tail = page.locator(".bubble.assistant", has_text="And here is what it said.")
     expect(tail).to_be_visible(timeout=10_000)
-    # The round marker the call's completion draws after the output is not one of the blocks being ordered.
-    blocks = page.locator("#log > .bubble:not(.request)")
+    blocks = page.locator("#log > .bubble")
     # user, the first answer, the tool card, the second answer -- in the order they were emitted.
     expect(blocks).to_have_count(4)
     expect(blocks.nth(1)).to_contain_text(REPLY)
@@ -2581,7 +2580,7 @@ def test_alert_cards_group_and_guard_their_controls(page, live_server):
     expect(cards.first.locator(".alert-link")).to_have_attribute("href", "https://auth.example/x")
 
 
-# --- What the model saw: round markers, the size-safe viewer, endings, turn badges ---------------
+# --- What the model saw: round buttons, the round panel, the size-safe viewer, turn badges -------
 
 _REQUEST_BODY = {
     "messages": [
@@ -2592,10 +2591,14 @@ _REQUEST_BODY = {
 }
 
 
-def _request_seed(body=None, *, call=None, ending=None, subagent=None, saved=True, response=None):
-    """A seeded conversation whose one turn recorded a request and its ending, as `replay_items` reads them.
+def _request_seed(
+    body=None, *, call=None, ending=None, subagent=None, saved=True, response=None, messages=None, rounds=None
+):
+    """A seeded conversation whose one turn recorded its requests and its ending, as `replay_items` reads them.
 
-    `response`, when given, is saved as the round's recorded response (`{"text", "thinking", "tool_calls"}`).
+    `response`, when given, is saved as the first round's recorded response (`{"text", "thinking",
+    "tool_calls"}`). `rounds` is a list of per-round overrides of the call record (round numbers follow the
+    list), for a turn with more than one model call; `messages` replaces the stored transcript.
     """
     from aimu.sessions import Session, TinyDBSessionStore
 
@@ -2604,30 +2607,33 @@ def _request_seed(body=None, *, call=None, ending=None, subagent=None, saved=Tru
     def seed(config):
         text = json.dumps(_REQUEST_BODY if body is None else body)
         response_ref = payloads.save_text(config.payloads_path, json.dumps(response)) if response else None
-        record = {
-            "run_id": "entry-1",
-            "parent_run_id": None,
-            "agent": "assistant",
-            "round": 0,
-            "provider": "Mock",
-            "endpoint": "http://batlin.local:8000/v1",
-            "model": "qwen",
-            "message_count": 2,
-            "tool_count": 1,
-            "payload_chars": len(text),
-            "payload_ref": payloads.save_text(config.payloads_path, text) if saved else None,
-            "stop_reason": "stop",
-            "response_ref": response_ref,
-            "error": None,
-            "ts": "2026-08-10T00:00:00",
-        }
-        record.update(call or {})
+        calls = []
+        for number, override in enumerate(rounds or [call or {}]):
+            record = {
+                "run_id": "entry-1",
+                "parent_run_id": None,
+                "agent": "assistant",
+                "round": number,
+                "provider": "Mock",
+                "endpoint": "http://batlin.local:8000/v1",
+                "model": "qwen",
+                "message_count": 2,
+                "tool_count": 1,
+                "payload_chars": len(text),
+                "payload_ref": payloads.save_text(config.payloads_path, text) if saved else None,
+                "stop_reason": "stop",
+                "response_ref": response_ref if number == 0 else None,
+                "error": None,
+                "ts": "2026-08-10T00:00:00",
+            }
+            record.update(override)
+            calls.append(record)
         ending_record = {
             "run_id": "entry-1",
             "parent_run_id": None,
             "agent": "assistant",
             "ended_by": "answered",
-            "round": 0,
+            "round": len(calls) - 1,
             "max_iterations": 10,
             "error": None,
             "ts": "2026-08-10T00:00:00",
@@ -2637,14 +2643,14 @@ def _request_seed(body=None, *, call=None, ending=None, subagent=None, saved=Tru
             "title": "seeded",
             "created_at": "2026-08-10T00:00:00",
             "updated_at": "2026-08-10T00:00:00",
-            "requests": {"0": {"entry_run_id": "entry-1", "calls": [record], "endings": [ending_record]}},
+            "requests": {"0": {"entry_run_id": "entry-1", "calls": calls, "endings": [ending_record]}},
         }
         if subagent:
             metadata["subagent"] = {"0": subagent}
         TinyDBSessionStore(str(config.sessions_path)).save(
             Session(
                 key="seeded",
-                messages=[{"role": "user", "content": "go"}, {"role": "assistant", "content": "done"}],
+                messages=messages or [{"role": "user", "content": "go"}, {"role": "assistant", "content": "done"}],
                 metadata=metadata,
             )
         )
@@ -2652,49 +2658,127 @@ def _request_seed(body=None, *, call=None, ending=None, subagent=None, saved=Tru
     return seed
 
 
-def _open_first_message(marker):
+_TOOL_TURN = [
+    {"role": "user", "content": "what time is it?"},
+    {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"type": "function", "function": {"name": "get_time", "arguments": {}}, "id": "1"}],
+    },
+    {"role": "tool", "name": "get_time", "content": "21:15", "tool_call_id": "1"},
+    {"role": "assistant", "content": "It is 21:15."},
+]
+
+
+def _open_round(page, index=0):
+    """Click the index-th round button in the log and return the panel it opens."""
+    page.locator("#log button.round-button").nth(index).click()
+    panel = page.locator("#round-panel")
+    expect(panel).to_be_visible()
+    return panel
+
+
+def _open_first_message(panel):
     """Open the request's `messages` node, then its first message, so that message's strings render."""
-    messages = marker.locator(".json-node", has_text="messages").first
+    messages = panel.locator(".json-node", has_text="messages").first
     messages.locator("> summary").click()
     messages.locator(".json-node").first.locator("> summary").click()
     return messages
 
 
-def test_a_round_marker_summarizes_without_fetching_and_expands_lazily(page, live_server):
+def test_a_round_button_opens_the_panel_and_expands_lazily(page, live_server):
     requested = []
     page.on("request", lambda request: requested.append(request.url))
     _open(page, live_server(seed=_request_seed()))
 
-    marker = page.locator("#log .bubble.request").first
-    expect(marker.locator(".fold-kind")).to_have_text("round 1")
-    expect(marker.locator(".fold-metric")).to_contain_text("2 messages · 1 tools")
-    assert not any("/payloads/" in url for url in requested)  # summary drawn without a fetch
+    button = page.locator("#log button.round-button")
+    expect(button).to_have_count(1)
+    expect(button).to_have_text("{ }")
+    expect(button).to_have_attribute("title", "round 1: request and response")
+    expect(button).to_have_attribute("data-round", "1")
+    expect(button).to_have_attribute("aria-controls", "round-panel")
+    expect(button).to_have_attribute("aria-expanded", "false")
+    expect(page.locator("#round-panel")).to_be_hidden()
+    assert not any("/payloads/" in url for url in requested)  # nothing fetched until a round is shown
 
-    marker.locator("> .fold-header").click()
-    expect(marker.locator(".request-note")).to_contain_text("batlin.local")
-    expect(marker.locator(".request-download")).to_have_attribute("href", re.compile(r"\?download=turn-1-round-1"))
-    messages = marker.locator(".json-node", has_text="messages").first
+    panel = _open_round(page)
+    expect(button).to_have_attribute("aria-expanded", "true")
+    expect(panel.locator(".round-panel-title")).to_have_text("Turn 1 · round 1")
+    expect(panel.locator(".round-panel-agent")).to_have_text("assistant")
+    expect(panel.locator(".round-summary")).to_contain_text("2 messages · 1 tools")
+    expect(panel.locator(".request-note")).to_contain_text("batlin.local")
+    expect(panel.locator(".request-download")).to_have_attribute("href", re.compile(r"\?download=turn-1-round-1"))
+    messages = panel.locator(".json-node", has_text="messages").first
     expect(messages.locator(".json-string")).to_have_count(0)  # children not rendered until opened
     messages.locator("> summary").click()
     expect(messages.locator(".json-string")).to_have_count(0)  # the first message is still unopened
     messages.locator(".json-node").first.locator("> summary").click()
-    expect(marker.locator(".json-string", has_text="line one")).to_be_visible()
-    assert "\\n" not in marker.locator(".json-string", has_text="line one").inner_text()
-    expect(page.locator("#log .ending")).to_contain_text("ended: answered at round 1 of 10")
+    expect(panel.locator(".json-string", has_text="line one")).to_be_visible()
+    assert "\\n" not in panel.locator(".json-string", has_text="line one").inner_text()
+    expect(page.locator("#log .bubble.request")).to_have_count(0)
+    expect(page.locator("#log .ending")).to_have_count(0)
     expect(page.locator(".bubble.user .turn-badge").first).to_have_text("turn 1")
+
+
+def test_a_two_round_turn_puts_each_button_on_its_own_output(page, live_server):
+    _open(page, live_server(seed=_request_seed(messages=_TOOL_TURN, rounds=[{}, {}])))
+    first = page.locator("#log > .bubble.tool .round-button")
+    second = page.locator("#log > .bubble.assistant .round-button")
+    expect(first).to_have_count(1)
+    expect(first).to_have_attribute("data-round", "1")
+    expect(second).to_have_count(1)
+    expect(second).to_have_attribute("data-round", "2")
+    expect(page.locator("#log .round-button")).to_have_count(2)
+    expect(page.locator("#log .bubble.request")).to_have_count(0)
+    expect(page.locator("#log .ending")).to_have_count(0)
+
+
+def test_the_panel_opens_selects_swaps_and_closes(page, live_server):
+    _open(page, live_server(seed=_request_seed(messages=_TOOL_TURN, rounds=[{}, {}])))
+    tool_card = page.locator("#log > .bubble.tool")
+    answer = page.locator("#log > .bubble.assistant")
+    panel = page.locator("#round-panel")
+    expect(panel).to_be_hidden()
+    expect(page.locator("body")).not_to_have_class(re.compile("round-panel-open"))
+
+    _open_round(page, 0)
+    expect(tool_card).to_have_class(re.compile(r"\bround-selected\b"))
+    expect(page.locator("body")).to_have_class(re.compile("round-panel-open"))
+    expect(panel.locator(".round-panel-title")).to_have_text("Turn 1 · round 1")
+
+    _open_round(page, 1)  # the other round's button swaps the contents
+    expect(panel.locator(".round-panel-title")).to_have_text("Turn 1 · round 2")
+    expect(answer).to_have_class(re.compile(r"\bround-selected\b"))
+    expect(tool_card).not_to_have_class(re.compile(r"\bround-selected\b"))
+    expect(page.locator("#log .round-selected")).to_have_count(1)
+
+    page.locator("#log button.round-button").nth(1).click()  # the same button again closes it
+    expect(panel).to_be_hidden()
+    expect(answer).not_to_have_class(re.compile(r"\bround-selected\b"))
+    expect(page.locator("body")).not_to_have_class(re.compile("round-panel-open"))
+
+    _open_round(page, 0)
+    page.keyboard.press("Escape")
+    expect(panel).to_be_hidden()
+    expect(page.locator("#log .round-selected")).to_have_count(0)
+
+    _open_round(page, 0)
+    page.locator("#round-panel .round-panel-close").click()
+    expect(panel).to_be_hidden()
+    expect(page.locator("#log .round-selected")).to_have_count(0)
+    expect(page.locator("#log button.round-button").first).to_have_attribute("aria-expanded", "false")
 
 
 def test_a_long_string_is_clamped_until_show_all(page, live_server):
     body = {"messages": [{"role": "user", "content": "x" * 10_000}]}
     _open(page, live_server(seed=_request_seed(body)))
-    marker = page.locator("#log .bubble.request").first
-    marker.locator("> .fold-header").click()
-    _open_first_message(marker)
-    content = marker.locator(".json-string", has_text="xxxx")
+    panel = _open_round(page)
+    _open_first_message(panel)
+    content = panel.locator(".json-string", has_text="xxxx")
     assert len(content.inner_text()) == 4000
-    expect(marker.locator(".json-more")).to_have_text("show all (10000 chars)")
-    marker.locator(".json-more").click()
-    expect(marker.locator(".json-more")).to_have_count(0)
+    expect(panel.locator(".json-more")).to_have_text("show all (10000 chars)")
+    panel.locator(".json-more").click()
+    expect(panel.locator(".json-more")).to_have_count(0)
     assert len(content.inner_text()) == 10_000
 
 
@@ -2702,50 +2786,45 @@ def test_a_long_image_data_string_shows_as_image_data(page, live_server):
     data = "data:image/png;base64," + "A" * 4978
     body = {"messages": [{"role": "user", "content": data}]}
     _open(page, live_server(seed=_request_seed(body)))
-    marker = page.locator("#log .bubble.request").first
-    marker.locator("> .fold-header").click()
-    _open_first_message(marker)
-    expect(marker.locator(".json-image")).to_contain_text("image data")
-    expect(marker.locator(".json-more")).to_have_text("show all (5000 chars)")
+    panel = _open_round(page)
+    _open_first_message(panel)
+    expect(panel.locator(".json-image")).to_contain_text("image data")
+    expect(panel.locator(".json-more")).to_have_text("show all (5000 chars)")
 
 
 def test_a_request_over_the_ceiling_is_download_only(page, live_server):
     requested = []
     page.on("request", lambda request: requested.append(request.url))
     _open(page, live_server(seed=_request_seed(call={"payload_chars": 3_000_000})))
-    marker = page.locator("#log .bubble.request").first
-    marker.locator("> .fold-header").click()
-    expect(marker.locator(".round-request .request-empty")).to_contain_text("too large to show here")
-    expect(marker.locator(".request-download")).to_have_count(1)
+    panel = _open_round(page)
+    expect(panel.locator(".round-request .request-empty")).to_contain_text("too large to show here")
+    expect(panel.locator(".request-download")).to_have_count(1)
     assert not any("/payloads/" in url for url in requested)
 
 
 def test_a_request_with_no_payload_says_not_captured(page, live_server):
     _open(page, live_server(seed=_request_seed(saved=False)))
-    marker = page.locator("#log .bubble.request").first
-    marker.locator("> .fold-header").click()
-    expect(marker.locator(".round-request .request-empty")).to_have_text("not captured")
-    expect(marker.locator(".request-download")).to_have_count(0)
+    panel = _open_round(page)
+    expect(panel.locator(".round-request .request-empty")).to_have_text("not captured")
+    expect(panel.locator(".request-download")).to_have_count(0)
 
 
 def test_a_round_shows_its_request_and_its_response(page, live_server):
-    """A round is one request and the one response it got; both belong in the same marker."""
+    """A round is one request and the one response it got; both belong in the same panel."""
     response = {
         "text": "done",
         "thinking": "I should look it up first",
         "tool_calls": [{"name": "lookup", "arguments": {"q": "aimu"}, "id": "x"}],
     }
     _open(page, live_server(seed=_request_seed(response=response)))
-    marker = page.locator("#log .bubble.request").first
-    expect(marker.locator(".fold-payload")).to_have_text("request and response")
-    marker.locator("> .fold-header").click()
+    panel = _open_round(page)
 
-    request = marker.locator(".round-request")
+    request = panel.locator(".round-request")
     expect(request.locator(".round-section-title")).to_have_text("Request")
     expect(request.locator(".request-download")).to_have_attribute("href", re.compile(r"-request\.json$"))
     expect(request.locator(".json-node", has_text="messages")).to_have_count(1)
 
-    reply = marker.locator(".round-response")
+    reply = panel.locator(".round-response")
     expect(reply.locator(".round-section-title")).to_have_text("Response")
     expect(reply.locator(".response-download")).to_have_attribute("href", re.compile(r"-response\.json$"))
     expect(reply.locator(".response-thinking")).to_contain_text("I should look it up first")
@@ -2756,40 +2835,83 @@ def test_a_round_shows_its_request_and_its_response(page, live_server):
 
 def test_a_round_with_no_recorded_response_says_so(page, live_server):
     _open(page, live_server(seed=_request_seed()))
-    marker = page.locator("#log .bubble.request").first
-    marker.locator("> .fold-header").click()
-    expect(marker.locator(".round-response .request-empty")).to_have_text("not captured")
-    expect(marker.locator(".round-response .response-download")).to_have_count(0)
+    panel = _open_round(page)
+    expect(panel.locator(".round-response .request-empty")).to_have_text("not captured")
+    expect(panel.locator(".round-response .response-download")).to_have_count(0)
 
 
 def test_a_request_with_no_endpoint_names_its_nearest_equivalent(page, live_server):
     _open(page, live_server(seed=_request_seed(call={"endpoint": None})))
-    marker = page.locator("#log .bubble.request").first
-    marker.locator("> .fold-header").click()
-    expect(marker.locator(".request-note")).to_contain_text("nearest equivalent: no wire request")
+    panel = _open_round(page)
+    expect(panel.locator(".request-note")).to_contain_text("nearest equivalent: no wire request")
 
 
-def test_an_error_ending_is_worded_like_the_terminal(page, live_server):
-    ending = {"ended_by": "error", "error": "boom", "round": 3, "max_iterations": None}
+def test_an_answered_ending_is_shown_in_the_panel_and_does_not_tint(page, live_server):
+    _open(page, live_server(seed=_request_seed()))
+    button = page.locator("#log button.round-button")
+    expect(button).not_to_have_class(re.compile(r"\bwarn\b"))
+    panel = _open_round(page)
+    expect(panel.locator(".round-ending")).to_have_text("ended: answered at round 1 of 10")
+
+
+def test_an_error_ending_is_worded_like_the_terminal_and_tints_the_button(page, live_server):
+    ending = {"ended_by": "error", "error": "boom", "round": 0, "max_iterations": None}
     _open(page, live_server(seed=_request_seed(ending=ending)))
-    expect(page.locator("#log .ending")).to_have_text("ended: error (boom) at round 4")
+    expect(page.locator("#log button.round-button")).to_have_class(re.compile(r"\bwarn\b"))
+    panel = _open_round(page)
+    expect(panel.locator(".round-ending")).to_have_text("ended: error (boom) at round 1")
+    expect(page.locator("#log .ending")).to_have_count(0)
 
 
-def test_a_wrap_up_ending_reads_as_the_tool_use_limit(page, live_server):
-    ending = {"ended_by": "wrap_up", "round": 10, "max_iterations": 10}
-    _open(page, live_server(seed=_request_seed(ending=ending)))
-    expect(page.locator("#log .ending")).to_have_text(
+def test_a_wrap_up_ending_reads_as_the_tool_use_limit_and_tints_the_last_round(page, live_server):
+    ending = {"ended_by": "wrap_up", "round": 1, "max_iterations": 10}
+    _open(page, live_server(seed=_request_seed(messages=_TOOL_TURN, rounds=[{}, {}], ending=ending)))
+    buttons = page.locator("#log button.round-button")
+    expect(buttons.nth(0)).not_to_have_class(re.compile(r"\bwarn\b"))
+    expect(buttons.nth(1)).to_have_class(re.compile(r"\bwarn\b"))
+    panel = _open_round(page, 1)
+    expect(panel.locator(".round-ending")).to_have_text(
         "ended: tool-use limit of 10 rounds reached; answered on a forced wrap-up call"
     )
+    _open_round(page, 0)
+    expect(panel.locator(".round-ending")).to_have_count(0)  # only the last round carries the ending
 
 
 def test_an_ending_with_no_known_cause_or_error_name_reads_plainly(page, live_server):
     ending = {"ended_by": None, "round": 1, "max_iterations": 10}
     _open(page, live_server(seed=_request_seed(ending=ending)))
-    expect(page.locator("#log .ending")).to_have_text("ended at round 2 of 10")
+    panel = _open_round(page)
+    expect(panel.locator(".round-ending")).to_have_text("ended at round 2 of 10")
 
 
-def test_a_subagent_card_shows_its_request_marker_and_ending_inside_its_body(page, live_server):
+def test_a_round_with_no_output_gets_an_orphan_button(page, live_server):
+    seed = _request_seed(messages=[{"role": "user", "content": "go"}])
+    _open(page, live_server(seed=seed))
+    orphan = page.locator("#log > .round-orphan")
+    expect(orphan).to_have_count(1)
+    expect(orphan.locator("button.round-button")).to_have_count(1)
+    expect(page.locator("#log .bubble.user .round-button")).to_have_count(0)
+    panel = _open_round(page)
+    expect(panel.locator(".round-panel-title")).to_have_text("Turn 1 · round 1")
+
+
+def test_a_narrow_viewport_overlays_the_panel_instead_of_narrowing_the_log(page, live_server):
+    page.set_viewport_size({"width": 700, "height": 900})
+    _open(page, live_server(seed=_request_seed()))
+    before = page.locator("#log").bounding_box()["width"]
+    _open_round(page)
+    assert page.locator("#log").bounding_box()["width"] == before
+
+
+def test_a_wide_viewport_narrows_the_log_for_the_panel(page, live_server):
+    page.set_viewport_size({"width": 1400, "height": 900})
+    _open(page, live_server(seed=_request_seed()))
+    before = page.locator("#log").bounding_box()["width"]
+    _open_round(page)
+    assert page.locator("#log").bounding_box()["width"] < before
+
+
+def test_a_subagent_card_carries_its_round_button_and_ending_inside_its_body(page, live_server):
     entries = [
         {"id": "r-1", "role": "researcher", "task": "compare pricing", "status": "running"},
         {
@@ -2808,20 +2930,89 @@ def test_a_subagent_card_shows_its_request_marker_and_ending_inside_its_body(pag
             },
         },
         {"id": "r-1", "status": "done"},
-        {"id": "r-1", "append": {"kind": "ending", "ended_by": "answered", "round": 0, "max_iterations": 5}},
+        {"id": "r-1", "append": {"kind": "ending", "ended_by": "wrap_up", "round": 0, "max_iterations": 5}},
     ]
     _open(page, live_server(seed=_request_seed(subagent=entries)))
     card = page.locator(".bubble.subagent")
     card.locator("> .fold-header").click()
-    expect(card.locator("> .fold-body > .bubble.request")).to_have_count(1)
-    expect(card.locator("> .fold-body > .bubble.request .fold-metric")).to_contain_text("3 messages")
-    expect(card.locator("> .fold-body > .ending")).to_have_text("ended: answered at round 1 of 5")
+    expect(card.locator(".bubble.request")).to_have_count(0)
+    expect(card.locator(".ending")).to_have_count(0)
+    button = card.locator("button.round-button")
+    expect(button).to_have_count(1)
+    expect(button).to_have_class(re.compile(r"\bwarn\b"))  # the ending arrived after the card's status
+    button.click()
+    panel = page.locator("#round-panel")
+    expect(panel).to_be_visible()
+    expect(panel.locator(".round-summary")).to_contain_text("3 messages")
+    expect(panel.locator(".round-panel-agent")).to_have_text("researcher")
+    expect(panel.locator(".round-ending")).to_contain_text("tool-use limit of 5 rounds reached")
 
 
-def test_a_live_turn_draws_a_round_marker_and_numbers_the_user_bubble(page, live_server):
+def test_a_live_turn_draws_a_round_button_and_numbers_the_user_bubble(page, live_server):
     _open(page, live_server(emit_request=True))
     page.fill("#msg", "hello")
     page.click("#send")
-    expect(page.locator("#log .bubble.request")).to_have_count(1, timeout=10_000)
-    expect(page.locator("#log .ending")).to_have_count(1)
+    expect(page.locator("#log button.round-button")).to_have_count(1, timeout=10_000)
+    expect(page.locator("#log .bubble.request")).to_have_count(0)
+    expect(page.locator("#log .ending")).to_have_count(0)
     expect(page.locator(".bubble.user .turn-badge").first).to_have_text("turn 1")
+    expect(page.locator(".bubble.user", has_text="hello")).to_be_visible()
+    expect(page.locator(".bubble", has_text=REPLY)).to_be_visible(timeout=10_000)
+    expect(page.locator("#log .bubble.assistant .round-button")).to_have_count(1)
+    _open_round(page)
+    expect(page.locator("#round-panel .round-summary")).to_be_visible()
+
+
+def test_a_round_button_looks_past_a_mid_turn_message_to_the_output_above_it(page, live_server):
+    """Live, a message typed into the running turn is drawn at once (marked `sent-mid-turn`, the server's
+    `mid-turn` mark comes later) and can sit between a round's output and its request."""
+    _open(page, live_server(seed=_request_seed()))
+    page.evaluate(
+        """() => {
+          const typed = addBubble("user", "typed mid-turn", new Date());
+          typed.classList.add("sent-mid-turn");
+          notice("a notice");
+          renderRequest({ round: 1, run_id: "entry-1", agent: "assistant", payload_chars: 1, message_count: 1 });
+        }"""
+    )
+    expect(page.locator("#log .round-orphan")).to_have_count(0)
+    expect(page.locator("#log > .bubble.assistant .round-button")).to_have_count(2)
+
+
+def test_a_turn_opening_user_bubble_still_orphans_a_round(page, live_server):
+    _open(page, live_server(seed=_request_seed()))
+    page.evaluate(
+        """() => {
+          addBubble("user", "a fresh turn", new Date());
+          renderRequest({ round: 0, run_id: "entry-2", agent: "assistant", payload_chars: 1, message_count: 1 });
+        }"""
+    )
+    expect(page.locator("#log > .round-orphan")).to_have_count(1)
+
+
+def test_the_panel_scrolls_on_its_own_and_returns_focus_when_closed(page, live_server):
+    page.set_viewport_size({"width": 1400, "height": 600})
+    body = {"messages": [{"role": "user", "content": f"message {n}"} for n in range(60)]}
+    _open(page, live_server(seed=_request_seed(body)))
+    panel = _open_round(page)
+    messages = panel.locator(".json-node", has_text="messages").first
+    messages.locator("> summary").click()
+    expect(panel.locator(".json-node")).to_have_count(61)
+    for node in panel.locator(".json-node").all()[1:]:
+        node.locator("> summary").click()
+    sizes = page.evaluate(
+        """() => {
+          const panel = document.getElementById("round-panel");
+          const root = document.documentElement;
+          return { own: panel.scrollHeight - panel.clientHeight, page: root.scrollHeight - root.clientHeight,
+                   scrolled: window.scrollY };
+        }"""
+    )
+    assert sizes["own"] > 0  # the panel scrolls itself
+    assert sizes["page"] <= 0 and sizes["scrolled"] == 0  # and the page does not
+
+    page.keyboard.press("Escape")
+    expect(page.locator("#log button.round-button")).to_be_focused()
+    _open_round(page)
+    page.locator("#round-panel .round-panel-close").click()
+    expect(page.locator("#log button.round-button")).to_be_focused()

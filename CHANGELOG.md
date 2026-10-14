@@ -151,22 +151,26 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.34.0 or newer
   branch, unattended runs included, and dropped or kept with the turn when a conversation is branched or
   truncated. `[assistant].capture_requests` (default `true`, hot) turns the payload files off; endings
   are recorded either way. `CORE_RUNTIME_SETTINGS` now holds two entries.
-- **The web UI shows what the model saw.** A round marker per model call under that round's output, its
-  summary drawn without a fetch; opening it shows the round's two halves, the request (fetched once and
-  rendered a level at a time) and the response the model returned (reasoning, requested tool calls, text),
-  with long strings cut behind "show all", image data labeled, and no inline request tree above two million
-  characters. Each half links `/payloads/<sha256>?download=<name>` (accepted only for
-  `^[A-Za-z0-9._-]{1,100}\Z`, served as an attachment), each loop ends with an `ended: ...` line worded as
-  the terminal and export word it (rounds counted from 1), and the user bubble carries a `turn N` badge.
+- **The web UI shows what the model saw.** A `{ }` button per model call on that round's own output, which
+  opens a collapsible right panel (it narrows the conversation, and overlays it below 900px; Escape, the
+  close button, or the same button closes it). Its summary is drawn without a fetch; the panel shows the
+  round's two halves, the request (fetched once and rendered a level at a time) and the response the model
+  returned (reasoning, requested tool calls, text), with long strings cut behind "show all", image data
+  labeled, and no inline request tree above two million characters. Each half links
+  `/payloads/<sha256>?download=<name>` (accepted only for `^[A-Za-z0-9._-]{1,100}\Z`, served as an
+  attachment). Each loop's `ended: ...` wording (as the terminal and export word it, rounds counted from 1)
+  appears in the panel of its last round, a wrap-up or error tinting that round's button, with the old
+  inline line kept only for an ending with no round to ride; the user bubble carries a `turn N` badge. No
+  marker rows or ending lines are drawn in the log, and the terminal still prints every ending.
 - **Those records reach the channel live.** `ChannelUI.show_request` / `show_ending` and the optional
   `RichChannel.send_request` / `send_ending` carry a `request` frame per completed entry-agent call and an
   `ending` frame per loop; a sub-agent's appear as `request` and `ending` entries in its own card
-  (`SubagentReporter.append`). A channel without the frames shows no request marker and gets one plain
+  (`SubagentReporter.append`). A channel without the frames shows no round button and gets one plain
   line for a `wrap_up` or `error` ending only, such as `[assistant] ended: tool-use limit of 10 rounds
   reached; answered on a forced wrap-up call`. Kokua's terminal channel defines `send_turn` and
   `send_ending` itself and prints every ending and the `[turn N]` line; no other channel gets the turn
   line. Every surface counts rounds from 1.
-- **Turns are numbered once, and replay shows the markers.** `core/conversations.py`'s `turn_numbers`
+- **Turns are numbered once, and replay shows the round buttons.** `core/conversations.py`'s `turn_numbers`
   gives each turn its ordinal, skipping loop nudges, agents' messages, and messages typed mid-turn, and the
   live `[turn N]` line (`ChannelUI.show_turn`; printed by the terminal channel only), the
   `turn_saved` frame's new `turn` field, the history `user` item's `turn`, and the export's `## Turn N`
