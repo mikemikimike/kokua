@@ -2720,6 +2720,53 @@ def test_a_round_button_opens_the_panel_and_expands_lazily(page, live_server):
     expect(page.locator(".bubble.user .turn-badge").first).to_have_text("turn 1")
 
 
+def _assert_button_on_header_line(card):
+    """A foldable card's round button sits on its header line, not wrapped below the card."""
+    button = card.locator("> .round-slot > .round-button").first.bounding_box()
+    header = card.locator("> .fold-header").bounding_box()
+    assert button is not None and header is not None
+    assert header["y"] - 2 <= button["y"] < header["y"] + header["height"], (button, header)
+    assert button["x"] + button["width"] <= header["x"] + header["width"] + 2, (button, header)
+
+
+def test_a_foldable_cards_round_button_sits_on_its_header_line(page, live_server):
+    _open(page, live_server(seed=_request_seed(messages=_TOOL_TURN, rounds=[{}, {}])))
+    tool = page.locator("#log > .bubble.tool").first
+    _assert_button_on_header_line(tool)
+    collapsed = "collapsed" in (tool.get_attribute("class") or "")
+    tool.locator("> .round-slot > .round-button").click()
+    expect(page.locator("#round-panel")).to_be_visible()
+    assert ("collapsed" in (tool.get_attribute("class") or "")) == collapsed  # opening the panel does not fold
+
+
+def test_a_round_button_inside_a_sub_agent_card_sits_on_its_entrys_header_line(page, live_server):
+    entries = [
+        {"id": "r-1", "role": "researcher", "task": "compare pricing", "status": "running"},
+        {"id": "r-1", "append": {"kind": "tool", "name": "web_search", "arguments": {"q": "x"}, "response": "ok"}},
+        {
+            "id": "r-1",
+            "append": {
+                "kind": "request",
+                "round": 0,
+                "payload_ref": None,
+                "payload_chars": 100,
+                "message_count": 3,
+                "tool_count": 1,
+                "endpoint": "http://x",
+                "stop_reason": "tool_use",
+                "error": None,
+                "agent": "researcher",
+            },
+        },
+        {"id": "r-1", "status": "done"},
+    ]
+    _open(page, live_server(seed=_request_seed(subagent=entries)))
+    card = page.locator(".bubble.subagent")
+    card.locator("> .fold-header").click()
+    nested = card.locator("> .fold-body > .bubble.tool").first
+    _assert_button_on_header_line(nested)
+
+
 def test_a_two_round_turn_puts_each_button_on_its_own_output(page, live_server):
     _open(page, live_server(seed=_request_seed(messages=_TOOL_TURN, rounds=[{}, {}])))
     first = page.locator("#log > .bubble.tool .round-button")
