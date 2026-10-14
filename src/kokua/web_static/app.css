@@ -394,6 +394,12 @@ header { display: flex; align-items: center; justify-content: space-between; gap
 .round-button.warn { color: var(--danger); opacity: 1; }
 .round-selected { outline: 1px solid var(--border); outline-offset: 2px; border-radius: 4px; }
 .round-orphan { margin: 1px 0 1px 14px; }
+/* On a foldable card (thinking, tool, sub-agent) the button cannot live in the header, which is itself
+   the button that folds the card, so it is pinned over the header line's right end and the header
+   gives up that much room, keeping the label and the timestamp clear of it. */
+.foldable:has(> .round-slot) { position: relative; }
+.foldable > .round-slot { position: absolute; top: 0; right: 0; display: flex; gap: 2px; line-height: 1.5; }
+.foldable:has(> .round-slot) > .fold-header { padding-right: calc(var(--round-buttons, 1) * 2.4em); }
 .foldable > .bubble-meta { margin: 0 0 0 14px; }
 .round-section { margin: 4px 0 6px; }
 .round-section-title { color: var(--fg); font-weight: 600; }

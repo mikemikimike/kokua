@@ -1744,7 +1744,19 @@ function addRound(call, container, rounds, agent) {
     if (shownRound === record) closeRoundPanel();
     else openRoundPanel(record);
   });
-  if (output) bubbleMetaRow(output).appendChild(button);
+  if (output && output.classList.contains("foldable")) {
+    // A foldable's header is itself the <button> that folds it, and a button cannot hold another, so
+    // the round button sits in a slot pinned over the header's right end instead (see .round-slot);
+    // the header reserves room for however many buttons the slot holds.
+    let slot = output.querySelector(":scope > .round-slot");
+    if (!slot) {
+      slot = document.createElement("div");
+      slot.className = "round-slot";
+      output.appendChild(slot);
+    }
+    slot.appendChild(button);
+    output.style.setProperty("--round-buttons", String(slot.children.length));
+  } else if (output) bubbleMetaRow(output).appendChild(button);
   else {
     output = document.createElement("div");
     output.className = "round-orphan";
