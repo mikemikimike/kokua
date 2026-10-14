@@ -411,13 +411,13 @@ change. Full rationale, with the code that backs each claim, is in
    toolset's are one `Setting` on the toolset itself, in its own `[<name>]` section. `SettingsTable`,
    built at startup from both, is what still drives the schema, the sanitizer, the hot-apply set, the
    live-apply loop, and the persist path from one place. `CORE_RUNTIME_SETTINGS` holds exactly **two**
-   entries, `[assistant].generate_titles` and `[assistant].capture_requests`, and an addition has to answer both of the questions it did: does
-   the *core* read it (everything a capability reads is that capability's declaration, which is where the
-   `[planning]` flags live), and does a change apply without a restart? `generate_titles` passes because
-   `Assistant._spawn_title` is its only reader and reads it per conversation, and `capture_requests` passes because `TurnRunner` is its only reader and
-   reads it as each turn opens, so a change applies from the next turn; `[assistant].model` passes
-   the first and fails the second, which is why it is startup-only. The entries before it were
-   `[display]`'s `show_thinking` / `show_tools`, retired along with `RuntimeSetting.mirror_on_channel` and
+   entries, `[assistant].generate_titles` and `[assistant].capture_requests`, and an addition has to answer both of
+   the questions it did: does the *core* read it (everything a capability reads is that capability's declaration,
+   which is where the `[planning]` flags live), and does a change apply without a restart? `generate_titles` passes
+   because `Assistant._spawn_title` is its only reader and reads it per conversation, and `capture_requests` passes
+   because `TurnRunner` is its only reader and reads it as each turn opens, so a change applies from the next turn;
+   `[assistant].model` passes the first and fails the second, which is why it is startup-only. The entries before it
+   were `[display]`'s `show_thinking` / `show_tools`, retired along with `RuntimeSetting.mirror_on_channel` and
    `ChannelUI.display_flag` once what reaches a channel stopped being a user setting: a channel now relays
    reasoning and tool calls unconditionally (AIMU's `stream_thinking` / `stream_tools`, both defaulting
    on), and what to *show* is the front end's call to make with the frame in hand. `[agents.*]` is locked by default (matched by

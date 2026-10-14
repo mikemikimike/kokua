@@ -723,10 +723,10 @@ the read and the write. Shutdown cancels a title still in flight rather than awa
 invariant 7 gives about the store closing under a task nobody is watching.
 
 `[assistant] generate_titles` (default `true`) turns the second half off, leaving the placeholder as the
-title. It is the one entry in `CORE_RUNTIME_SETTINGS`, and it is there rather than in a toolset because
-no capability owns it: `Assistant._spawn_title` is the only reader. It is hot rather than startup-only
-because that read happens per conversation, so a change genuinely applies without a restart, which is
-the test the model itself fails. There is no setting for *which* model writes the title, because the
+title. It is one of two entries in `CORE_RUNTIME_SETTINGS` (the other is `[assistant].capture_requests`), and it is
+there rather than in a toolset because no capability owns it: `Assistant._spawn_title` is the only reader. It is hot
+rather than startup-only because that read happens per conversation, so a change genuinely applies without a restart,
+which is the test the model itself fails. There is no setting for *which* model writes the title, because the
 conversation already answers that.
 
 ### Renaming a conversation
@@ -1323,8 +1323,8 @@ Which settings are hot is not a list maintained by hand in several places: it is
 `config/table.py`'s `SettingsTable`, built once at startup from `CORE_RUNTIME_SETTINGS` plus every
 toolset's own hot `Setting`s, and every consumer -- the schema, the incoming-payload sanitizer, the
 live-apply loop, and the persist path -- loops over that one instance. `CORE_RUNTIME_SETTINGS` holds two
-entries, `[assistant].generate_titles` and `[assistant].capture_requests`; every other hot setting a run holds arrives from a toolset, so the
-table's contents depend on which toolsets are installed. The
+entries, `[assistant].generate_titles` and `[assistant].capture_requests`; every other hot setting a run holds arrives
+from a toolset, so the table's contents depend on which toolsets are installed. The
 sanitizer predates the removal of the web settings window and outlived it: `update_config` is now its
 only caller, so "panel" in the surrounding code names a surface that no longer exists.
 

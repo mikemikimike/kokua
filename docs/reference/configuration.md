@@ -162,7 +162,7 @@ immediately. Everything else is **startup-only**: change it, then restart.
 
 | Hot | Startup-only |
 | --- | --- |
-| `[assistant].generate_titles` | the rest of `[assistant]`, including `[assistant.generation]`, and `[planning].review_rounds` |
+| `[assistant].generate_titles`, `[assistant].capture_requests` | the rest of `[assistant]`, including `[assistant.generation]`, and `[planning].review_rounds` |
 | `[planning].plan_review`, `plan_review_agent`, `result_review`, `show_reasoning` | |
 | `[capabilities].max_depth` | all of `[agents.*]` and `[reviewers.*]`, `[mcp]` (including `[[mcp.server]]`), `[security]` (including `[security.auto_approval]`), `[paths]`, `[frontend]`, `[web]`, `[logging]`, `[email]` |
 | `[scheduling].max_task_conversations` | |
@@ -182,7 +182,8 @@ sections](#toolset-sections).
 
 ## `[assistant]`
 
-Process-wide defaults. Everything here is read at startup, except `generate_titles` and `capture_requests`, which are hot.
+Process-wide defaults. Everything here is read at startup, except `generate_titles` and `capture_requests`, which are
+hot.
 
 ### `model`
 
@@ -337,6 +338,9 @@ holds their base64 data, repeated on each call. Nothing collects old files yet
 ([#15](https://github.com/saxman/kokua/issues/15)). `false` stops writing the files only: how each agent
 loop ended (answered, wrapped up, or failed) is recorded either way, under the turn's entry in the
 conversation's metadata.
+
+The key is not locked, so the assistant can change it through `update_config`, like `generate_titles`; lock
+it via `[security].locked_config_keys` to keep it fixed.
 
 ## `[assistant.generation]`
 

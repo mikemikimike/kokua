@@ -533,24 +533,28 @@ async def test_stop_cancels_in_flight_turn(tmp_path):
     assert any(m.get("content") == "long task" for m in assistant._agent.model_client.messages)
 
 
+class _RecordingClient(MockAsyncModelClient):
+    """MockAsyncModelClient never reaches AIMU's request seam, so emit the pair a real provider would."""
+
+    async def _chat(self, *args, **kwargs):
+        from aimu.events import RequestPrepared
+        from aimu.models._internal.chat_state import _effective_sink
+
+        sink = _effective_sink(self)
+        if sink is not None:
+            sink(RequestPrepared(provider="Mock", model="m", endpoint="http://x", payload={"messages": []}))
+        return await super()._chat(*args, **kwargs)
+
+
+def _turn_records(assistant):
+    return list(assistant._store.get(assistant._active_id).metadata["requests"].values())
+
+
 async def test_a_turn_records_its_requests_and_ending(tmp_path):
-    from aimu.events import RequestPrepared
-
-    class _Recording(MockAsyncModelClient):
-        """MockAsyncModelClient never reaches AIMU's request seam, so emit the pair a real provider would."""
-
-        async def _chat(self, *args, **kwargs):
-            from aimu.models._internal.chat_state import _effective_sink
-
-            sink = _effective_sink(self)
-            if sink is not None:
-                sink(RequestPrepared(provider="Mock", model="m", endpoint="http://x", payload={"messages": []}))
-            return await super()._chat(*args, **kwargs)
-
-    assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=_Recording(["hello"]))
+    assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=_RecordingClient(["hello"]))
     await assistant._handle(ChannelMessage(text="hello", channel="fake"), conversation_id=assistant._active_id)
 
-    record = next(iter(assistant._store.get(assistant._active_id).metadata["requests"].values()))
+    record = _turn_records(assistant)[0]
     assert record["calls"][0]["endpoint"] == "http://x" and record["calls"][0]["payload_ref"]
     assert [e["ended_by"] for e in record["endings"]] == ["answered"]
 
@@ -558,12 +562,25 @@ async def test_a_turn_records_its_requests_and_ending(tmp_path):
 async def test_capture_off_records_no_payload_files(tmp_path):
     config = _config(tmp_path)
     config.capture_requests = False
-    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient(["hello"]))
+    assistant = await Assistant.create(config, FakeChannel(), client=_RecordingClient(["hello"]))
     await assistant._handle(ChannelMessage(text="hello", channel="fake"), conversation_id=assistant._active_id)
 
-    record = next(iter(assistant._store.get(assistant._active_id).metadata["requests"].values()))
-    assert all(call["payload_ref"] is None for call in record["calls"])
+    record = _turn_records(assistant)[0]
+    assert record["calls"] and all(call["payload_ref"] is None for call in record["calls"])
     assert record["endings"]
+    assert not config.payloads_path.exists() or not any(config.payloads_path.iterdir())
+
+
+async def test_capture_requests_is_read_per_turn_without_a_restart(tmp_path):
+    config = _config(tmp_path)
+    assistant = await Assistant.create(config, FakeChannel(), client=_RecordingClient(["one", "two"]))
+    await assistant._handle(ChannelMessage(text="first", channel="fake"), conversation_id=assistant._active_id)
+    config.capture_requests = False
+    await assistant._handle(ChannelMessage(text="second", channel="fake"), conversation_id=assistant._active_id)
+
+    first, second = _turn_records(assistant)
+    assert first["calls"][0]["payload_ref"]
+    assert second["calls"] and second["calls"][0]["payload_ref"] is None
 
 
 async def test_the_turns_request_accumulator_is_cleared_afterwards(tmp_path):

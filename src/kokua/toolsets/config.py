@@ -300,11 +300,11 @@ def make_config_tools(
         """Change one setting in config.toml, e.g. section="email", key="host", value="smtp.gmail.com".
 
         Pass the value as a string; it is coerced to the setting's real type (numbers, true/false, and
-        comma-separated lists are understood). A hot setting -- [assistant].generate_titles or capture_requests, a planning
-        flag, or any other setting flagged to apply live -- takes effect immediately in this session. Every other
-        setting, the model and the reasoning effort among them, is saved and takes effect only the next
-        time Kokua restarts. The result says which of the two happened; pass that on, because a saved
-        setting is not yet in force and only the user can restart. A model string is checked against the
+        comma-separated lists are understood). A hot setting -- [assistant].generate_titles,
+        [assistant].capture_requests, a planning flag, or any other setting flagged to apply live -- takes effect
+        immediately in this session. Every other setting, the model and the reasoning effort among them, is saved and
+        takes effect only the next time Kokua restarts. The result says which of the two happened; pass that on,
+        because a saved setting is not yet in force and only the user can restart. A model string is checked against the
         providers actually installed before it is saved, so a name that does not resolve is refused here
         rather than breaking the next startup. Which keys are refused is the user's own
         [security].locked_config_keys list, not a fixed set; read_config opens with the list in force.

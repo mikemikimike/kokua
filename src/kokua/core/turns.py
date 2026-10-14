@@ -46,10 +46,10 @@ Every rule here was learned from a bug. Read them before changing anything in th
    (or into no list at all) instead of the turn that owns it. ``current_metrics`` (``core/metrics.py``)
    and ``current_requests`` (``core/requests.py``) follow the identical discipline for the same reason:
    set before the first ``await``, reset only in the ``finally``, so a model call racing the window is
-   never attributed to a finished turn's record or to no turn at all. An unattended run cannot share the reactive path's ``finally`` (it runs in a child
-   task with no such block of its own), so ``_unattended_body`` opens and resets its own
-   ``current_metrics`` and ``current_requests`` scopes around its whole body, the same way it opens its own catch-up record rather
-   than reusing the caller's. The channel's catch-up record is opened
+   never attributed to a finished turn's record or to no turn at all. An unattended run cannot share the reactive
+   path's ``finally`` (it runs in a child task with no such block of its own), so ``_unattended_body`` opens and
+   resets its own ``current_metrics`` and ``current_requests`` scopes around its whole body, the same way it opens its
+   own catch-up record rather than reusing the caller's. The channel's catch-up record is opened
    in the same place and for the same reason, but it is *ended by ``_persist``* rather than by the
    ``finally``: the store and the record stand for the same output, so ending it next to the write that
    supersedes it is what keeps a switch-in from replaying both. Every turn opens one, unattended runs
