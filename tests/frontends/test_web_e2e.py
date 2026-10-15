@@ -2768,6 +2768,110 @@ def test_a_round_button_inside_a_sub_agent_card_sits_on_its_entrys_header_line(p
     _assert_button_on_header_line(nested)
 
 
+def _live_frame(page, frame):
+    """Deliver one frame through the page's own handler, in the order a live turn sends them."""
+    page.evaluate("frame => handleFrame({data: JSON.stringify(frame)})", frame)
+
+
+_LIVE_CALL = {
+    "type": "request",
+    "run_id": "live-1",
+    "parent_run_id": None,
+    "agent": "assistant",
+    "round": 0,
+    "provider": "Mock",
+    "endpoint": "http://x",
+    "model": "m",
+    "message_count": 1,
+    "tool_count": 1,
+    "payload_chars": 10,
+    "payload_ref": None,
+    "stop_reason": "tool_use",
+    "tool_call_count": 1,
+    "response_ref": None,
+    "error": None,
+}
+
+
+def test_a_live_tool_round_moves_its_button_onto_the_tool_card_that_follows(page, live_server):
+    """Live, a tool round's request arrives before its tool card (the record completes when the model's
+    response ends, and the tool runs after), so its button starts with nothing beneath it; the tool card
+    it asked for then takes the button, the same output a reload attaches it to."""
+    _open(page, live_server(seed=_request_seed()))
+    _live_frame(page, {"type": "thinking", "text": "I should check the clock."})
+    _live_frame(page, _LIVE_CALL)
+    _live_frame(page, {"type": "tool", "name": "get_current_date_and_time", "arguments": {}, "response": "08:48"})
+    tool = page.locator("#log > .bubble.tool").last
+    expect(tool.locator("> .round-slot > .round-button")).to_have_count(1)
+    expect(page.locator("#log > .round-orphan")).to_have_count(0)
+    thinking = page.locator("#log > .bubble.thinking").last
+    expect(thinking.locator(".round-button")).to_have_count(0)
+    expect(thinking.locator("> .fold-header > .fold-ts")).to_have_count(1)  # its caption went back home
+
+
+def test_a_live_tool_round_with_two_calls_puts_its_button_on_the_last(page, live_server):
+    _open(page, live_server(seed=_request_seed()))
+    _live_frame(page, {**_LIVE_CALL, "tool_call_count": 2})
+    _live_frame(page, {"type": "tool", "name": "first", "arguments": {}, "response": "a"})
+    _live_frame(page, {"type": "tool", "name": "second", "arguments": {}, "response": "b"})
+    tools = page.locator("#log > .bubble.tool")
+    expect(tools).to_have_count(2)
+    expect(tools.first.locator(".round-button")).to_have_count(0)
+    expect(tools.last.locator(".round-button")).to_have_count(1)
+    expect(page.locator("#log > .round-orphan")).to_have_count(0)
+
+
+def test_a_card_after_a_round_that_asked_for_no_tools_does_not_take_its_button(page, live_server):
+    """A round that only answered has no dispatch results, so a card that follows it is not its output."""
+    _open(page, live_server(seed=_request_seed()))
+    _live_frame(page, {"type": "token", "text": "Here is the answer."})
+    _live_frame(page, {"type": "done"})
+    _live_frame(page, {**_LIVE_CALL, "stop_reason": "stop", "tool_call_count": 0})
+    _live_frame(page, {"type": "tool", "name": "unrelated", "arguments": {}, "response": "x"})
+    expect(page.locator("#log > .bubble.tool").last.locator(".round-button")).to_have_count(0)
+    expect(page.locator("#log > .bubble.assistant").last.locator(".round-button")).to_have_count(1)
+
+
+def test_the_next_rounds_answer_does_not_take_the_previous_rounds_button(page, live_server):
+    _open(page, live_server(seed=_request_seed()))
+    _live_frame(page, _LIVE_CALL)
+    _live_frame(page, {"type": "tool", "name": "clock", "arguments": {}, "response": "08:48"})
+    _live_frame(page, {"type": "token", "text": "It's 8:48."})
+    _live_frame(page, {"type": "done"})
+    expect(page.locator("#log > .bubble.tool").last.locator(".round-button")).to_have_count(1)
+
+
+def test_a_sub_agent_cards_tool_round_puts_its_button_on_the_tool_entry(page, live_server):
+    """A card's entries are stored in arrival order, request before tool entry, so this holds on reload too."""
+    entries = [
+        {"id": "r-1", "role": "researcher", "task": "t", "status": "running"},
+        {"id": "r-1", "append": {"kind": "reasoning", "text": "look it up"}},
+        {
+            "id": "r-1",
+            "append": {
+                "kind": "request",
+                "round": 0,
+                "payload_ref": None,
+                "payload_chars": 10,
+                "message_count": 1,
+                "tool_count": 1,
+                "endpoint": "http://x",
+                "stop_reason": "tool_use",
+                "tool_call_count": 1,
+                "error": None,
+                "agent": "researcher",
+            },
+        },
+        {"id": "r-1", "append": {"kind": "tool", "name": "web_search", "arguments": {"q": "x"}, "response": "ok"}},
+        {"id": "r-1", "status": "done"},
+    ]
+    _open(page, live_server(seed=_request_seed(subagent=entries)))
+    card = page.locator(".bubble.subagent")
+    card.locator("> .fold-header").click()
+    expect(card.locator("> .fold-body > .bubble.tool .round-button")).to_have_count(1)
+    expect(card.locator(".round-orphan")).to_have_count(0)
+
+
 def test_a_two_round_turn_puts_each_button_on_its_own_output(page, live_server):
     _open(page, live_server(seed=_request_seed(messages=_TOOL_TURN, rounds=[{}, {}])))
     first = page.locator("#log > .bubble.tool .round-button")

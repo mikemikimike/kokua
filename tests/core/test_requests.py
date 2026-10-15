@@ -33,6 +33,20 @@ def _finished(run_id="lead-1", iteration=0, text="hello", stop_reason="stop", er
     )
 
 
+def test_a_call_counts_the_tool_calls_its_response_requested_with_capture_on_or_off(tmp_path):
+    """The web UI moves a round's button onto the tool card its response asked for, which only a round
+    that requested tools can have; the count says which rounds those are, without fetching anything."""
+    for capture in (True, False):
+        requests = TurnRequests(payloads_path=tmp_path / str(capture), capture=capture)
+        requests(_prepared())
+        requests(
+            _finished(tool_calls=[{"name": "a", "arguments": {}, "id": "1"}, {"name": "b", "arguments": {}, "id": "2"}])
+        )
+        requests(_prepared(iteration=1))
+        requests(_finished(iteration=1))
+        assert [call["tool_call_count"] for call in requests.record()["calls"]] == [2, 0], capture
+
+
 def test_a_call_pairs_its_request_with_the_turn_that_answered_it(tmp_path):
     requests = TurnRequests(payloads_path=tmp_path, capture=True)
     requests(_prepared())

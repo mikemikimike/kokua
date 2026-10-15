@@ -3319,7 +3319,7 @@ async def test_a_turn_shows_its_entry_request_and_a_sub_agents_request_and_endin
     request = next(a for a in appended if a["kind"] == "request")
     assert set(request) == {
         "kind", "round", "payload_ref", "payload_chars", "message_count", "tool_count",
-        "endpoint", "model", "stop_reason", "error", "agent", "response_ref",
+        "endpoint", "model", "stop_reason", "error", "agent", "response_ref", "tool_call_count",
     }  # fmt: skip
     assert request["agent"] == "researcher" and request["stop_reason"] == "stop"
     assert request["response_ref"]  # a round's card entry can show its response, not only its request

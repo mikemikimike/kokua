@@ -445,6 +445,7 @@ def _card_request_entry(record: dict) -> dict:
         "model",
         "stop_reason",
         "response_ref",
+        "tool_call_count",
     )
     return {"kind": "request", **{key: record[key] for key in keys}, "error": record["error"], "agent": record["agent"]}
 
