@@ -354,9 +354,29 @@ import inspect
 from importlib.metadata import PackageNotFoundError, version
 from typing import Optional
 
-MINIMUM_AIMU = (0, 34, 0)
+MINIMUM_AIMU = (0, 36, 0)
 
-# The surface is `aimu.agents.Inbox`: AIMU renamed its mid-turn-message seam from `Steering` to `Inbox`,
+# The surface is `aimu.events.RunEvent`'s `run_id` field. 0.36.0 gave every run event the identity of
+# the run that emitted it (`run_id`) and of the run that started that one (`parent_run_id`), and Kokua's
+# record of what each model call was sent (`core/requests.py`) is keyed by it: calls pair with their
+# responses by run, a sub-agent's rounds reach its card because its run id is its card's id, and the
+# entry agent's rounds are told from a critic's by the run id the turn assigned. Left unprobed it is the
+# silent-degradation case: an older AIMU's events carry no `run_id`, the sink raises on every event, AIMU
+# logs and swallows each failure, and the turn completes with nothing recorded.
+#
+# The shape is a signature check, but on a dataclass rather than a function: a dataclass field is a
+# constructor parameter, so `inspect.signature(RunEvent)` lists it, and the existing shape asks exactly
+# the question with no new one taught to `require_aimu`. A name lookup could not: `RunEvent` predates this
+# floor by many releases, so only whether it carries this field dates a checkout. The field landed in
+# 0.36.0's last event commit, so passing it implies the rest of what Kokua reads off that release's
+# events, which `tests/test_aimu_compat.py` pins directly because no single probe reaches them:
+# `RequestPrepared.endpoint` and its JSON-safe payload, `ModelTurnFinished.stop_reason` / `tool_calls` /
+# `thinking`, `RunFinished.ended_by` / `max_iterations`, the spawn tools passing `parent_run_id`, and
+# `Runner.as_tool()` parenting the runs it starts.
+#
+# `aimu.agents.Inbox` (a name lookup) is the floor's job now, in its turn.
+#
+# Previously, from 0.34.0: the surface was `aimu.agents.Inbox`: AIMU renamed its mid-turn-message seam from `Steering` to `Inbox`,
 # with no legacy path, and taught it which agent is opening each reader. `Inbox.reader(agent=...)` is
 # called once per run, at its start, and `agent` is the run's own name, offered so a host can route a
 # message to one run rather than to every run's drain; AIMU attaches no meaning to the string beyond
@@ -382,10 +402,10 @@ MINIMUM_AIMU = (0, 34, 0)
 #
 # `aio.SkillAgent.run`'s `steering` parameter (a signature check) is the floor's job now, in its turn, and
 # the parameter this probe grips today is spelled `inbox`.
-_PROBE_MODULE = "aimu.agents"
+_PROBE_MODULE = "aimu.events"
 _PROBE_CLASS: Optional[str] = None
-_PROBE_SYMBOL = "Inbox"
-_PROBE_PARAMETER: Optional[str] = None
+_PROBE_SYMBOL = "RunEvent"
+_PROBE_PARAMETER: Optional[str] = "run_id"
 _PROBE_MEMBER: Optional[str] = None
 
 

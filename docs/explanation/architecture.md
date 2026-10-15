@@ -1178,7 +1178,10 @@ now: the method has a default implementation on the ABC (read everything, keep t
 messages), correct anywhere and slow where a full read is expensive, so a name lookup cannot tell
 `TinyDBSessionStore`'s override from a plain inheritance of the default.
 
-The floor is now **`aimu>=0.34.0`**, the first one a rename alone has moved: AIMU renamed its
+The floor is now **`aimu>=0.36.0`**: every run event carries `run_id` and `parent_run_id`, which Kokua's
+request records (`core/requests.py`) are keyed by, and the probe is a signature check on the dataclass
+`aimu.events.RunEvent` for its `run_id` field (a dataclass field is a constructor parameter). Before it,
+the floor was `aimu>=0.34.0`, the first one a rename alone moved: AIMU renamed its
 mid-turn-message seam from `Steering` to `Inbox`, with no legacy path, and taught it which agent is
 opening each reader. `Inbox.reader(agent=...)` is called once per run, at its start, and `agent` is
 that run's own name, offered so a host can route a message to the one run it was meant for rather than
