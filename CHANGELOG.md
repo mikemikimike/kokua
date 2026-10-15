@@ -2051,6 +2051,13 @@ notice on startup.
   `cancel_turn` that precedes it. Whichever half of the pump finishes first ends the connection, in both
   directions: an error while applying ends the reader too, which would otherwise queue frames into a
   drain nobody reads.
+- **A reload reconnects on the first try.** The reloaded page used to connect while the connection it
+  replaced was still tearing down (closing each remote MCP session is a network round trip), and the
+  one-connection guard, still held, refused it as "busy in another tab"; a second reload worked only
+  because it landed later. The guard now tells a closing holder from a live one: a connection arriving
+  during a teardown waits for it, bounded by `TEARDOWN_WAIT_SECONDS` in `frontends/web.py`, and one that
+  outwaits that bound is told the previous connection is still closing. A second tab open beside a live
+  one is refused at once, as before.
 
 ### Known limitations
 

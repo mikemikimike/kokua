@@ -224,6 +224,12 @@ async def _export_conversation(
     await channel.send_download(name, f"/download/{name}")
 
 
+# How long a new connection waits for the one it replaced to finish closing. Bounded because a teardown
+# that never ends (an MCP server that stops answering mid-close) would otherwise leave the page showing
+# itself as starting forever, with nothing to say why.
+TEARDOWN_WAIT_SECONDS = 10.0
+
+
 def build_app(config: AssistantConfig, *, client=None, client_factory=None) -> Starlette:
     """Build the Starlette app serving the chat page (``/``) and the WebSocket (``/ws``).
 
@@ -240,7 +246,32 @@ def build_app(config: AssistantConfig, *, client=None, client_factory=None) -> S
     """
     validated_registry(config)
 
-    busy = {"active": False}  # one-active-connection guard (single user, single process)
+    # The one-active-connection guard (single user, single process). `closing` is set once the holder's
+    # socket is gone and only its teardown remains; `released` fires when the guard is let go.
+    guard = {"held": False, "closing": False}
+    released = asyncio.Event()
+
+    async def claim_guard() -> Optional[str]:
+        """Take the one-connection guard, or return the refusal to send instead.
+
+        A live holder is another tab, refused at once. A closing one is what a reload always connects
+        into: the page navigating away closes its socket at once, but the server still has to close
+        every remote MCP session, which is a network round trip, and the reloaded page connects inside
+        that window. Refusing it then told the user about a tab that did not exist, and a second reload
+        appeared to fix it only by landing later. So that case waits for the teardown instead of
+        overlapping it, since two assistants would share one session store. A loop rather than one wait
+        because two connections can be waiting on the same release, and only the first takes it.
+        """
+        while guard["held"]:
+            if not guard["closing"]:
+                return "Assistant is busy in another tab."
+            try:
+                await asyncio.wait_for(released.wait(), TEARDOWN_WAIT_SECONDS)
+            except TimeoutError:
+                return "The previous connection is still closing. Reload to try again."
+        guard.update(held=True, closing=False)
+        released.clear()
+        return None
 
     async def index(request):
         return HTMLResponse(_index_html().replace(PAGE_VERSION_PLACEHOLDER, _page_version()))
@@ -307,13 +338,11 @@ def build_app(config: AssistantConfig, *, client=None, client_factory=None) -> S
 
     async def ws_endpoint(websocket: WebSocket) -> None:
         await websocket.accept()
-        if busy["active"]:
-            await websocket.send_json(
-                {"type": "message", "text": "Assistant is busy in another tab.", "proactive": False}
-            )
+        refusal = await claim_guard()
+        if refusal is not None:
+            await websocket.send_json({"type": "message", "text": refusal, "proactive": False})
             await websocket.close()
             return
-        busy["active"] = True
         channel = WebChannel(websocket)
         try:
             # First, before anything slow, so a tab running an older page reloads at once rather than
@@ -324,7 +353,8 @@ def build_app(config: AssistantConfig, *, client=None, client_factory=None) -> S
             # Released on every exit, not only the serve loop's. The guard is taken before the assistant
             # exists, so a failure in between leaks it and refuses every later connection as "busy in
             # another tab" -- a confident wrong diagnosis of a fault no other tab had anything to do with.
-            busy["active"] = False
+            guard.update(held=False, closing=False)
+            released.set()
             await channel.aclose()
 
     async def serve_connection(websocket: WebSocket, channel: WebChannel) -> None:
@@ -600,6 +630,9 @@ def build_app(config: AssistantConfig, *, client=None, client_factory=None) -> S
                 for task in done:
                     task.result()
             finally:
+                # First, before anything here can wait: from this point the connection is only tearing
+                # down, and a reload connecting now should queue behind it rather than be refused.
+                guard["closing"] = True
                 applying.cancel()
                 reading.cancel()
                 await asyncio.gather(applying, reading, return_exceptions=True)
