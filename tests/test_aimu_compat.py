@@ -180,23 +180,43 @@ def test_the_probe_catches_a_sibling_whose_base_class_alone_was_updated(monkeypa
 def test_the_probe_targets_the_release_the_floor_names():
     """The probe has to come from the floor's own release, or a sibling on the previous branch passes it.
 
-    The surface today is ``aimu.agents.Inbox``: AIMU renamed its mid-turn-message seam from ``Steering``
-    to ``Inbox``, with no legacy path, and taught it which agent is opening each reader, so a sibling
-    still on the previous branch has ``Steering`` and no ``Inbox`` at all.
-
-    A plain name lookup, not a signature check: unlike the parameter it replaces, the capability here is
-    the export itself, so nothing else has to be true of a checkout once the class is importable.
+    The surface today is ``aimu.events.RunEvent``'s ``run_id`` field, the identity every recorded call
+    and loop ending is keyed by. ``RunEvent`` predates 0.36.0 by many releases, so its presence proves
+    nothing; the field is a dataclass field, invisible to a name lookup, but a dataclass's constructor
+    takes its fields, so the existing signature shape asks exactly the question.
     """
     import importlib
+    import inspect
 
     module = importlib.import_module(aimu_compat._PROBE_MODULE)
     probe = getattr(module, aimu_compat._PROBE_SYMBOL, None)
     assert probe is not None
-    assert aimu_compat._PROBE_MODULE == "aimu.agents"
+    assert aimu_compat._PROBE_MODULE == "aimu.events"
     assert aimu_compat._PROBE_CLASS is None
-    assert aimu_compat._PROBE_SYMBOL == "Inbox"
-    assert aimu_compat._PROBE_PARAMETER is None
+    assert aimu_compat._PROBE_SYMBOL == "RunEvent"
+    assert aimu_compat._PROBE_PARAMETER == "run_id"
     assert aimu_compat._PROBE_MEMBER is None
+    assert "run_id" in inspect.signature(probe).parameters
+
+
+def test_an_aimu_whose_run_events_carry_no_run_id_is_refused_by_name(monkeypatch):
+    """An AIMU before 0.36.0 has RunEvent without run_id: every request record would lose its run, so
+    the preflight names the field rather than letting the sink fail per event."""
+    from dataclasses import dataclass
+
+    @dataclass(frozen=True)
+    class _OldRunEvent:
+        agent: str = None
+        iteration: int = 0
+
+    monkeypatch.setattr(aimu_compat, "version", lambda name: AT_FLOOR)
+    monkeypatch.setattr(
+        aimu_compat.importlib,
+        "import_module",
+        lambda name: SimpleNamespace(__file__="/somewhere/aimu/events.py", RunEvent=_OldRunEvent),
+    )
+    with pytest.raises(AimuVersionError, match="run_id"):
+        require_aimu()
 
 
 def test_the_floor_covers_the_skill_update_tool_the_probe_no_longer_grips():
@@ -490,16 +510,31 @@ def test_the_floor_covers_the_skill_agent_parameter_the_probe_no_longer_grips():
     assert "steering" not in inspect.signature(SkillAgent.run).parameters
 
 
-def test_the_floor_is_0_34_0():
+def test_the_floor_is_0_36_0():
     from kokua.aimu_compat import MINIMUM_AIMU
 
-    assert MINIMUM_AIMU == (0, 34, 0)
+    assert MINIMUM_AIMU == (0, 36, 0)
 
 
-def test_the_probe_grips_the_inbox_protocol():
+def test_the_floor_covers_the_inbox_protocol_the_probe_no_longer_grips():
+    """0.34.0's probe surface is 0.36.0's floor now that ``RunEvent.run_id`` holds the one probe slot."""
     from aimu.agents import Inbox
 
     assert Inbox is not None
+
+
+def test_the_floor_covers_what_kokua_reads_off_0_36_0s_events():
+    """Everything #22 reads off AIMU's events beyond ``run_id``, which only the floor guarantees."""
+    import dataclasses
+
+    from aimu.events import ModelTurnFinished, RequestPrepared, RunFinished
+
+    def fields(cls):
+        return {field.name for field in dataclasses.fields(cls)}
+
+    assert {"endpoint", "payload", "run_id", "parent_run_id"} <= fields(RequestPrepared)
+    assert {"stop_reason", "tool_calls", "thinking"} <= fields(ModelTurnFinished)
+    assert {"ended_by", "max_iterations"} <= fields(RunFinished)
 
 
 def test_aimu_still_names_a_spawned_worker_with_the_prefix_addresses_strip(monkeypatch):

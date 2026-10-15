@@ -50,7 +50,7 @@ Line length is 120 (configured in `pyproject.toml`). Run lint + tests before com
 
 ## AIMU dependency (important)
 
-Kokua is built on the [AIMU](https://github.com/saxman/aimu) library and requires `aimu>=0.34.0`. That
+Kokua is built on the [AIMU](https://github.com/saxman/aimu) library and requires `aimu>=0.36.0`. That
 floor is the requirement that ships in the wheel. Separately, `[tool.uv.sources]` points AIMU at
 `{ path = "../aimu", editable = true }`, so `uv sync` here installs the sibling checkout live: the two
 projects are developed together and architectural changes move code across the boundary.
@@ -59,7 +59,7 @@ Consequences for working in this repo:
 
 - **The version floor does not constrain your sibling checkout.** uv installs a path source without
   checking it against the specifier (a declared `aimu>=0.99.0` installs a 0.13.1 sibling and locks it
-  without complaint), so `>=0.34.0` governs an installed Kokua and nothing about your working copy.
+  without complaint), so `>=0.36.0` governs an installed Kokua and nothing about your working copy.
   Do not read the pin as a guarantee about the AIMU you are running.
 - **So a sibling on an older branch is the failure mode to expect, and the startup preflight is what
   catches it.** `kokua.aimu_compat` checks the version floor plus one capability probe, and prints the
@@ -344,7 +344,7 @@ Consequences for working in this repo:
   than trusted. None of those was a signature, so no signature check reached them; the first two were
   the same one-level-down gap `events`' recursive passthrough left for its own capability, and the last
   three were findings the branch review itself raised. `Inbox` is the probe's job now, in its turn.
-  **AIMU 0.34.0 is the current floor, and it is the first one a rename alone has moved: AIMU renamed its
+  **AIMU 0.34.0 was the floor until 0.36.0, and it was the first one a rename alone moved: AIMU renamed its
   mid-turn-message seam from `Steering` to `Inbox`, with no legacy path, and taught it which agent is
   opening each reader.** `Inbox.reader(agent=...)` is called once per run, at its start, and `agent` is
   that run's own name, offered so a host can route a message to the one run it was meant for rather than
@@ -364,7 +364,22 @@ Consequences for working in this repo:
   both drivers, whether the `INBOX` streaming phase is emitted where `STEERING` used to be, whether the
   spawn path honors the `"inbox"` spec key, and whether 0.33.0's host-boundary guards survived the
   rename. None of those is a name, so no name lookup reaches them. `aio.SkillAgent.run`'s `steering`
-  parameter is the floor's job now, in its turn, and the parameter it grips today is spelled `inbox`.
+  parameter became the floor's job then, in its turn.
+  **AIMU 0.36.0 is the current floor, and it is the first one whose probe grips a dataclass field:
+  `RunEvent.run_id`.** 0.36.0 gave every run event the identity of its run and of the run that started
+  it, and Kokua's record of what each model call was sent (`core/requests.py`, issue #22) is keyed by
+  it: a call pairs with its response by run, a sub-agent's rounds reach its card because its run id is
+  its card's id, and the entry agent's rounds are told from a critic's by the run id the turn assigns.
+  Left unprobed it is the silent case: an older AIMU's events carry no `run_id`, the sink raises on every
+  event, AIMU logs and swallows each, and the turn completes with nothing recorded. The shape is the
+  signature check, the sixth time, on a class rather than a function: a dataclass field is a constructor
+  parameter, so `inspect.signature(RunEvent)` lists it, and `require_aimu` learned nothing new. `RunEvent`
+  predates this floor by many releases, so only the field dates a checkout. What the floor covers alone
+  is the rest of what #22 reads off that release, pinned in `tests/test_aimu_compat.py` rather than
+  probed: `RequestPrepared.endpoint` and its JSON-safe payload, `ModelTurnFinished.stop_reason` /
+  `tool_calls` / `thinking`, `RunFinished.ended_by` / `max_iterations`, the spawn tools passing
+  `parent_run_id`, and `Runner.as_tool()` parenting the runs it starts. `aimu.agents.Inbox` is the
+  floor's job now, in its turn.
 - **Without `../aimu`** (CI, a fresh clone, or just running Kokua), `uv sync --no-sources` resolves AIMU
   from PyPI. Nothing in `pyproject.toml` needs editing for that any more.
 - **Both console scripts route through `kokua.cli`** so they share that preflight. `kokua-web` is
