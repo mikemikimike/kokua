@@ -1035,6 +1035,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#one-turn-in-full" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One turn, in full
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#two-honesty-rules" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1487,6 +1498,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#one-turn-in-full" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One turn, in full
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#two-honesty-rules" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1591,6 +1613,7 @@ files read identically; only their names differ (see each route's section below)
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>kokua<span class="w"> </span><span class="nb">export</span><span class="w"> </span>abcdef01<span class="w"> </span>-o<span class="w"> </span>notes.md<span class="w">  </span><span class="c1"># write somewhere specific</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>kokua<span class="w"> </span><span class="nb">export</span><span class="w"> </span>abcdef01<span class="w"> </span>-o<span class="w"> </span>-<span class="w">         </span><span class="c1"># write to stdout instead of a file</span>
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>kokua<span class="w"> </span><span class="nb">export</span><span class="w"> </span>abcdef01<span class="w"> </span>--full<span class="w">       </span><span class="c1"># do not truncate long tool arguments and results</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>kokua<span class="w"> </span><span class="nb">export</span><span class="w"> </span>abcdef01<span class="w"> </span>--turn<span class="w"> </span><span class="m">3</span><span class="w">     </span><span class="c1"># one turn, with every request the model was sent</span>
 </span></code></pre></div>
 <p>The conversation argument takes an id, a unique leading fragment of one (at least 6 characters,
 the same rule the assistant's own <code>read_conversation</code> tool follows), or <code>latest</code> (the default). A
@@ -1614,10 +1637,33 @@ model calls, tokens, and time, when any of those were recorded.</p>
 run streamed a <code>thinking</code> block or a verbose trace's <code>reasoning</code> segments), its answer, and, for
 each tool call, the tool's name, its arguments, and what it returned. A line under the turn heading
 names the model and reasoning effort it ran at, when either was recorded, and a line beneath that
-reports what the turn cost. A sub-agent the turn spawned gets its own nested card with the same
-shape: its own reasoning, tool calls, and answer. If a turn stopped short (a tool call was
+reports what the turn cost. Every tool loop ends with a closing italic line saying which rule ended it,
+such as <code>_[ended: answered at round 2 of 10]_</code> or <code>_[ended: tool-use limit of 10 rounds reached; answered
+on a forced wrap-up call]_</code>. A sub-agent the turn spawned gets its own nested card with the same
+shape (its own ending line included): its own reasoning, tool calls, and answer. If a turn stopped short (a tool call was
 denied, a reviewer sent it back for revision, an error cut it off), the reason appears as a quoted
 note where the turn stopped.</p>
+<p>A turn's block also shows the system prompt each agent ran under, as a <code>**System prompt (agent):**</code>
+heading and a fenced block, but only where it is news: the first time that agent appears in the
+conversation, and again whenever it differs from that agent's previous one. The entry agent and each
+sub-agent are tracked separately, so a sub-agent's prompt is never compared against the entry agent's.
+Prompts come from the recorded request payloads, so a turn whose payload was not captured shows none, and a payload that is readable but holds no system prompt Kokua can find (an in-process provider's raw prompt, say) shows <code>_(system prompt not found in the recorded request; see kokua export --turn N)_</code> once for that agent instead, and each is capped like any payload unless you pass <code>--full</code>. A turn shows each agent's prompt from its first readable call, so a change between rounds of one turn is not shown. The web download and the assistant's <code>export_conversation</code> file include them too.</p>
+<h2 id="one-turn-in-full">One turn, in full<a class="headerlink" href="#one-turn-in-full" title="Permanent link">&para;</a></h2>
+<p><code>kokua export &lt;conversation&gt; --turn N</code> writes a single turn instead of the whole conversation, to
+<code>$KOKUA_HOME/data/downloads/&lt;conversation id&gt;.turn-N.md</code> (or wherever <code>-o</code> says; <code>-o -</code> is stdout). It
+holds the user's message, then every model call the turn made, grouped by run with the entry agent
+first, each under a <code>### agent · round R</code> heading naming the run, provider, endpoint, model, and how
+the call stopped. Under each is the request as recorded, pretty-printed, and the response: text,
+reasoning, and tool calls. The loop's ending follows. Nothing is truncated, so <code>--full</code> is accepted and
+changes nothing (a one-line note on stderr says so). A turn with no recorded calls (it predates capture)
+reads <code>_No model calls were recorded for this turn._</code> after the user's message.</p>
+<p>The request is exactly what was sent. A provider that runs in-process has no wire request, so its
+entry says <code>no wire request (nearest equivalent; not replayable)</code>: the payload shown is the nearest
+equivalent Kokua could record, not something you can send again. A payload or response that was not
+captured, or whose file has since been deleted, reads <code>_not captured_</code>. A number outside the
+conversation's turns exits with status 2 and names the valid range.</p>
+<p>This file contains everything the agent saw, including the system prompt, tool results, and any
+documents or credentials they carried. Treat it as private.</p>
 <h2 id="two-honesty-rules">Two honesty rules<a class="headerlink" href="#two-honesty-rules" title="Permanent link">&para;</a></h2>
 <p><strong>A figure nobody reported prints as "not reported", never as an invented zero.</strong> Not every model
 or provider reports token counts, and a stored absence rendered as <code>0</code> would be a false claim about
@@ -1671,7 +1717,7 @@ about a run rather than a file about it. Ask in plain words:</p>
 and what did it return?</p>
 </blockquote>
 <p>The assistant finds the conversation (<code>list_conversations</code> or <code>search_conversations</code>), exports it, and
-gets back a path plus how long the file is. What happens next depends on the length, and that is the
+gets back a path plus how long the file is. The file includes each agent's system prompt (at its first occurrence and whenever it changes, capped like any payload unless <code>full</code>), since the export is the artifact an evaluation reads. What happens next depends on the length, and that is the
 part worth understanding.</p>
 <p><strong>A path, not the transcript.</strong> The tool answers with a file path on purpose. <code>read_file</code> returns 2,000
 lines per call and names the offset that continues the read, so a long file is reachable whole, in

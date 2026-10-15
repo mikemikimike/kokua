@@ -1846,7 +1846,7 @@ both, is what drives the TOML schema, the incoming-payload sanitizer, the hot-ap
 loop, and the persist path at once -- and <code>tests/config/test_table.py</code> fails if a
 <code>CORE_RUNTIME_SETTINGS</code> entry is not also a real config field and documented in <code>config.example.toml</code>
 under its own <code>[section]</code>.</p>
-<p><code>CORE_RUNTIME_SETTINGS</code> holds exactly <strong>one</strong> entry, and the bar it had to clear says what the section
+<p><code>CORE_RUNTIME_SETTINGS</code> holds exactly <strong>two</strong> entries, and the bar it had to clear says what the section
 is for. Nearly every runtime setting Kokua ships belongs to a capability, so nearly every one is that
 capability's own declaration; the entries before this one were the display flags, and what they
 controlled turned out to be a front end's decision rather than a setting at all (see <a href="#1-a-small-transport-agnostic-core">principle
@@ -1855,7 +1855,9 @@ owns it: whether a conversation's title is written by the model is read in one p
 (<code>Assistant._spawn_title</code>), and there is no toolset it could be declared on. Two questions gate an
 entry here, and a candidate has to answer both: does the <em>core</em> read it, and does a change to it apply
 without a restart? <code>[assistant].model</code> answers the first and fails the second, which is why it is
-startup-only despite reading like the most obvious setting in the file.</p>
+startup-only despite reading like the most obvious setting in the file. <code>[assistant].capture_requests</code>
+is the second entry and clears both questions the same way: <code>TurnRunner</code> is its only reader and reads it as
+each turn opens, so a change applies from the next turn.</p>
 <h2 id="4-all-state-under-one-directory-the-user-owns">4. All state under one directory the user owns<a class="headerlink" href="#4-all-state-under-one-directory-the-user-owns" title="Permanent link">&para;</a></h2>
 <p><code>$KOKUA_HOME</code> (default <code>~/.kokua</code>): <code>config.toml</code> at the root, content under <code>data/</code>. Nothing is
 written inside the installed package, into a hidden cache, or split across XDG directories. Which

@@ -2980,10 +2980,10 @@ whole sessions: an unsynchronized read-modify-write would revert whatever the ne
 the read and the write. Shutdown cancels a title still in flight rather than awaiting it, for the reason
 invariant 7 gives about the store closing under a task nobody is watching.</p>
 <p><code>[assistant] generate_titles</code> (default <code>true</code>) turns the second half off, leaving the placeholder as the
-title. It is the one entry in <code>CORE_RUNTIME_SETTINGS</code>, and it is there rather than in a toolset because
-no capability owns it: <code>Assistant._spawn_title</code> is the only reader. It is hot rather than startup-only
-because that read happens per conversation, so a change genuinely applies without a restart, which is
-the test the model itself fails. There is no setting for <em>which</em> model writes the title, because the
+title. It is one of two entries in <code>CORE_RUNTIME_SETTINGS</code> (the other is <code>[assistant].capture_requests</code>), and it is
+there rather than in a toolset because no capability owns it: <code>Assistant._spawn_title</code> is the only reader. It is hot
+rather than startup-only because that read happens per conversation, so a change genuinely applies without a restart,
+which is the test the model itself fails. There is no setting for <em>which</em> model writes the title, because the
 conversation already answers that.</p>
 <h3 id="renaming-a-conversation">Renaming a conversation<a class="headerlink" href="#renaming-a-conversation" title="Permanent link">&para;</a></h3>
 <p>A title can also be replaced on purpose, three ways, all of them ending at the same
@@ -3380,7 +3380,10 @@ name lookup, structurally a half-step deeper than its predecessors since the sym
 now: the method has a default implementation on the ABC (read everything, keep the metadata, drop the
 messages), correct anywhere and slow where a full read is expensive, so a name lookup cannot tell
 <code>TinyDBSessionStore</code>'s override from a plain inheritance of the default.</p>
-<p>The floor is now <strong><code>aimu&gt;=0.34.0</code></strong>, the first one a rename alone has moved: AIMU renamed its
+<p>The floor is now <strong><code>aimu&gt;=0.36.0</code></strong>: every run event carries <code>run_id</code> and <code>parent_run_id</code>, which Kokua's
+request records (<code>core/requests.py</code>) are keyed by, and the probe is a signature check on the dataclass
+<code>aimu.events.RunEvent</code> for its <code>run_id</code> field (a dataclass field is a constructor parameter). Before it,
+the floor was <code>aimu&gt;=0.34.0</code>, the first one a rename alone moved: AIMU renamed its
 mid-turn-message seam from <code>Steering</code> to <code>Inbox</code>, with no legacy path, and taught it which agent is
 opening each reader. <code>Inbox.reader(agent=...)</code> is called once per run, at its start, and <code>agent</code> is
 that run's own name, offered so a host can route a message to the one run it was meant for rather than
@@ -3509,9 +3512,9 @@ patterns and what removing each one permits. <code>update_config</code> applies 
 <p>Which settings are hot is not a list maintained by hand in several places: it is
 <code>config/table.py</code>'s <code>SettingsTable</code>, built once at startup from <code>CORE_RUNTIME_SETTINGS</code> plus every
 toolset's own hot <code>Setting</code>s, and every consumer -- the schema, the incoming-payload sanitizer, the
-live-apply loop, and the persist path -- loops over that one instance. <code>CORE_RUNTIME_SETTINGS</code> holds one
-entry, <code>[assistant].generate_titles</code>; every other hot setting a run holds arrives from a toolset, so the
-table's contents depend on which toolsets are installed. The
+live-apply loop, and the persist path -- loops over that one instance. <code>CORE_RUNTIME_SETTINGS</code> holds two
+entries, <code>[assistant].generate_titles</code> and <code>[assistant].capture_requests</code>; every other hot setting a run holds arrives
+from a toolset, so the table's contents depend on which toolsets are installed. The
 sanitizer predates the removal of the web settings window and outlived it: <code>update_config</code> is now its
 only caller, so "panel" in the surrounding code names a surface that no longer exists.</p>
 <p><code>SettingsApplier</code> writes a hot value two ways, and which gate hold each takes is decided by reach, the
@@ -3651,6 +3654,20 @@ vendored <code>marked</code> + <code>DOMPurify</code>
 (GitHub-flavored markdown, sanitized, rendered client-side as the answer streams) and vendored KaTeX,
 typeset after sanitization with <code>trust:false</code> once the turn completes. The server allowlists these assets: JS/CSS by name, the
 woff2 fonts under <code>/fonts/</code>.</p>
+<p>What a turn recorded about its model calls (<code>core/requests.py</code>) reaches the page as <code>request</code> and
+<code>ending</code> frames, on replay as items of the same names, and inside a sub-agent's card as <code>request</code> and
+<code>ending</code> entries, which can arrive after the card's terminal status and are drawn anyway. A <code>request</code>
+renders as a <code>{ }</code> button on the round's own output (the last assistant output before it in the log or
+card body; a round with none gets a small <code>round-orphan</code> row), and an <code>ending</code> attaches to its run's
+latest round, tinting the button for a wrap-up or error, with an inline line only as the fallback when no
+round exists. The button opens the single <code>#round-panel</code> beside the log, whose summary line is drawn from
+the call record with no fetch. The viewer is size-safe because a request can be megabytes: the payload is
+fetched when the panel shows that round, from <code>/payloads/&lt;sha256&gt;</code>; the tree is built a level at a time (an
+unopened subtree is one element); strings are cut at 4,000 characters; image data is labeled; above
+<code>REQUEST_INLINE_CEILING</code> characters there is no tree, only the download link (<code>?download=&lt;name&gt;</code>, served
+as an attachment only for a name matching <code>^[A-Za-z0-9._-]{1,100}\Z</code>). Every payload-derived string
+reaches the DOM through <code>textContent</code>, since a request is model and user content. <code>turn_saved</code> carries
+the turn's number, which the user bubble wears as a <code>turn N</code> badge.</p>
 <p>The page sends an <code>input</code> frame (<code>{"type": "input", "text", "token", "images"?, "thinking"?}</code>) for
 <strong>every</strong> message the composer sends, text-only ones included, and the bare string only for its own
 control replies: the Stop button's <code>/stop</code>, an approval's Allow/Deny, and a plan review's verdict. It
@@ -3681,12 +3698,22 @@ of ordering, and it is now a delay rather than a wedge. Whichever half finishes 
 in both directions: a disconnect ends the reader, and an unexpected error ends the applier and has to end
 the reader with it, since a reader left running would queue frames into a drain nobody reads, which is the
 same wedge with the halves swapped.</p>
+<p>The one-connection guard tells a live holder from a closing one, because a reload always meets the
+second. The page navigating away closes its socket at once, but the connection it held still has to tear
+down, and closing each remote MCP session is a network round trip, so the reloaded page connects while
+the guard is still held. Refused, it was told the assistant was "busy in another tab" when no other tab
+existed, and a second reload appeared to fix that only by landing after the teardown. So <code>pump</code> marks the
+guard closing as it begins to unwind, and <code>claim_guard</code> makes a connection arriving then wait for the
+release rather than refusing it. It waits rather than starting alongside, because two assistants would
+share one session store. The wait is bounded (<code>TEARDOWN_WAIT_SECONDS</code>), and a teardown that outlasts it
+is refused in its own words, "still closing", rather than blamed on a tab. A guard whose holder is still
+reading its socket is another tab, and is refused at once as before.</p>
 <p><code>new</code>, <code>select</code>, <code>delete</code>, and <code>branch</code> (which carries <code>id</code> and <code>message_index</code>) all end the same way:
 each resyncs the view rather than describing what changed, so the applying task never has to reason
 about a diff. <code>delete</code> takes that same path even when the conversation it removes is not the one on
 screen, where the resync only refreshes the sidebar; the four share one mechanism regardless of which of
 them actually changes what the user sees.
-Among the frames the server pushes, <code>turn_saved</code> (<code>{"conversation_id", "message_index", "token"?}</code>)
+Among the frames the server pushes, <code>turn_saved</code> (<code>{"conversation_id", "message_index", "token"?, "turn"?}</code>)
 takes no such resync, because it names one turn that already rendered rather than replacing anything: it
 exists only to say where that turn now lives in the store, so a bubble already on screen can grow a
 branch control. The optional <code>token</code> says <em>which</em> bubble, and is absent for any turn the page did not

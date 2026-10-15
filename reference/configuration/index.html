@@ -1282,6 +1282,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#capture_requests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        capture_requests
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2152,6 +2163,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#capture_requests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        capture_requests
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2803,7 +2825,7 @@ immediately. Everything else is <strong>startup-only</strong>: change it, then r
 </thead>
 <tbody>
 <tr>
-<td><code>[assistant].generate_titles</code></td>
+<td><code>[assistant].generate_titles</code>, <code>[assistant].capture_requests</code></td>
 <td>the rest of <code>[assistant]</code>, including <code>[assistant.generation]</code>, and <code>[planning].review_rounds</code></td>
 </tr>
 <tr>
@@ -2831,7 +2853,8 @@ from the file has to stay absent from the request.</p>
 sections</a>.</p>
 <hr />
 <h2 id="assistant"><code>[assistant]</code><a class="headerlink" href="#assistant" title="Permanent link">&para;</a></h2>
-<p>Process-wide defaults. Everything here is read at startup, except <code>generate_titles</code>, which is hot.</p>
+<p>Process-wide defaults. Everything here is read at startup, except <code>generate_titles</code> and <code>capture_requests</code>, which are
+hot.</p>
 <h3 id="model"><code>model</code><a class="headerlink" href="#model" title="Permanent link">&para;</a></h3>
 <p>The default model every agent runs on. An agent that declares its own <code>model</code> runs on that instead.</p>
 <div class="language-toml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">model</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"ollama:qwen3:8b"</span>
@@ -2962,13 +2985,25 @@ every agent's worst-case turn cost scales with this number.</p>
 key</a>.</p>
 <h3 id="generate_titles"><code>generate_titles</code><a class="headerlink" href="#generate_titles" title="Permanent link">&para;</a></h3>
 <p>Have the model write each new conversation's title from the message that opened it. Default <code>true</code>.
-<strong>Hot</strong>, and the only hot key in <code>[assistant]</code>: the title is written per conversation, so a change
+<strong>Hot</strong>: the title is written per conversation, so a change
 applies to the next one with no restart.</p>
 <p>The first message truncated to 40 characters is the title the instant a conversation has one; the
 written title replaces it a moment later, in the background, on the model that conversation runs on
 (no separate model to configure). <code>false</code> stops at the truncation, which is also what stands whenever
 the call fails: an endpoint that is down, or an answer that cleans up to nothing, is silent and leaves
 the placeholder. A conversation a scheduled task minted keeps the task's name either way.</p>
+<h3 id="capture_requests"><code>capture_requests</code><a class="headerlink" href="#capture_requests" title="Permanent link">&para;</a></h3>
+<p>Keep each model call's exact request and response as files under <code>$KOKUA_HOME/data/payloads/</code>, so a turn
+can be examined afterwards as the model saw it. Default <code>true</code>. <strong>Hot</strong>: it is read as each turn opens, so
+a change applies from the next turn with no restart.</p>
+<p>The cost is disk, and it grows with the square of a conversation's length, because every call resends the
+whole context: a 10-round turn at about 30k tokens of context is roughly 1.2 MB. A payload carrying images
+holds their base64 data, repeated on each call. Nothing collects old files yet
+(<a href="https://github.com/saxman/kokua/issues/15">#15</a>). <code>false</code> stops writing the files only: how each agent
+loop ended (answered, wrapped up, or failed) is recorded either way, under the turn's entry in the
+conversation's metadata.</p>
+<p>The key is not locked, so the assistant can change it through <code>update_config</code>, like <code>generate_titles</code>; lock
+it via <code>[security].locked_config_keys</code> to keep it fixed.</p>
 <h2 id="assistantgeneration"><code>[assistant.generation]</code><a class="headerlink" href="#assistantgeneration" title="Permanent link">&para;</a></h2>
 <p>Sampling and length parameters for every agent, each overridable per key by an agent's own
 <code>[agents.&lt;name&gt;.generation]</code> table. Startup-only.</p>

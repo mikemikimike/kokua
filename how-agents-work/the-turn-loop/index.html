@@ -1579,6 +1579,18 @@ arrived, not a formatting slip in this page.</p>
 <p><code>compose_subagent</code> in round two is itself a whole loop of this shape running inside one tool call, on a
 second agent built for the occasion. <a href="../delegation/">Delegation</a> is that mechanism in full; here it is
 just a tool that took a while to return.</p>
+<p>The web UI exposes the loop's boundaries too, without drawing them into the conversation. Each model
+call puts a small <code>{ }</code> button on its own output (<code>round 1</code>, <code>round 2</code>, counted the way a person
+counts), and clicking it opens a panel on the right with that round's details. When the loop stops, the
+panel for its last round carries one line saying which rule stopped it: <code>ended: answered at round 2 of
+10</code>, <code>ended: tool-use limit of 10 rounds reached; answered on a forced wrap-up call</code> for the forced
+wrap-up, or <code>ended: error (...) at round 3 of 10</code>. A wrap-up or an error also tints that round's button,
+so a loop that did not end normally is visible without opening anything. That line is the answer to "why
+did it stop", and the last round's request is the last request the model saw. Every surface counts
+rounds from 1, and the wrap-up line names the cap instead of a round, since the forced call is the one
+that is not counted. The panel shows the round's request and its response side by side, with download
+links to keep the exact JSON; a request over two million characters is download-only. The terminal
+still prints each loop's ending line, since it has no panel to put it in. Each user message also carries a <code>turn N</code> badge, the number a download is named with.</p>
 <h2 id="in-kokua">In Kokua<a class="headerlink" href="#in-kokua" title="Permanent link">&para;</a></h2>
 <p>The loop itself is not in this repository. It belongs to
 <a href="https://saxman.info/aimu/how-to/build-personal-assistant/">AIMU's <code>Agent</code></a>, which Kokua constructs in
@@ -1687,8 +1699,12 @@ toward. That seam is marked now, though where it shows up depends on whose round
 <code>CLIChannel</code> prints the injected round (<code>[continuing: final_answer] &lt;prompt&gt;</code>), which Kokua's terminal
 channel inherits with no code of its own. A <em>worker's</em> rounds never reach that method: they arrive as
 <code>subagent</code> card entries by way of <code>ChannelUI.show_subagent</code>, and the terminal offers no frame for those,
-so the call is a documented no-op there. A worker's boundary is drawn in the web UI's sub-agent card
-instead, carrying which injection it was and the exact words the worker was given (see
+so the call is a documented no-op there. What the terminal does get is the ending itself:
+the terminal channel prints one line per ending
+(<code>[researcher] ended: tool-use limit of 10 rounds reached; answered on a forced wrap-up call</code>) for every
+entry-agent and sub-agent loop, and a channel with no ending frame of its own is told only of the two
+endings that are not routine (the cap and an error). A worker's boundary is drawn in full in the web UI's sub-agent card,
+carrying which injection it was and the exact words the worker was given (see
 <a href="../delegation/">Delegation</a>). Either way the record says why the answer is thinner rather than reading
 as one that simply ran short.
 That edge is real enough to have moved this project's AIMU floor: before AIMU 0.26.0, hitting the cap

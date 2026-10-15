@@ -1810,7 +1810,7 @@ pymdownx.snippets so there is one file to maintain. Edit /CHANGELOG.md, not this
 installable, modular application: a small transport-agnostic core with capability pushed into plugins.
 Because there is no earlier release, this section describes what 0.1.0 <em>is</em> rather than what changed.
 The pre-release development history is in the git log.</p>
-<p>Requires Python 3.11+ and <a href="https://github.com/saxman/aimu">AIMU</a> 0.34.0 or newer. Apache-2.0.</p>
+<p>Requires Python 3.11+ and <a href="https://github.com/saxman/aimu">AIMU</a> 0.36.0 or newer. Apache-2.0.</p>
 <h3 id="package-and-entry-points">Package and entry points<a class="headerlink" href="#package-and-entry-points" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>src</code>-layout <code>kokua</code> package with two console scripts: <code>kokua</code> runs the selected front end (default
@@ -1850,6 +1850,13 @@ The pre-release development history is in the git log.</p>
 </ul>
 <h3 id="conversations-and-turns">Conversations and turns<a class="headerlink" href="#conversations-and-turns" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>System prompts in the export, and <code>kokua export --turn N</code>.</strong> The conversation export now shows each
+  agent's system prompt the first time it appears and again whenever it changes, read from the recorded
+  request payloads (never the payloads themselves), in every route: the command, the web download, and
+  <code>export_conversation</code>. <code>kokua export &lt;id&gt; --turn N</code> writes one turn alone: the user's message, then every model call it
+  made grouped by run with the request exactly as sent, the response, and how each loop ended, to
+  <code>&lt;id&gt;.turn-N.md</code>. A payload that is missing reads <code>_not captured_</code>; a turn out of range exits 2 naming
+  the valid range.</li>
 <li><strong>Conversation commands at the prompt: <code>/new</code>, <code>/conversations</code>, <code>/switch &lt;id&gt;</code>.</strong> The terminal used
   to have no way to start a conversation or reach one it was not already in, which made every earlier
   conversation unreachable from the CLI and left restarting the process resuming the most recent one.
@@ -1939,6 +1946,48 @@ The pre-release development history is in the git log.</p>
   on every exit branch of a turn: success, cancellation, a connection error, a generic error, with the
   wall-clock figure measured at the moment of recording, so a turn that raised still reports what it
   cost up to the point it stopped.</li>
+<li><strong>A turn records every model call's request and every loop's ending.</strong> <code>core/requests.py</code>'s
+  <code>TurnRequests</code>, fed by the same <code>record_event</code> sink as the cost record, stores each call's endpoint and
+  a reference to the exact request and response (files under <code>$KOKUA_HOME/data/payloads/</code>) and how each
+  agent loop ended, under <code>session.metadata["requests"][str(user_index)]</code>. Recorded on every exit
+  branch, unattended runs included, and dropped or kept with the turn when a conversation is branched or
+  truncated. <code>[assistant].capture_requests</code> (default <code>true</code>, hot) turns the payload files off; endings
+  are recorded either way. <code>CORE_RUNTIME_SETTINGS</code> now holds two entries.</li>
+<li><strong>The web UI shows what the model saw.</strong> A <code>{ }</code> button per model call on that round's own output, which
+  opens a collapsible right panel (it narrows the conversation, and overlays it below 900px; Escape, the
+  close button, or the same button closes it). Its summary is drawn without a fetch; the panel shows the
+  round's two halves, the request (fetched once and rendered a level at a time) and the response the model
+  returned (reasoning, requested tool calls, text), with long strings cut behind "show all", image data
+  labeled, and no inline request tree above two million characters. Each half links
+  <code>/payloads/&lt;sha256&gt;?download=&lt;name&gt;</code> (accepted only for <code>^[A-Za-z0-9._-]{1,100}\Z</code>, served as an
+  attachment). Each loop's <code>ended: ...</code> wording (as the terminal and export word it, rounds counted from 1)
+  appears in the panel of its last round, a wrap-up or error tinting that round's button, with the old
+  inline line kept only for an ending with no round to ride; the user bubble carries a <code>turn N</code> badge. No
+  marker rows or ending lines are drawn in the log, and the terminal still prints every ending. A tool
+  round's button ends on the last tool or sub-agent card it asked for, live as on reload, though its
+  record reaches the page before that card does: each call record carries <code>tool_call_count</code> (how many
+  tool calls its response requested), and only a round that asked for tools hands its button on.</li>
+<li><strong>Those records reach the channel live.</strong> <code>ChannelUI.show_request</code> / <code>show_ending</code> and the optional
+  <code>RichChannel.send_request</code> / <code>send_ending</code> carry a <code>request</code> frame per completed entry-agent call and an
+  <code>ending</code> frame per loop; a sub-agent's appear as <code>request</code> and <code>ending</code> entries in its own card
+  (<code>SubagentReporter.append</code>). That includes a worker built by <code>compose_subagent</code>, which hands the run
+  that called it to the spawn as the worker's parent (an injected <code>ToolContext</code>, invisible to the model),
+  the way AIMU's spawn tool does when the loop calls it. A channel without the frames shows no round button and gets one plain
+  line for a <code>wrap_up</code> or <code>error</code> ending only, such as <code>[assistant] ended: tool-use limit of 10 rounds
+  reached; answered on a forced wrap-up call</code>. Kokua's terminal channel defines <code>send_turn</code> and
+  <code>send_ending</code> itself and prints every ending and the <code>[turn N]</code> line; no other channel gets the turn
+  line. Every surface counts rounds from 1.</li>
+<li><strong>Round buttons, turn badges, and tool character counts wait for a hover.</strong> A round button's tooltip reads
+  <code>turn X, round Y</code>, and the button, the turn badge, and a tool card's character count are revealed when
+  their card is hovered or focused (a warning-tinted button stays visible, since endings now live in the
+  panel). On every row the right edge reads info, buttons, then the timestamp, in one column.</li>
+<li><strong>Turns are numbered once, and replay shows the round buttons.</strong> <code>core/conversations.py</code>'s <code>turn_numbers</code>
+  gives each turn its ordinal, skipping loop nudges, agents' messages, and messages typed mid-turn, and the
+  live <code>[turn N]</code> line (<code>ChannelUI.show_turn</code>; printed by the terminal channel only), the
+  <code>turn_saved</code> frame's new <code>turn</code> field, the history <code>user</code> item's <code>turn</code>, and the export's <code>## Turn N</code>
+  headings all read it. A reloaded conversation replays each entry-agent round's <code>request</code> item right
+  after that round's assistant message and the loop's <code>ending</code> at the turn's end, as the live frames
+  arrived; the export renders each ending, a sub-agent card's included, as <code>_[ended: answered at round 2 of 10]_</code> or <code>_[ended: tool-use limit of 10 rounds reached; answered on a forced wrap-up call]_</code>.</li>
 <li><strong>Delegated and reviewed work counts toward that same total, with one named exception.</strong> A spawned
   sub-agent and a workflow critic each build their own client, outside the family a turn's own scoped
   sink reaches, so both were invisible to <code>TurnMetrics</code> and a heavily delegating turn read as cheap.
@@ -1955,6 +2004,9 @@ The pre-release development history is in the git log.</p>
   emits no turn event on any client, so wiring <code>client.events</code> closes the gap for every other direct
   client call but not this one. A <code>/plan</code> turn's recorded cost is short by exactly one call per review
   round, with no qualifier able to say so.</li>
+<li><strong>The per-agent cost breakdown names the entry agent by its configured name.</strong> The entry agent's own
+  event sink is now wired beside its client's, so its calls carry its name (<code>assistant</code> by default,
+  whatever <code>[assistant].agent</code> says otherwise) and a call no run claimed is labelled <code>unattributed</code>.</li>
 <li><strong><code>kokua export</code> writes a conversation as Markdown.</strong> <code>transcript_export.render_markdown</code> renders a
   saved conversation's header, each turn's user message, reasoning, tool calls with their arguments
   and results, sub-agent cards, and what it cost, into one Markdown document a person can read, diff,
@@ -3734,7 +3786,9 @@ notice on startup.</p>
   key, whether both drivers drained all three branches a steered turn could take, whether the three
   stream consumers rendered the phase, whether the budget reset on a drained mailbox was bounded, and
   whether a misbehaving host source was caught rather than trusted. <code>Inbox</code> joins the probe's job.
-  Today the floor is <strong>0.34.0</strong>, the first one a rename alone has moved: AIMU renamed its
+  Today the floor is <strong>0.36.0</strong>: every run event carries <code>run_id</code> and <code>parent_run_id</code>, which the request
+  records behind "what the model saw" are keyed by, and the startup check is a signature check on
+  <code>aimu.events.RunEvent</code> for its <code>run_id</code> field. Before it the floor was <strong>0.34.0</strong>, the first one a rename alone moved: AIMU renamed its
   mid-turn-message seam from <code>Steering</code> to <code>Inbox</code>, with no legacy path, and taught it which agent is
   opening each reader. <code>Inbox.reader(agent=...)</code> is called once per run, at its start, and <code>agent</code> is
   that run's own name, offered so a host can route a message to the one run it was meant for rather than
@@ -3815,6 +3869,13 @@ notice on startup.</p>
   <code>cancel_turn</code> that precedes it. Whichever half of the pump finishes first ends the connection, in both
   directions: an error while applying ends the reader too, which would otherwise queue frames into a
   drain nobody reads.</li>
+<li><strong>A reload reconnects on the first try.</strong> The reloaded page used to connect while the connection it
+  replaced was still tearing down (closing each remote MCP session is a network round trip), and the
+  one-connection guard, still held, refused it as "busy in another tab"; a second reload worked only
+  because it landed later. The guard now tells a closing holder from a live one: a connection arriving
+  during a teardown waits for it, bounded by <code>TEARDOWN_WAIT_SECONDS</code> in <code>frontends/web.py</code>, and one that
+  outwaits that bound is told the previous connection is still closing. A second tab open beside a live
+  one is refused at once, as before.</li>
 </ul>
 <h3 id="known-limitations">Known limitations<a class="headerlink" href="#known-limitations" title="Permanent link">&para;</a></h3>
 <ul>
