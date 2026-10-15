@@ -165,7 +165,9 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.34.0 or newer
 - **Those records reach the channel live.** `ChannelUI.show_request` / `show_ending` and the optional
   `RichChannel.send_request` / `send_ending` carry a `request` frame per completed entry-agent call and an
   `ending` frame per loop; a sub-agent's appear as `request` and `ending` entries in its own card
-  (`SubagentReporter.append`). A channel without the frames shows no round button and gets one plain
+  (`SubagentReporter.append`). That includes a worker built by `compose_subagent`, which hands the run
+  that called it to the spawn as the worker's parent (an injected `ToolContext`, invisible to the model),
+  the way AIMU's spawn tool does when the loop calls it. A channel without the frames shows no round button and gets one plain
   line for a `wrap_up` or `error` ending only, such as `[assistant] ended: tool-use limit of 10 rounds
   reached; answered on a forced wrap-up call`. Kokua's terminal channel defines `send_turn` and
   `send_ending` itself and prints every ending and the `[turn N]` line; no other channel gets the turn
