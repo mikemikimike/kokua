@@ -2842,6 +2842,116 @@ async def test_a_blocked_control_still_releases_the_connection_on_disconnect(tmp
         await asyncio.gather(serving, return_exceptions=True)
 
 
+async def _until(predicate, timeout: float = 5) -> None:
+    async with asyncio.timeout(timeout):
+        while not predicate():
+            await asyncio.sleep(0.01)
+
+
+def _ready(sock: _AsgiSocket) -> bool:
+    return any(frame["type"] == "ready" for frame in sock.frames())
+
+
+def _refusals(sock: _AsgiSocket) -> list[dict]:
+    return [f for f in sock.frames() if f["type"] == "message" and not f.get("proactive")]
+
+
+def _slow_teardown(monkeypatch) -> asyncio.Event:
+    """Hold every connection's teardown open until the returned event is set.
+
+    Stands in for the slow part of a real one: closing each remote MCP session is a network round trip,
+    so a reloaded page reconnects while the connection it replaced is still shutting down.
+    """
+    import kokua.frontends.web as web_mod
+
+    finished = asyncio.Event()
+
+    class SlowTeardown(web_mod.Assistant):
+        async def run(self) -> None:
+            try:
+                await super().run()
+            finally:
+                await finished.wait()
+
+    monkeypatch.setattr(web_mod, "Assistant", SlowTeardown)
+    return finished
+
+
+async def test_a_reload_waits_out_the_previous_connections_teardown(tmp_path, monkeypatch):
+    """Reloading the page reconnects on the first try, not the second.
+
+    The reloaded page connects while the connection it replaced is still closing its MCP sessions. That
+    connection's socket is already gone, so no other tab is involved, and refusing as "busy in another
+    tab" was a wrong diagnosis that a second reload, landing after the teardown, appeared to fix.
+    """
+    finished = _slow_teardown(monkeypatch)
+    app = build_app(_config(tmp_path), client=MockAsyncModelClient([]))
+
+    first = _AsgiSocket([{"type": "websocket.connect"}])
+    serving = asyncio.create_task(app(_ws_scope(), first.receive, first.send))
+    second = _AsgiSocket([{"type": "websocket.connect"}])
+    reloading = None
+    try:
+        await _until(lambda: _ready(first))
+        first.feed({"type": "websocket.disconnect", "code": 1001})  # the page navigating away
+        await asyncio.sleep(0.05)  # the disconnect is read; the teardown is now holding the guard
+        assert not serving.done()
+
+        reloading = asyncio.create_task(app(_ws_scope(), second.receive, second.send))
+        await asyncio.sleep(0.05)
+        assert not _refusals(second), "the reload was refused while the previous connection closed"
+        assert not _ready(second), "the reload started before the previous connection finished closing"
+
+        finished.set()
+        await _until(lambda: _ready(second))
+        assert not _refusals(second)
+    finally:
+        finished.set()
+        second.feed({"type": "websocket.disconnect", "code": 1000})
+        tasks = [task for task in (serving, reloading) if task is not None]
+        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=5)
+
+
+async def test_a_second_tab_is_still_refused_while_the_first_is_open(tmp_path):
+    app = build_app(_config(tmp_path), client=MockAsyncModelClient([]))
+
+    first = _AsgiSocket([{"type": "websocket.connect"}])
+    serving = asyncio.create_task(app(_ws_scope(), first.receive, first.send))
+    try:
+        await _until(lambda: _ready(first))
+        second = _AsgiSocket([{"type": "websocket.connect"}])
+        await asyncio.wait_for(app(_ws_scope(), second.receive, second.send), timeout=1)
+        assert [f["text"] for f in _refusals(second)] == ["Assistant is busy in another tab."]
+    finally:
+        first.feed({"type": "websocket.disconnect", "code": 1000})
+        await asyncio.wait_for(asyncio.gather(serving, return_exceptions=True), timeout=5)
+
+
+async def test_a_reload_behind_a_teardown_that_never_ends_is_told_so(tmp_path, monkeypatch):
+    """The wait is bounded, and its refusal names the real cause rather than another tab."""
+    import kokua.frontends.web as web_mod
+
+    monkeypatch.setattr(web_mod, "TEARDOWN_WAIT_SECONDS", 0.1)
+    finished = _slow_teardown(monkeypatch)
+    app = build_app(_config(tmp_path), client=MockAsyncModelClient([]))
+
+    first = _AsgiSocket([{"type": "websocket.connect"}])
+    serving = asyncio.create_task(app(_ws_scope(), first.receive, first.send))
+    try:
+        await _until(lambda: _ready(first))
+        first.feed({"type": "websocket.disconnect", "code": 1001})
+        await asyncio.sleep(0.05)
+
+        second = _AsgiSocket([{"type": "websocket.connect"}])
+        await asyncio.wait_for(app(_ws_scope(), second.receive, second.send), timeout=1)
+        (refusal,) = _refusals(second)
+        assert "busy in another tab" not in refusal["text"]
+        assert "still closing" in refusal["text"]
+    finally:
+        finished.set()
+        await asyncio.wait_for(asyncio.gather(serving, return_exceptions=True), timeout=5)
+
+
 async def test_ws_truncate_while_a_turn_runs_says_so_and_changes_nothing(tmp_path):
     """The refusal has to reach the page, and nothing may repaint behind it.
 

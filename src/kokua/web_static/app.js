@@ -2456,7 +2456,8 @@ let reconnectAt = 0;
 // The two flags below separate the ways a socket can close, because only one of them is worth
 // retrying. A server that is not up yet closes having sent nothing, which is the ordinary restart
 // case. A server that answered and refused us sends one message frame and closes without syncing:
-// the one-connection guard's "busy in another tab", or a config error reported in place of a
+// the one-connection guard's "busy in another tab" (or "still closing", when the connection a reload
+// replaced outlasted the server's wait for its teardown), or a config error reported in place of a
 // session. Retrying a refusal would thrash and bury its own message under repetitions of itself, so
 // only a connection that synced, or one that never heard from a server at all, reconnects.
 let synced = false;

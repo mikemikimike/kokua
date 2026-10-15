@@ -1533,6 +1533,17 @@ in both directions: a disconnect ends the reader, and an unexpected error ends t
 the reader with it, since a reader left running would queue frames into a drain nobody reads, which is the
 same wedge with the halves swapped.
 
+The one-connection guard tells a live holder from a closing one, because a reload always meets the
+second. The page navigating away closes its socket at once, but the connection it held still has to tear
+down, and closing each remote MCP session is a network round trip, so the reloaded page connects while
+the guard is still held. Refused, it was told the assistant was "busy in another tab" when no other tab
+existed, and a second reload appeared to fix that only by landing after the teardown. So `pump` marks the
+guard closing as it begins to unwind, and `claim_guard` makes a connection arriving then wait for the
+release rather than refusing it. It waits rather than starting alongside, because two assistants would
+share one session store. The wait is bounded (`TEARDOWN_WAIT_SECONDS`), and a teardown that outlasts it
+is refused in its own words, "still closing", rather than blamed on a tab. A guard whose holder is still
+reading its socket is another tab, and is refused at once as before.
+
 `new`, `select`, `delete`, and `branch` (which carries `id` and `message_index`) all end the same way:
 each resyncs the view rather than describing what changed, so the applying task never has to reason
 about a diff. `delete` takes that same path even when the conversation it removes is not the one on
