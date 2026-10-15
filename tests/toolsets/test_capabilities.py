@@ -73,7 +73,7 @@ class _RecordingSpawn:
     def __call__(self, model, **kwargs):
         self.calls.append({"model": model, **kwargs})
 
-        async def spawn_subagent(agent_type: str, task: str) -> str:
+        async def spawn_subagent(agent_type: str, task: str, ctx=None) -> str:
             return f"{agent_type} ran: {task}"
 
         return spawn_subagent
@@ -124,7 +124,7 @@ async def test_compose_subagent_declares_its_call_to_the_card_for_the_length_of_
     seen = []
 
     def factory(model, **kwargs):
-        async def spawn_subagent(agent_type: str, task: str) -> str:
+        async def spawn_subagent(agent_type: str, task: str, ctx=None) -> str:
             seen.append(spawn_call.get())
             return "ran"
 
@@ -146,6 +146,33 @@ async def test_compose_subagent_declares_its_call_to_the_card_for_the_length_of_
         }
     ]
     assert spawn_call.get() is None, "the declaration must not outlive the spawn"
+
+
+async def test_compose_subagent_hands_the_calling_run_to_the_worker_as_its_parent(tmp_path, monkeypatch):
+    """A composed worker's run is parented to the run that called compose_subagent, the way AIMU's own
+    spawn tool parents a named sub-agent; without it the worker's rounds never reach its card."""
+    import kokua.core.agents  # noqa: F401  (see `_recording` for why this import comes first)
+    from aimu.tools.context import ToolContext
+
+    received = []
+
+    def factory(model, **kwargs):
+        async def spawn_subagent(agent_type: str, task: str, ctx=None) -> str:
+            received.append(ctx)
+            return "ran"
+
+        return spawn_subagent
+
+    monkeypatch.setattr("aimu.aio.tools.builtin.make_async_subagent_tool", factory)
+    compose = _tools_by_name(_state(tmp_path))["compose_subagent"]
+    await compose("quote-checker", "Check AAPL.", ["web"], "Check quotes.", ctx=ToolContext(run_id="lead-1"))
+
+    assert [ctx.run_id for ctx in received] == ["lead-1"]
+
+
+def test_compose_subagent_does_not_show_its_context_to_the_model(tmp_path):
+    spec = _tools_by_name(_state(tmp_path))["compose_subagent"].__tool_spec__
+    assert "ctx" not in spec["function"]["parameters"]["properties"]
 
 
 async def test_list_capabilities_reports_every_name_with_its_provider_and_description(tmp_path):

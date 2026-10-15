@@ -14,9 +14,10 @@ anyway, exactly as it picks a skill from its catalogue.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Mapping
+from typing import TYPE_CHECKING, Callable, Mapping, Optional
 
 from aimu.tools import tool
+from aimu.tools.context import ToolContext
 
 from kokua.registry.registry import Setting, Toolset, ToolsetError, build_tools, select
 
@@ -222,7 +223,9 @@ def _make_compose_tool(state: "LiveState", *, remaining_depth: int | None, model
     """
 
     @tool
-    async def compose_subagent(name: str, task: str, tools: list[str], instructions: str) -> str:
+    async def compose_subagent(
+        name: str, task: str, tools: list[str], instructions: str, ctx: Optional[ToolContext] = None
+    ) -> str:
         """Build a sub-agent with exactly the capabilities a task needs, run one task on it, and return
         its answer.
 
@@ -295,7 +298,11 @@ def _make_compose_tool(state: "LiveState", *, remaining_depth: int | None, model
         arguments = {"name": name, "tools": tools, "instructions": instructions, "task": task}
         token = spawn_call.set({"tool": COMPOSE_SUBAGENT_TOOL_NAME, "arguments": arguments})
         try:
-            return await spawn(label, task)
+            # `ctx` is the run that called this tool, injected by the loop and invisible to the model.
+            # Handing it on parents the worker's run to it, the way AIMU's spawn tool does when the loop
+            # calls that tool itself; called directly from here, the spawn tool would otherwise start an
+            # unparented run, and a run with no parent never reaches the card standing in for it.
+            return await spawn(label, task, ctx=ctx)
         finally:
             spawn_call.reset(token)
 
