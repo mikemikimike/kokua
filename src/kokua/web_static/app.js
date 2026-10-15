@@ -233,10 +233,17 @@ function tickWorking(spinner, elapsed) {
 // indicator stranded above the content it was meant to sit under. While a turn is running the row is
 // the log's last element, so a top-level block goes in ahead of it; `parent` is a sub-agent card's
 // body for a nested block, which is inside a block already placed and so just appends.
+// Declared here, ahead of appendToLog, because every append consults them (see adoptRoundButton) and
+// a `const` read before its line has run throws: each container's (the log's, or a card body's) most
+// recent round, and what counts as a dispatch result.
+const latestRound = new WeakMap();
+const DISPATCH_RESULT = ".bubble.tool, .bubble.subagent, .bubble.image";
+
 function appendToLog(el, parent) {
   if (parent) parent.appendChild(el);
   else if (workingElement) log.insertBefore(el, workingElement);
   else log.appendChild(el);
+  adoptRoundButton(el, parent || log);
 }
 
 // The last block rendered in the transcript, looking past the working indicator. Throughout a turn the
@@ -1758,6 +1765,17 @@ function addRound(call, container, rounds, agent) {
     if (shownRound === record) closeRoundPanel();
     else openRoundPanel(record);
   });
+  record.button = button;
+  placeRoundButton(record, output, container);
+  latestRound.set(container, record);
+  rounds.push(record);
+  autoscroll();
+  return record;
+}
+
+// Put a round's button on `output`, or, with no output, in a small row of its own in `container`.
+function placeRoundButton(record, output, container) {
+  const button = record.button;
   if (output && output.classList.contains("foldable")) {
     // A foldable's header is itself the <button> that folds it, and a button cannot hold another, so
     // the round button sits in a slot pinned over the header's right end instead (see .round-slot);
@@ -1781,11 +1799,56 @@ function addRound(call, container, rounds, agent) {
     output.appendChild(button);
     appendToLog(output, container === log ? undefined : container);
   }
-  record.button = button;
   record.output = output;
-  rounds.push(record);
-  autoscroll();
-  return record;
+}
+
+// Take a round's button off the output holding it, undoing what placeRoundButton did there: an orphan
+// row goes, and a foldable whose slot is left with no button gets its caption back in its header.
+function releaseRoundButton(record) {
+  const held = record.output;
+  record.button.remove();
+  if (!held) return;
+  held.classList.remove("round-selected");
+  if (held.classList.contains("round-orphan")) {
+    held.remove();
+    return;
+  }
+  const slot = held.querySelector(":scope > .round-slot");
+  if (!slot) return;
+  if (slot.querySelector(".round-button")) {
+    held.style.setProperty("--round-buttons", String(slot.children.length));
+    return;
+  }
+  const caption = slot.querySelector(".fold-ts");
+  const header = held.querySelector(":scope > .fold-header");
+  if (caption && header) header.appendChild(caption);
+  slot.remove();
+  held.style.removeProperty("--round-buttons");
+}
+
+// A dispatch result (a tool card, a sub-agent card, a generated image) is the last thing its round
+// produced, but it reaches the page after that round's request: a round's record completes when the
+// model's response ends, and the tool it asked for runs afterwards. A live tool round's button is
+// therefore drawn first on whatever came before (the round's reasoning, or a row of its own), and a
+// sub-agent card, whose entries are stored in that same arrival order, does the same on reload. So when a
+// dispatch result lands right after the latest round's output (looking past ROUND_PASSTHROUGH), the
+// button moves onto it: the output a top-level replay, which orders the tool card first, puts it on.
+// Model output (an answer, reasoning) never takes it, since that belongs to the round that comes next.
+function adoptRoundButton(el, container) {
+  if (!el.matches(DISPATCH_RESULT)) return;
+  const record = latestRound.get(container);
+  if (!record || !record.output) return;
+  // Only a round whose response asked for tools has dispatch results. Without this, a card a reload
+  // places at a turn's end (one matched to no call, such as a plan reviewer's) would take the button of
+  // a round that only answered. A record with no count (written before it was recorded) is not moved.
+  if (!(record.call.tool_call_count > 0)) return;
+  let previous = el.previousElementSibling;
+  while (previous && previous.matches(ROUND_PASSTHROUGH)) previous = previous.previousElementSibling;
+  if (previous !== record.output) return;
+  const selected = shownRound === record;
+  releaseRoundButton(record);
+  placeRoundButton(record, el, container);
+  if (selected) el.classList.add("round-selected");
 }
 
 function renderRequest(call, opts) {
@@ -2221,6 +2284,7 @@ function handleFrame(event) {
     // Replay a conversation (on connect or after switching), reusing the live renderers.
     closeRoundPanel();  // it points into the log being replaced
     topRounds = [];
+    latestRound.delete(log);  // its button lived in the transcript being replaced
     log.innerHTML = "";  // replace any current transcript
     subagentCards = {};  // fresh view: drop any live sub-agent card references
     // Drop the references to the bubbles just removed. Without this they stay live but detached, and

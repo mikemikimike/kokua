@@ -161,7 +161,10 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.34.0 or newer
   attachment). Each loop's `ended: ...` wording (as the terminal and export word it, rounds counted from 1)
   appears in the panel of its last round, a wrap-up or error tinting that round's button, with the old
   inline line kept only for an ending with no round to ride; the user bubble carries a `turn N` badge. No
-  marker rows or ending lines are drawn in the log, and the terminal still prints every ending.
+  marker rows or ending lines are drawn in the log, and the terminal still prints every ending. A tool
+  round's button ends on the last tool or sub-agent card it asked for, live as on reload, though its
+  record reaches the page before that card does: each call record carries `tool_call_count` (how many
+  tool calls its response requested), and only a round that asked for tools hands its button on.
 - **Those records reach the channel live.** `ChannelUI.show_request` / `show_ending` and the optional
   `RichChannel.send_request` / `send_ending` carry a `request` frame per completed entry-agent call and an
   `ending` frame per loop; a sub-agent's appear as `request` and `ending` entries in its own card

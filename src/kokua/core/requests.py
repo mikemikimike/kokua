@@ -99,6 +99,7 @@ class TurnRequests:
             "tool_count": _count(event.payload, "tools"),
             "payload_ref": self._saved(text),
             "stop_reason": None,
+            "tool_call_count": None,
             "response_ref": None,
             "error": None,
         }
@@ -123,11 +124,15 @@ class TurnRequests:
                 "tool_count": None,
                 "payload_ref": None,
                 "stop_reason": None,
+                "tool_call_count": None,
                 "response_ref": None,
                 "error": None,
             }
             self._calls.append(call)
         call["stop_reason"] = event.stop_reason
+        # Recorded whether or not the response file is, since it is how a reader (the web UI's round
+        # button) tells a round that asked for tools from one that answered, without fetching anything.
+        call["tool_call_count"] = len(event.tool_calls or [])
         call["error"] = type(event.error).__name__ if event.error is not None else None
         if self._capture:
             response = {"text": event.text, "thinking": event.thinking, "tool_calls": list(event.tool_calls or [])}
