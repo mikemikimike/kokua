@@ -672,9 +672,9 @@ AGENT_SCHEMA: dict[tuple[str, str], tuple] = {
     ("agents.*", "system_message"): ("system_message", (str,), "a string", None),
     ("agents.*", "model"): ("model", (str,), "a string", None),
     ("agents.*", "thinking"): ("thinking", (bool, str), "true, false, or low/medium/high", _thinking),
-    ("agents.*", "tools"): ("tools", (list,), "a list of strings", _str_list),
     ("agents.*", "delegates_to"): ("delegates_to", (list,), "a list of strings", _str_list),
     ("agents.*", "max_iterations"): ("max_iterations", (int,), "an integer >= 1", _positive_int),
+    **{("agents.*.tools", key): (key, (list,), "a list of strings", _str_list) for key in _AGENT_TOOLS_KEYS},
     **{
         ("agents.*.generation", key): ("generation", types, label, _generation_value)
         for key, (types, label, _) in _GENERATION_KEYS.items()
@@ -883,6 +883,11 @@ def coerce_config_string(section: str, key: str, raw: str, *, table, extra_schem
                 f"[{section}] does not name an agent: {fault}. Name a real agent, for instance "
                 'section="agents.researcher"; a name holds letters, digits, hyphens, or underscores.'
             )
+    if section.startswith("agents.") and section.count(".") == 1 and key == "tools":
+        raise ConfigError(
+            f"[{section}].tools is a table, not a scalar. Write one list at a time with "
+            f'section="{section}.tools", for instance key="available".'
+        )
     if section.startswith("agents.") and key == "generation":
         raise ConfigError(
             f"[{section}].generation is a table, not a scalar. Set one parameter at a time with "

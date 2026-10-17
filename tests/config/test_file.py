@@ -695,10 +695,12 @@ def test_the_agent_write_schema_covers_exactly_the_agent_keys_load_accepts():
     """Two hand-kept lists, one for what `update_config` may write into an agent table and one for what
     `load` parses back out of it, and drift between them is silent in the worst direction: a key only
     `AGENT_SCHEMA` knows is written to the file and then rejected on the next read, which leaves every
-    later agent write refused with "does not currently parse". `generation` is the one deliberate
-    difference, being a sub-table `AGENT_SCHEMA` spells out one parameter at a time."""
+    later agent write refused with "does not currently parse". `generation` and `tools` are the deliberate
+    differences, being sub-tables `AGENT_SCHEMA` spells out one key at a time."""
     flat_agent_keys = {key for section, key in settings.AGENT_SCHEMA if section == "agents.*"}
-    assert flat_agent_keys == set(settings._AGENT_KEYS) - {"generation"}
+    assert flat_agent_keys == set(settings._AGENT_KEYS) - {"generation", "tools"}
+    tools_keys = {key for section, key in settings.AGENT_SCHEMA if section == "agents.*.tools"}
+    assert tools_keys == set(settings._AGENT_TOOLS_KEYS)
 
 
 @pytest.mark.parametrize(
@@ -716,7 +718,7 @@ def test_schema_section_wildcards_only_the_agent_name(section, expected):
 
 
 def test_coerce_reads_an_agent_tools_list():
-    value = settings.coerce_config_string("agents.researcher", "tools", "time, memory", table=core_table())
+    value = settings.coerce_config_string("agents.researcher.tools", "available", "time, memory", table=core_table())
     assert value == ["time", "memory"]
 
 
@@ -819,14 +821,14 @@ def test_unknown_agent_key_lists_what_an_agent_table_accepts():
 def test_agent_hint_names_a_placeholder_rather_than_the_wildcard():
     """A model acts on a hint verbatim, and `section="agents.*"` writes an agent literally named `*`.
 
-    What this test pins is that the hint reads `[agents.<name>].tools`, the placeholder, and not the
-    wildcard `[agents.*].tools`.
+    What this test pins is that the hint reads `[agents.<name>].delegates_to`, the placeholder, and not the
+    wildcard `[agents.*].delegates_to`.
     """
     with pytest.raises(
         settings.ConfigError,
-        match=r"did you mean \[agents.<name>\].tools\?",
+        match=r"did you mean \[agents.<name>\].delegates_to\?",
     ):
-        settings.coerce_config_string("display", "tools", "x", table=core_table())
+        settings.coerce_config_string("display", "delegates_to", "x", table=core_table())
 
 
 @pytest.mark.parametrize(
@@ -857,7 +859,7 @@ def test_a_section_whose_agent_name_could_not_be_written_as_given_is_refused(sec
 def test_an_agent_name_a_section_header_can_carry_is_still_accepted(name):
     """The rule is TOML's bare-key character set, not a blocklist of one character, and the shipped
     example's own `report-writer` is the case that has to keep working."""
-    assert settings.coerce_config_string(f"agents.{name}", "tools", "time", table=core_table()) == ["time"]
+    assert settings.coerce_config_string(f"agents.{name}.tools", "available", "time", table=core_table()) == ["time"]
 
 
 def _write_task_config(tmp_path, body: str):
