@@ -618,9 +618,33 @@ async def test_a_declared_entry_must_name_a_toolset_the_agent_can_reach(tmp_path
 
 async def test_a_declared_entry_matching_no_tool_is_a_startup_error(tmp_path):
     config, state, entry = await _wired(tmp_path)
+    assert "compute" in config.agents["coder"].available
     config = _declaring(config, coder=(["compute.run_comand"], []))
-    with pytest.raises(ConfigError, match=r"\[agents\.coder\.tools\]\.confirm"):
+    with pytest.raises(ConfigError) as error:
         resolve_approval_policies(config, state, entry)
+    message = str(error.value)
+    assert "[agents.coder.tools].confirm has 1 entry that would gate nothing" in message
+    assert "compute.run_comand" in message and "run_command" in message
+    assert "cannot reach" not in message
+
+
+async def test_a_declared_review_entry_must_name_a_toolset_the_agent_can_reach(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    config = _declaring(config, researcher=([], ["compute.run_command"]))
+    with pytest.raises(
+        ConfigError,
+        match=r"\[agents\.researcher\.tools\]\.review names 'compute\.run_command', "
+        r"but researcher cannot reach the 'compute' toolset",
+    ):
+        resolve_approval_policies(config, state, entry)
+
+
+async def test_a_declared_review_entry_resolves_into_that_agents_review_set(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    config = _declaring(config, coder=(["compute.execute_python"], ["compute.run_command"]))
+    coder = resolve_approval_policies(config, state, entry).for_agent("coder")
+    assert coder.review == {"run_command"}
+    assert coder.confirm == {"execute_python"}
 
 
 async def test_confirm_and_review_overlapping_is_a_startup_error(tmp_path):
@@ -640,12 +664,23 @@ async def test_a_declared_pair_overlapping_names_its_own_table(tmp_path):
 async def test_the_confirm_tools_flag_overlapping_the_files_review_fails(tmp_path):
     """``--confirm-tools`` replaces ``default_confirm`` but not the file's review list, so naming one
     tool in both is caught here rather than silently picking a winner."""
-    config, state, entry = await _wired(tmp_path)
-    config = dataclasses.replace(
-        config, default_confirm=["compute.run_command"], default_review=["compute.run_command"]
-    )
+    import re
+    from importlib.resources import files
+
+    from kokua.cli import build_arg_parser, resolve_config
+
+    text = files("kokua").joinpath("config.example.toml").read_text()
+    text = re.sub(r"^review = \[.*?\]", 'review = ["compute.run_command"]', text, count=1, flags=re.M | re.S)
+    path = tmp_path / "config.toml"
+    path.write_text(text)
+    args = build_arg_parser().parse_args(["--config", str(path), "--confirm-tools", "compute.run_command"])
+    flagged = resolve_config(args)
+    assert flagged.default_confirm == ["compute.run_command"]
+    assert flagged.default_review == ["compute.run_command"]
+
+    _, state, entry = await _wired(tmp_path)
     with pytest.raises(ConfigError, match="in both confirm and review"):
-        resolve_approval_policies(config, state, entry)
+        resolve_approval_policies(flagged, state, entry)
 
 
 async def test_the_shipped_example_resolves_to_todays_gate(tmp_path):
