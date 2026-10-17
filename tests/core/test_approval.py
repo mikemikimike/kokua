@@ -543,3 +543,139 @@ async def test_an_assistant_holds_no_gate_when_the_feature_is_off(tmp_path):
 
     assert assistant._human.gated_tools is not None
     assert assistant._human.auto_approval is None
+
+
+# --- Resolving one approval policy per agent -------------------------------------------------------
+
+import dataclasses  # noqa: E402
+
+from kokua.core.agents import resolve_confirm_tools  # noqa: E402
+from kokua.core.approval import DEFAULT_POLICY, resolve_approval_policies  # noqa: E402
+
+
+async def _wired(tmp_path, **overrides):
+    """A real wired assistant, so ``tools_by_toolset`` holds the tool names the shipped toolsets build."""
+    config = _config(tmp_path, default_confirm=["fs_write"], default_review=[], **overrides)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    return config, assistant._state, assistant._agent
+
+
+def _declaring(config: AssistantConfig, **pairs) -> AssistantConfig:
+    """``config`` with ``{agent: (confirm, review)}`` declared on those agents."""
+    agents = dict(config.agents)
+    for name, (confirm, review) in pairs.items():
+        agents[name] = dataclasses.replace(agents[name], confirm=confirm, review=review)
+    return dataclasses.replace(config, agents=agents)
+
+
+async def test_default_tier_resolves_against_every_built_tool(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    config = dataclasses.replace(config, default_review=["compute.run_command"])
+    policies = resolve_approval_policies(config, state, entry)
+    assert DEFAULT_POLICY == "[assistant.tools]"
+    assert policies.default.source == DEFAULT_POLICY
+    assert policies.default.confirm == {"write_file", "edit_file"}
+    assert policies.default.review == {"run_command"}
+    assert policies.default.gated == {"write_file", "edit_file", "run_command"}
+
+
+async def test_an_agent_without_a_pair_shares_the_default_under_its_own_name(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    policies = resolve_approval_policies(config, state, entry)
+    researcher = policies.for_agent("researcher")
+    assert researcher.confirm == policies.default.confirm
+    assert researcher.agent == "researcher"
+    assert researcher.source == DEFAULT_POLICY
+
+
+async def test_a_declared_pair_replaces_the_default_whole(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    config = _declaring(config, coder=(["compute.run_command"], []))
+    coder = resolve_approval_policies(config, state, entry).for_agent("coder")
+    assert coder.source == "[agents.coder.tools]"
+    assert coder.confirm == {"run_command"}
+    assert coder.review == frozenset()
+
+
+async def test_an_unknown_name_gets_the_default_relabelled(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    policies = resolve_approval_policies(config, state, entry)
+    composed = policies.for_agent("composed:quote-checker")
+    assert composed.agent == "composed:quote-checker"
+    assert composed.gated == policies.default.gated
+
+
+async def test_a_declared_entry_must_name_a_toolset_the_agent_can_reach(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    config = _declaring(config, researcher=(["compute.run_command"], []))
+    with pytest.raises(
+        ConfigError,
+        match=r"\[agents\.researcher\.tools\]\.confirm names 'compute\.run_command', "
+        r"but researcher cannot reach the 'compute' toolset: it is not in \[agents\.researcher\.tools\]\.available\.",
+    ):
+        resolve_approval_policies(config, state, entry)
+
+
+async def test_a_declared_entry_matching_no_tool_is_a_startup_error(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    config = _declaring(config, coder=(["compute.run_comand"], []))
+    with pytest.raises(ConfigError, match=r"\[agents\.coder\.tools\]\.confirm"):
+        resolve_approval_policies(config, state, entry)
+
+
+async def test_confirm_and_review_overlapping_is_a_startup_error(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    config = dataclasses.replace(config, default_confirm=["compute"], default_review=["compute.run_command"])
+    with pytest.raises(ConfigError, match=r"\[assistant\.tools\] gates run_command in both confirm and review"):
+        resolve_approval_policies(config, state, entry)
+
+
+async def test_a_declared_pair_overlapping_names_its_own_table(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    config = _declaring(config, coder=(["compute"], ["compute.run_command"]))
+    with pytest.raises(ConfigError, match=r"\[agents\.coder\.tools\] gates run_command in both"):
+        resolve_approval_policies(config, state, entry)
+
+
+async def test_the_confirm_tools_flag_overlapping_the_files_review_fails(tmp_path):
+    """``--confirm-tools`` replaces ``default_confirm`` but not the file's review list, so naming one
+    tool in both is caught here rather than silently picking a winner."""
+    config, state, entry = await _wired(tmp_path)
+    config = dataclasses.replace(
+        config, default_confirm=["compute.run_command"], default_review=["compute.run_command"]
+    )
+    with pytest.raises(ConfigError, match="in both confirm and review"):
+        resolve_approval_policies(config, state, entry)
+
+
+async def test_the_shipped_example_resolves_to_todays_gate(tmp_path):
+    import shutil
+    from importlib.resources import files
+
+    from kokua.config.file import load
+    from tests.helpers import core_table
+
+    path = tmp_path / "config.toml"
+    shutil.copyfile(str(files("kokua").joinpath("config.example.toml")), path)
+    loaded = load(str(path), table=core_table())
+    config, state, entry = await _wired(tmp_path)
+    config = dataclasses.replace(
+        config, default_confirm=loaded["default_confirm"], default_review=loaded["default_review"]
+    )
+
+    policies = resolve_approval_policies(config, state, entry)
+
+    assert policies.default.confirm == {"add_skill_script", "add_mcp_server", "update_config"}
+    assert policies.default.review == {"execute_python", "run_command", "write_file", "edit_file"}
+    # The union is what the old six-entry gate held, so the split changed who is asked first and not
+    # which calls are held.
+    old_six = [
+        "skills.add_skill_script",
+        "mcp.add_mcp_server",
+        "compute.execute_python",
+        "compute.run_command",
+        "fs_write",
+        "config.update_config",
+    ]
+    old = resolve_confirm_tools(dataclasses.replace(config, default_confirm=old_six), state, entry)
+    assert policies.default.gated == old
