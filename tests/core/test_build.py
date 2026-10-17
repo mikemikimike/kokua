@@ -88,8 +88,8 @@ def test_a_worker_resolves_a_group_an_mcp_server_and_a_plugin_from_one_list(tmp_
     cfg = _config(
         tmp_path,
         agents={
-            "assistant": AgentConfig(tools=["time"], delegates_to=["trader"]),
-            "trader": AgentConfig(description="Trades.", tools=["compute", "stocks", "pdf"]),
+            "assistant": AgentConfig(available=["time"], delegates_to=["trader"]),
+            "trader": AgentConfig(description="Trades.", available=["compute", "stocks", "pdf"]),
         },
         mcp_servers=[MCPServerConfig(url="https://broker/mcp", name="stocks")],
     )
@@ -122,7 +122,7 @@ async def test_an_unknown_toolset_name_refuses_to_start(tmp_path):
     """A misspelled toolset used to leave the agent quietly smaller than the config said."""
     from kokua.config import ConfigError
 
-    cfg = _config(tmp_path, agents={"assistant": AgentConfig(tools=["bogus"])})
+    cfg = _config(tmp_path, agents={"assistant": AgentConfig(available=["bogus"])})
     with pytest.raises(ConfigError, match="bogus"):
         await Assistant.create(cfg, FakeChannel(), client=MockAsyncModelClient([]))
 
@@ -132,7 +132,7 @@ async def test_an_unresolvable_declared_model_refuses_to_start(tmp_path):
     surface mid-turn as a failed spawn rather than at startup."""
     from kokua.config import ConfigError
 
-    cfg = _config(tmp_path, agents={"assistant": AgentConfig(tools=[], model="nonsense:whatever")})
+    cfg = _config(tmp_path, agents={"assistant": AgentConfig(available=[], model="nonsense:whatever")})
     with pytest.raises(ConfigError, match=r"\[agents.assistant\].model"):
         await Assistant.create(cfg, FakeChannel(), client=MockAsyncModelClient([]))
 
@@ -204,8 +204,8 @@ async def test_a_delegation_cycle_refuses_to_start(tmp_path):
     cfg = _config(
         tmp_path,
         agents={
-            "assistant": AgentConfig(tools=["time"], delegates_to=["helper"]),
-            "helper": AgentConfig(tools=["fs"], delegates_to=["assistant"]),
+            "assistant": AgentConfig(available=["time"], delegates_to=["helper"]),
+            "helper": AgentConfig(available=["fs"], delegates_to=["assistant"]),
         },
     )
     with pytest.raises(ConfigError, match="cycle"):
@@ -220,7 +220,7 @@ async def test_a_toolset_name_two_providers_claim_refuses_to_start_as_a_config_e
 
     cfg = _config(
         tmp_path,
-        agents={"assistant": AgentConfig(tools=["shared"])},
+        agents={"assistant": AgentConfig(available=["shared"])},
         mcp_servers=[
             MCPServerConfig(url="https://one/mcp", name="shared"),
             MCPServerConfig(url="https://two/mcp", name="shared"),
@@ -298,7 +298,7 @@ def _without(*toolsets: str) -> dict[str, AgentConfig]:
     """The shipped agents with ``toolsets`` struck from the entry agent's declaration."""
     agents = example_agents()
     entry = agents["assistant"]
-    entry.tools = [name for name in entry.tools if name not in toolsets]
+    entry.available = [name for name in entry.available if name not in toolsets]
     return agents
 
 
@@ -398,11 +398,11 @@ def _trading_via(name: str, *, url: str) -> dict:
     """
     return {
         "agents": {
-            "assistant": AgentConfig(tools=["mcp", "time"], delegates_to=["trader"]),
-            "trader": AgentConfig(description="Trades.", tools=[name]),
+            "assistant": AgentConfig(available=["mcp", "time"], delegates_to=["trader"]),
+            "trader": AgentConfig(description="Trades.", available=[name]),
         },
         "mcp_servers": [MCPServerConfig(url=url, name=name)],
-        "confirm_tools": [],
+        "default_confirm": [],
     }
 
 
@@ -763,7 +763,7 @@ def test_wire_agent_uses_an_injected_client_as_is(tmp_path):
 
     config = AssistantConfig(
         data_dir=tmp_path,
-        agents={"assistant": AgentConfig(tools=["time"])},
+        agents={"assistant": AgentConfig(available=["time"])},
         entry_agent="assistant",
     )
     state = LiveState(config=config, registry=build_registry(config))
@@ -899,7 +899,7 @@ def test_the_entry_agent_is_built_with_its_own_resolved_cap(tmp_path):
 
     config = AssistantConfig(
         data_dir=tmp_path,
-        agents={"assistant": AgentConfig(tools=[], max_iterations=30)},
+        agents={"assistant": AgentConfig(available=[], max_iterations=30)},
         entry_agent="assistant",
         max_iterations=10,
     )
@@ -915,7 +915,7 @@ def test_the_entry_agent_falls_back_to_the_global_cap(tmp_path):
 
     config = AssistantConfig(
         data_dir=tmp_path,
-        agents={"assistant": AgentConfig(tools=[])},
+        agents={"assistant": AgentConfig(available=[])},
         entry_agent="assistant",
         max_iterations=15,
     )
@@ -978,7 +978,7 @@ def test_a_toolset_is_told_which_agent_it_is_building_for(tmp_path):
         holders.append(ctx.agent_name)
         return []
 
-    cfg = _config(tmp_path, agents={"assistant": AgentConfig(tools=["probe"])})
+    cfg = _config(tmp_path, agents={"assistant": AgentConfig(available=["probe"])})
     registry = build_registry(cfg)
     registry["probe"] = Toolset(name="probe", description="records its holder", build=record)
     state = LiveState(config=cfg, registry=registry)

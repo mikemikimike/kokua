@@ -273,7 +273,7 @@ def _unlocked(tmp_path, **kwargs):
 
 
 async def test_update_config_writes_an_agent_tools_list_when_unlocked(tmp_path):
-    config = _unlocked(tmp_path, agents={"researcher": AgentConfig(tools=["time"])}, entry_agent="researcher")
+    config = _unlocked(tmp_path, agents={"researcher": AgentConfig(available=["time"])}, entry_agent="researcher")
     path, _, update_config = _tools(
         tmp_path, config=config, registry={"time": _stub_toolset("time"), "memory": _stub_toolset("memory")}
     )
@@ -283,7 +283,7 @@ async def test_update_config_writes_an_agent_tools_list_when_unlocked(tmp_path):
 
 
 async def test_update_config_refuses_an_agent_tools_list_naming_an_unknown_toolset(tmp_path):
-    config = _unlocked(tmp_path, agents={"researcher": AgentConfig(tools=["time"])}, entry_agent="researcher")
+    config = _unlocked(tmp_path, agents={"researcher": AgentConfig(available=["time"])}, entry_agent="researcher")
     path, _, update_config = _tools(tmp_path, config=config, registry={"time": _stub_toolset("time")})
     result = await update_config("agents.researcher", "tools", "time,nosuch")
     assert "nosuch" in result
@@ -430,7 +430,7 @@ async def test_update_config_dry_run_sees_a_prior_entry_agent_write(tmp_path):
 async def test_update_config_refusal_names_which_agent_the_fault_is_actually_in(tmp_path):
     """A graph already broken elsewhere must not make the refusal read as though the agent just written
     is the broken one: the write to `r` is fine on its own, the fault is in `q`'s tools."""
-    config = _unlocked(tmp_path, agents={"q": AgentConfig(tools=["nosuch"]), "r": AgentConfig()}, entry_agent="r")
+    config = _unlocked(tmp_path, agents={"q": AgentConfig(available=["nosuch"]), "r": AgentConfig()}, entry_agent="r")
     path, _, update_config = _tools(tmp_path, config=config, registry={})
 
     result = await update_config("agents.r", "description", "the researcher")

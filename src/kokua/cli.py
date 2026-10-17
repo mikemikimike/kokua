@@ -54,7 +54,7 @@ def build_arg_parser(prog: str = "kokua") -> argparse.ArgumentParser:
     parser.add_argument(
         "--list-toolsets",
         action="store_true",
-        help="List every toolset name an [agents.<name>].tools list may use, grouped by provider, and exit.",
+        help="List every toolset name an [agents.<name>.tools].available list may use, grouped by provider, and exit.",
     )
 
     parser.add_argument(
@@ -92,7 +92,8 @@ def build_arg_parser(prog: str = "kokua") -> argparse.ArgumentParser:
         "--confirm-tools",
         default=None,
         metavar="NAMES",
-        help="Comma-separated tools that require interactive confirmation before each call. Each entry "
+        help="Comma-separated tools that require interactive confirmation before each call; replaces "
+        "[assistant.tools].confirm. Each entry "
         "names its toolset: 'compute' (or 'compute.*') for every tool that capability provides, "
         "'compute.execute_python' for one, with 'core' reserved for the tools no toolset provides. "
         "Default: skills.add_skill_script,mcp.add_mcp_server,compute.execute_python,compute.run_command,"
@@ -187,7 +188,7 @@ def _cli_overrides(args: argparse.Namespace) -> dict:
     take("model", args.model)
     take("system_message_override", args.system)
     take("mcp_servers", args.mcp, _mcp_servers_from_urls)
-    take("confirm_tools", args.confirm_tools, lambda v: [name.strip() for name in v.split(",") if name.strip()])
+    take("default_confirm", args.confirm_tools, lambda v: [name.strip() for name in v.split(",") if name.strip()])
     take("frontend", args.frontend)
     take("host", args.host)
     take("port", args.port)
@@ -328,7 +329,7 @@ def _install_skills(args: argparse.Namespace) -> int:
         print(f"installed into {target}: {', '.join(installed)}")
     if skipped:
         print(f"already installed (use --force to overwrite): {', '.join(skipped)}")
-    print("\nDeclare a skill by name in an [agents.<name>].tools list to give that agent access to it.")
+    print("\nDeclare a skill by name in an [agents.<name>.tools].available list to give that agent access to it.")
     return 0
 
 
@@ -357,7 +358,7 @@ def _print_toolsets(config: AssistantConfig) -> None:
     for name in registry:
         by_provider.setdefault(registry.providers[name], []).append(name)
 
-    print("Toolsets available to this install. Name any of these in an [agents.<name>].tools list.\n")
+    print("Toolsets available to this install. Name any of these in an [agents.<name>.tools].available list.\n")
     for provider, names in by_provider.items():
         print(f"{provider}:")
         for name in sorted(names):

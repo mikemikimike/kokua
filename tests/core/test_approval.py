@@ -24,7 +24,7 @@ async def test_assistant_wires_approval_policy(tmp_path):
 async def test_approve_allows_ungated_tool_without_prompting(tmp_path):
     channel = FakeChannel()
     assistant = await Assistant.create(
-        _config(tmp_path, confirm_tools=["skills.add_skill_script"]), channel, client=MockAsyncModelClient([])
+        _config(tmp_path, default_confirm=["skills.add_skill_script"]), channel, client=MockAsyncModelClient([])
     )
     await assistant.start()
     assert await assistant._approve("get_weather", {}) is True
@@ -40,7 +40,7 @@ async def test_approve_gated_tool_waits_for_routed_answer(tmp_path):
 
     channel = FakeChannel()
     assistant = await Assistant.create(
-        _config(tmp_path, confirm_tools=["skills.add_skill_script"]), channel, client=MockAsyncModelClient([])
+        _config(tmp_path, default_confirm=["skills.add_skill_script"]), channel, client=MockAsyncModelClient([])
     )
     await assistant.start()
     # Foreground: the calling turn's conversation is the one currently viewed.
@@ -66,7 +66,7 @@ async def test_approve_backgrounded_auto_denies_without_prompting(tmp_path):
 
     channel = FakeChannel()
     assistant = await Assistant.create(
-        _config(tmp_path, confirm_tools=["skills.add_skill_script"]), channel, client=MockAsyncModelClient([])
+        _config(tmp_path, default_confirm=["skills.add_skill_script"]), channel, client=MockAsyncModelClient([])
     )
     await assistant.start()
     # Background: the calling turn's conversation ("elsewhere") isn't the one being viewed.
@@ -101,7 +101,7 @@ async def test_serve_loop_routes_message_to_pending_approval(tmp_path):
 
 
 async def test_denied_gated_tool_does_not_run(tmp_path):
-    cfg = _config(tmp_path, confirm_tools=["skills.add_skill_script"])
+    cfg = _config(tmp_path, default_confirm=["skills.add_skill_script"])
     client = _RequestsToolOnce("add_skill_script", {"skill_name": "disk", "filename": "u.py", "content": "print(1)\n"})
     assistant = await Assistant.create(cfg, FakeChannel(), client=client)
     await assistant.start()
@@ -129,7 +129,7 @@ async def test_approve_serializes_concurrent_gated_calls(tmp_path):
     """
     from kokua.channels.web import streaming_conversation
 
-    cfg = _config(tmp_path, confirm_tools=["compute.execute_python"])
+    cfg = _config(tmp_path, default_confirm=["compute.execute_python"])
     assistant = await Assistant.create(cfg, FakeChannel(), client=MockAsyncModelClient([]))
     await assistant.start()
 
@@ -167,7 +167,7 @@ async def test_approve_serializes_concurrent_gated_calls(tmp_path):
 async def test_background_turn_auto_denies_gated_tool(tmp_path):
     from kokua.channels.web import streaming_conversation
 
-    cfg = _config(tmp_path, confirm_tools=["compute.execute_python"])
+    cfg = _config(tmp_path, default_confirm=["compute.execute_python"])
     assistant = await Assistant.create(cfg, FakeChannel(), client_factory=lambda cid: MockAsyncModelClient([]))
     await assistant.start()
     viewed = assistant._active_id
@@ -185,7 +185,7 @@ async def test_background_turn_auto_denies_gated_tool(tmp_path):
 async def test_foreground_turn_prompts_for_approval(tmp_path):
     from kokua.channels.web import streaming_conversation
 
-    cfg = _config(tmp_path, confirm_tools=["compute.execute_python"])
+    cfg = _config(tmp_path, default_confirm=["compute.execute_python"])
     channel = FakeChannel()
     assistant = await Assistant.create(cfg, channel, client_factory=lambda cid: MockAsyncModelClient([]))
     await assistant.start()
@@ -232,7 +232,7 @@ async def test_the_shipped_gates_all_name_tools_that_exist(tmp_path):
     on arrival, and a regression to naming its two tools would still start and still pass a
     smoke test."""
     config = _config(tmp_path)
-    assert config.confirm_tools == AssistantConfig().confirm_tools
+    assert config.default_confirm == AssistantConfig().default_confirm
     assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
     await assistant.start()
     assert assistant._human.gated_tools == {
@@ -251,7 +251,7 @@ async def test_the_shipped_gates_all_name_tools_that_exist(tmp_path):
 async def test_an_empty_gate_list_is_still_valid(tmp_path):
     """[] is the documented way to turn approval off, so it has to stay a legal value."""
     assistant = await Assistant.create(
-        _config(tmp_path, confirm_tools=[]), FakeChannel(), client=MockAsyncModelClient([])
+        _config(tmp_path, default_confirm=[]), FakeChannel(), client=MockAsyncModelClient([])
     )
     await assistant.start()
     assert assistant._human.gated_tools == frozenset()
@@ -260,7 +260,7 @@ async def test_an_empty_gate_list_is_still_valid(tmp_path):
 async def _gated(tmp_path, entries) -> frozenset:
     """The tool names ``entries`` resolves to on an otherwise default config."""
     assistant = await Assistant.create(
-        _config(tmp_path, confirm_tools=entries), FakeChannel(), client=MockAsyncModelClient([])
+        _config(tmp_path, default_confirm=entries), FakeChannel(), client=MockAsyncModelClient([])
     )
     await assistant.start()
     return assistant._human.gated_tools
@@ -306,7 +306,7 @@ async def test_a_bare_tool_name_fails_startup_and_names_the_prefix_to_write(tmp_
 async def test_a_bare_tool_offered_under_two_prefixes_names_both(tmp_path):
     """activate_skill belongs to the reserved namespace, and every skill toolset carries it too, so a
     bare entry for it has more than one prefixed form and the user is the one who picks."""
-    config = _config(tmp_path, confirm_tools=["activate_skill"])
+    config = _config(tmp_path, default_confirm=["activate_skill"])
     _write_skill(config)
     with pytest.raises(ConfigError) as error:
         assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
@@ -381,7 +381,7 @@ async def test_a_tool_only_a_worker_holds_is_gateable(tmp_path):
     """execute_python is one of the shipped gates and the entry agent does not hold it: it comes from
     [agents.coder]. A check over the entry agent's own tools alone would reject the default config."""
     assistant = await Assistant.create(
-        _config(tmp_path, confirm_tools=["compute.execute_python"]), FakeChannel(), client=MockAsyncModelClient([])
+        _config(tmp_path, default_confirm=["compute.execute_python"]), FakeChannel(), client=MockAsyncModelClient([])
     )
     assert "execute_python" not in {fn.__name__ for fn in assistant._agent.tools}
 
@@ -393,7 +393,7 @@ async def test_the_delegation_tool_is_gateable(tmp_path):
 
 
 async def test_the_reserved_namespace_gates_both_of_its_members(tmp_path):
-    config = _config(tmp_path, confirm_tools=["core"])
+    config = _config(tmp_path, default_confirm=["core"])
     _write_skill(config)
     assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
     await assistant.start()
@@ -405,7 +405,7 @@ async def test_a_skill_script_is_gateable(tmp_path):
     """A skill script is an unsandboxed subprocess, so it is worth gating, and an AIMU SkillAgent
     attaches its script tools on first run rather than at startup. The vocabulary is therefore derived
     from the skills on disk, not read off the built agent."""
-    config = _config(tmp_path, confirm_tools=["weekly-digest.weekly_digest__collect_notes", "core.activate_skill"])
+    config = _config(tmp_path, default_confirm=["weekly-digest.weekly_digest__collect_notes", "core.activate_skill"])
     _write_skill(config)
     assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
     await assistant.start()
@@ -416,7 +416,7 @@ async def test_a_skill_script_is_gateable(tmp_path):
 async def test_a_bare_skill_gates_its_scripts_and_not_activate_skill(tmp_path):
     """Every skill's tool list carries activate_skill, so attributing it per skill would let one
     skill's gate stop every skill from being loaded. It belongs to `core`, and only there."""
-    config = _config(tmp_path, confirm_tools=["weekly-digest"])
+    config = _config(tmp_path, default_confirm=["weekly-digest"])
     _write_skill(config)
     assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
     await assistant.start()
@@ -470,7 +470,7 @@ async def test_background_auto_deny_raises_an_alert(tmp_path):
     there is still something to do about it."""
     from kokua.channels.web import streaming_conversation
 
-    cfg = _config(tmp_path, confirm_tools=["compute.execute_python"])
+    cfg = _config(tmp_path, default_confirm=["compute.execute_python"])
     channel = AlertCapturingChannel()
     assistant = await Assistant.create(cfg, channel, client_factory=lambda cid: MockAsyncModelClient([]))
     await assistant.start()
@@ -497,7 +497,7 @@ async def test_proactive_auto_deny_stays_silent(tmp_path):
     that calls a gated tool every firing would otherwise raise one every firing."""
     from kokua.channels.web import proactive_turn
 
-    cfg = _config(tmp_path, confirm_tools=["compute.execute_python"])
+    cfg = _config(tmp_path, default_confirm=["compute.execute_python"])
     channel = AlertCapturingChannel()
     assistant = await Assistant.create(cfg, channel, client_factory=lambda cid: MockAsyncModelClient([]))
     await assistant.start()

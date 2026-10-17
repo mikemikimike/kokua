@@ -72,7 +72,7 @@ def test_two_mcp_urls_on_one_host_get_distinct_names():
     from kokua.core.agents import build_registry
 
     config = AssistantConfig(
-        agents={"assistant": AgentConfig(tools=names)},
+        agents={"assistant": AgentConfig(available=names)},
         entry_agent="assistant",
         mcp_servers=servers,
     )
@@ -82,11 +82,11 @@ def test_two_mcp_urls_on_one_host_get_distinct_names():
 
 def test_confirm_tools_flag_parses():
     cfg = resolve_config(build_arg_parser().parse_args(["--confirm-tools", "add_skill_script, execute_python"]))
-    assert cfg.confirm_tools == ["add_skill_script", "execute_python"]
+    assert cfg.default_confirm == ["add_skill_script", "execute_python"]
 
 
 def test_confirm_tools_flag_empty_disables():
-    assert resolve_config(build_arg_parser().parse_args(["--confirm-tools", ""])).confirm_tools == []
+    assert resolve_config(build_arg_parser().parse_args(["--confirm-tools", ""])).default_confirm == []
 
 
 def test_cli_frontend_reports_model_client_error(tmp_path, monkeypatch, capsys):
@@ -314,7 +314,7 @@ def test_main_web_reports_a_broken_agents_table_as_an_instruction(monkeypatch, t
     # asserted-on string is `[agents.coder]`'s tools line, which is why it fails loudly if that line is
     # edited without editing this: a no-op replace leaves a *valid* config and the test stops testing.
     broken = settings.example_text().replace(
-        'tools = ["fs", "fs_write", "compute", "time", "messaging"]', 'tools = ["fs", "nope", "time"]'
+        'available = ["fs", "fs_write", "compute", "time", "messaging"]', 'available = ["fs", "nope", "time"]'
     )
     assert "nope" in broken, "the [agents.coder] tools line moved; this replace no longer breaks anything"
     text = broken

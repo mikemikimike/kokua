@@ -141,7 +141,7 @@ class LiveState:
             # whose [assistant].agent names no table, and owns that error. This keeps a LiveState
             # usable on its own, which is how the unit tests exercise the accessors above.
             return self.all_skills
-        declared = entry.tools
+        declared = entry.available
         if _AUTHORING_TOOLSET in declared:
             return self.all_skills
         known = self.all_skills.skills

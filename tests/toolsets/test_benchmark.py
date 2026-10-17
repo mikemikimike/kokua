@@ -341,8 +341,8 @@ def _delegating_config(tmp_path):
         data_dir=tmp_path,
         model="ollama:entry",
         agents={
-            "assistant": AgentConfig(tools=["benchmark"], delegates_to=["researcher"]),
-            "researcher": AgentConfig(tools=["benchmark"], model="ollama:worker"),
+            "assistant": AgentConfig(available=["benchmark"], delegates_to=["researcher"]),
+            "researcher": AgentConfig(available=["benchmark"], model="ollama:worker"),
         },
     )
 
@@ -365,7 +365,7 @@ async def test_benchmark_model_measures_with_its_own_agents_reasoning_effort(mon
     config = AssistantConfig(
         data_dir=tmp_path,
         thinking="high",
-        agents={"assistant": AgentConfig(), "researcher": AgentConfig(tools=["benchmark"], thinking=False)},
+        agents={"assistant": AgentConfig(), "researcher": AgentConfig(available=["benchmark"], thinking=False)},
     )
     client = _install_client(
         monkeypatch, FakeStreamingClient([_text(["a"])] * (TIMED_RUNS + 1), usage={"output_tokens": 1})

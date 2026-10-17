@@ -272,7 +272,7 @@ def resolve_auto_approval(
         reviewers.append(resolved)
     vocabulary = gateable_tools(state, entry_agent)
     tools = resolve_gate_entries(
-        config.auto_approval_tools,
+        config.default_review,
         vocabulary,
         state.registry,
         setting="[security.auto_approval].tools",

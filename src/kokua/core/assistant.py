@@ -331,7 +331,7 @@ class Assistant:
             logger.warning(
                 "config.toml has a [%s] section, but no agent declares the %r toolset, so its settings are "
                 "read only if a composed worker builds it, and any command it offers does not exist. "
-                "Add %r to [agents.%s].tools.",
+                "Add %r to [agents.%s.tools].available.",
                 name,
                 name,
                 name,
@@ -820,7 +820,7 @@ class Assistant:
                         toolset_name = self._undeclared_workflow_commands[word]
                         await self._ui.send(
                             f"The {toolset_name!r} toolset offers /{word}, but no agent declares it. "
-                            f"Add {toolset_name!r} to [agents.{self._config.entry_agent}].tools in "
+                            f"Add {toolset_name!r} to [agents.{self._config.entry_agent}.tools].available in "
                             "your config.toml."
                         )
                         continue

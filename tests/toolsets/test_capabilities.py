@@ -36,7 +36,7 @@ def _state(tmp_path, *, sources=None, **config_kwargs) -> LiveState:
     """A LiveState over a small registry, with one agent so `select` has an entry point to compare to."""
     config = AssistantConfig(
         data_dir=tmp_path,
-        agents={"assistant": AgentConfig(tools=["capabilities"])},
+        agents={"assistant": AgentConfig(available=["capabilities"])},
         **config_kwargs,
     )
     sources = sources if sources is not None else [("AIMU capability", [_toolset("web"), _toolset("fs")])]

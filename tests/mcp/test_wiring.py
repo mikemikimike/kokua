@@ -21,16 +21,16 @@ from tests.helpers import MockAsyncModelClient, core_table
 def _using(name: str, url: str) -> dict:
     """Config overrides for a worker that declares the server ``name``, so its tools reach an agent.
 
-    ``confirm_tools`` is emptied because these two agents provide none of the four tools the shipped
+    ``default_confirm`` is emptied because these two agents provide none of the four tools the shipped
     default gates, and a gate naming no tool is a startup error.
     """
     return {
         "agents": {
-            "assistant": AgentConfig(tools=["mcp", "time"], delegates_to=["remote"]),
-            "remote": AgentConfig(description="Uses the server.", tools=[name]),
+            "assistant": AgentConfig(available=["mcp", "time"], delegates_to=["remote"]),
+            "remote": AgentConfig(description="Uses the server.", available=[name]),
         },
         "mcp_servers": [MCPServerConfig(url=url, name=name)],
-        "confirm_tools": [],
+        "default_confirm": [],
     }
 
 
@@ -79,7 +79,7 @@ def _worker_tools(assistant) -> set[str]:
     servers = [MCPServerConfig(url=conn.url, name=f"server-{i}") for i, conn in enumerate(assistant._mcp_servers)]
     agents = {
         "assistant": AgentConfig(delegates_to=["remote"]),
-        "remote": AgentConfig(description="Uses every connected server.", tools=[s.name for s in servers]),
+        "remote": AgentConfig(description="Uses every connected server.", available=[s.name for s in servers]),
     }
     config = replace(assistant._config, agents=agents, entry_agent="assistant", mcp_servers=servers)
     state = LiveState(config=config, connections=assistant._mcp_servers, registry=build_registry(config))
@@ -173,12 +173,12 @@ async def test_a_new_server_is_persisted_but_reaches_no_agent_this_process(tmp_p
     monkeypatch.setattr(aio.MCPClient, "connect", fake_connect)
 
     agents = {
-        "assistant": AgentConfig(tools=["mcp", "time"], delegates_to=["remote"]),
-        "remote": AgentConfig(description="A worker that declares no server.", tools=["time"]),
+        "assistant": AgentConfig(available=["mcp", "time"], delegates_to=["remote"]),
+        "remote": AgentConfig(description="A worker that declares no server.", available=["time"]),
     }
     # No [[mcp.server]] at startup, and no gate: these two agents provide none of the four tools the
     # shipped confirm_tools default names, which would otherwise be a startup error.
-    cfg = _config(tmp_path, agents=agents, confirm_tools=[])
+    cfg = _config(tmp_path, agents=agents, default_confirm=[])
     assistant = await Assistant.create(cfg, FakeChannel(), client=MockAsyncModelClient([]))
 
     add_mcp = next(t for t in assistant._agent.tools if t.__name__ == "add_mcp_server")

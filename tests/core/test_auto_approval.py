@@ -168,7 +168,7 @@ _REVIEWER = "approval"
 def _auto(**overrides) -> dict:
     """The auto-approval half of a config, defaulted to a gate that resolves cleanly.
 
-    `run_command` is the tool because the shipped `[security].confirm_tools` gates it and
+    `run_command` is the tool because the shipped `[assistant.tools].confirm` gates it and
     `[security].never_auto_approve` does not hold it back, which is the only combination a reviewer may
     be asked about.
     """

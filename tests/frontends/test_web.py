@@ -1391,7 +1391,7 @@ def test_ws_reports_a_start_failure_to_the_browser_and_closes(tmp_path):
     from starlette.testclient import TestClient
     from starlette.websockets import WebSocketDisconnect
 
-    app = build_app(_config(tmp_path, confirm_tools=["execute_pythn"]), client=MockAsyncModelClient([]))
+    app = build_app(_config(tmp_path, default_confirm=["execute_pythn"]), client=MockAsyncModelClient([]))
     frames = []
     with TestClient(app).websocket_connect("/ws") as ws:
         try:
@@ -2093,7 +2093,7 @@ def test_build_app_rejects_agents_that_cannot_resolve(tmp_path):
     from kokua.config import ConfigError
 
     agents = example_agents()
-    agents["assistant"].tools = ["memory", "pdf"]
+    agents["assistant"].available = ["memory", "pdf"]
     with pytest.raises(ConfigError, match="pdf"):
         build_app(_config(tmp_path, agents=agents))
 

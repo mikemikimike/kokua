@@ -181,7 +181,7 @@ def validate_agents(config: AssistantConfig, registry: Mapping[str, Toolset]) ->
                 f"{USER!r} is the user's own address and {EVERYONE!r} reaches every run. Rename the agent."
             )
         try:
-            select(agent.tools, registry, agent=name, entry_point=config.entry_agent)
+            select(agent.available, registry, agent=name, entry_point=config.entry_agent)
         except ToolsetError as e:
             raise ConfigError(str(e)) from e
         _check_model(f"agents.{name}", agent.model)
@@ -270,7 +270,7 @@ def build_command_map(config: AssistantConfig, registry: ToolsetRegistry) -> dic
     shape instead of a collision with another one.
     """
     entry = config.agents[config.entry_agent]
-    toolsets = select(entry.tools, registry, agent=config.entry_agent, entry_point=config.entry_agent)
+    toolsets = select(entry.available, registry, agent=config.entry_agent, entry_point=config.entry_agent)
     commands: dict[str, Workflow] = {}
     claimed_by: dict[str, str] = {}
     for toolset_name, workflow in workflows_of(toolsets):
@@ -296,7 +296,7 @@ def build_command_map(config: AssistantConfig, registry: ToolsetRegistry) -> dic
             raise ConfigError(
                 f"toolsets {claimed_by[command]!r} and {toolset_name!r} both offer the "
                 f"/{command} command. Rename one, or drop one from "
-                f"[agents.{config.entry_agent}].tools."
+                f"[agents.{config.entry_agent}.tools].available."
             )
         commands[command] = workflow
         claimed_by[command] = toolset_name
@@ -317,7 +317,7 @@ def undeclared_workflow_commands(config: AssistantConfig, registry: ToolsetRegis
     that one checks every agent's tools (a toolset a worker holds is still declared) and looks at config
     sections rather than commands, and fires once at startup rather than on an incoming channel message.
     """
-    declared = set(config.agents[config.entry_agent].tools)
+    declared = set(config.agents[config.entry_agent].available)
     return {
         workflow.command: toolset_name
         for toolset_name, workflow in workflows_of(list(registry.values()))
@@ -347,7 +347,7 @@ def configured_but_undeclared(config: AssistantConfig) -> list[str]:
     cannot tell "the user wrote this" from "Kokua defaulted it" -- exactly the distinction this warning
     needs, since a defaulted section nobody wrote is not a mistake worth reporting.
     """
-    declared = {name for agent in config.agents.values() for name in agent.tools}
+    declared = {name for agent in config.agents.values() for name in agent.available}
     return sorted(name for name in config.configured_sections if name not in declared)
 
 
@@ -499,7 +499,7 @@ def build_agent_specs(config: AssistantConfig, state: LiveState, delegator: str)
     specs: dict[str, dict] = {}
     for name in config.agents[delegator].delegates_to:
         agent = config.agents[name]
-        toolsets = select(agent.tools, state.registry, agent=name, entry_point=config.entry_agent)
+        toolsets = select(agent.available, state.registry, agent=name, entry_point=config.entry_agent)
         # A spawned worker is a plain AIMU Agent, so `agent=None`: the one toolset needing the live
         # agent object is entry-point-only and validation has already rejected it here. The name is
         # carried regardless, so a toolset scoping itself to its holder (`benchmark`) resolves this
@@ -821,7 +821,7 @@ def resolve_confirm_tools(config: AssistantConfig, state: LiveState, entry_agent
     apart at the moment of the call: gating either prefix gates that name wherever it is called.
     """
     return resolve_gate_entries(
-        config.confirm_tools,
+        config.default_confirm,
         gateable_tools(state, entry_agent),
         state.registry,
         setting=f"[{_CONFIRM_TOOLS_SECTION}].{_CONFIRM_TOOLS_KEY}",

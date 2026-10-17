@@ -77,8 +77,8 @@ def test_toolset_tools_reach_an_agent_that_names_the_toolset(tmp_path):
     cfg = _assistant_config(
         tmp_path,
         agents={
-            "assistant": AgentConfig(tools=["time"], delegates_to=["reviewer"]),
-            "reviewer": AgentConfig(description="Reviews.", tools=["aimu_agents"]),
+            "assistant": AgentConfig(available=["time"], delegates_to=["reviewer"]),
+            "reviewer": AgentConfig(description="Reviews.", available=["aimu_agents"]),
         },
     )
     state = LiveState(config=cfg, registry=build_registry(cfg))

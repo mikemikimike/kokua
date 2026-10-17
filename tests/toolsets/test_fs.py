@@ -53,8 +53,8 @@ def test_the_shipped_introspector_reads_files_and_cannot_write_them(tmp_path):
 
     config = AssistantConfig(data_dir=tmp_path)
     config.agents = {
-        "assistant": AgentConfig(tools=[], delegates_to=["introspector"]),
-        "introspector": AgentConfig(description="Evaluates a conversation.", tools=["fs", "time"]),
+        "assistant": AgentConfig(available=[], delegates_to=["introspector"]),
+        "introspector": AgentConfig(description="Evaluates a conversation.", available=["fs", "time"]),
     }
     state = LiveState(config=config, registry=build_registry(config))
 
@@ -71,8 +71,8 @@ def test_a_writer_is_reachable_only_by_declaring_the_write_toolset(tmp_path):
 
     config = AssistantConfig(data_dir=tmp_path)
     config.agents = {
-        "assistant": AgentConfig(tools=[], delegates_to=["coder"]),
-        "coder": AgentConfig(description="Writes code.", tools=["fs", "fs_write"]),
+        "assistant": AgentConfig(available=[], delegates_to=["coder"]),
+        "coder": AgentConfig(description="Writes code.", available=["fs", "fs_write"]),
     }
     state = LiveState(config=config, registry=build_registry(config))
 

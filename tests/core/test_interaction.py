@@ -144,7 +144,7 @@ class _UI:
 def _gate(ui):
     """A gate as the composition root leaves it: wired, and with its gated set already resolved.
 
-    Startup resolves `[security].confirm_tools` (a list of `toolset.tool` entries) down to tool names
+    Startup resolves `[assistant.tools].confirm` (a list of `toolset.tool` entries) down to tool names
     and assigns them here, so a test builds the gate the same way rather than handing it config.
     """
     gate = HumanGate(ui, active_id=lambda: "c1", is_proactive=lambda: False, turn_conversation=lambda: "c1")

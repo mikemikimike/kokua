@@ -107,8 +107,8 @@ def _config(agents, entry="assistant") -> AssistantConfig:
 
 def _valid() -> dict:
     return {
-        "assistant": AgentConfig(tools=["time"], delegates_to=["researcher"]),
-        "researcher": AgentConfig(tools=["web"]),
+        "assistant": AgentConfig(available=["time"], delegates_to=["researcher"]),
+        "researcher": AgentConfig(available=["web"]),
     }
 
 
@@ -139,7 +139,7 @@ def test_an_agent_named_for_a_bus_address_is_rejected():
     """
     for reserved in ("user", "everyone"):
         agents = _valid()
-        agents[reserved] = AgentConfig(tools=["time"])
+        agents[reserved] = AgentConfig(available=["time"])
         config = _config(agents)
         with pytest.raises(ConfigError, match="reserved") as excinfo:
             validate_agents(config, build_registry(config))
@@ -155,7 +155,7 @@ def test_a_missing_entry_agent_is_rejected():
 
 def test_an_unknown_delegation_target_is_rejected():
     agents = _valid()
-    agents["assistant"] = AgentConfig(tools=["time"], delegates_to=["reasercher"])
+    agents["assistant"] = AgentConfig(available=["time"], delegates_to=["reasercher"])
     config = _config(agents)
     with pytest.raises(ConfigError) as excinfo:
         validate_agents(config, build_registry(config))
@@ -183,7 +183,7 @@ def test_an_agent_delegating_to_itself_is_rejected():
 
 
 def test_an_unknown_toolset_name_is_rejected_during_validation():
-    config = _config({"assistant": AgentConfig(tools=["memry"])})
+    config = _config({"assistant": AgentConfig(available=["memry"])})
     with pytest.raises(ConfigError) as excinfo:
         validate_agents(config, build_registry(config))
     assert "memry" in str(excinfo.value)
@@ -192,7 +192,7 @@ def test_an_unknown_toolset_name_is_rejected_during_validation():
 def test_skills_on_a_worker_is_rejected_during_validation():
     agents = {
         "assistant": AgentConfig(delegates_to=["researcher"]),
-        "researcher": AgentConfig(tools=["skills"]),
+        "researcher": AgentConfig(available=["skills"]),
     }
     config = _config(agents)
     with pytest.raises(ConfigError) as excinfo:
@@ -209,8 +209,8 @@ def test_a_worker_model_may_carry_an_endpoint_override():
     worker to the same host the assistant uses would fail at startup.
     """
     agents = {
-        "assistant": AgentConfig(tools=["time"], delegates_to=["researcher"]),
-        "researcher": AgentConfig(tools=["web"], model="ollama:qwen3.5:9b@http://example.local:11434"),
+        "assistant": AgentConfig(available=["time"], delegates_to=["researcher"]),
+        "researcher": AgentConfig(available=["web"], model="ollama:qwen3.5:9b@http://example.local:11434"),
     }
     config = _config(agents)
     validate_agents(config, build_registry(config))
@@ -219,8 +219,8 @@ def test_a_worker_model_may_carry_an_endpoint_override():
 def test_an_unresolvable_worker_model_is_still_rejected():
     """The endpoint grammar widens what parses, not what passes: a bad id fails as before."""
     agents = {
-        "assistant": AgentConfig(tools=["time"], delegates_to=["researcher"]),
-        "researcher": AgentConfig(tools=["web"], model="ollama:no-such-model@http://example.local:11434"),
+        "assistant": AgentConfig(available=["time"], delegates_to=["researcher"]),
+        "researcher": AgentConfig(available=["web"], model="ollama:no-such-model@http://example.local:11434"),
     }
     config = _config(agents)
     with pytest.raises(ConfigError) as excinfo:
@@ -233,7 +233,7 @@ def test_a_configured_section_for_an_undeclared_toolset_is_reported():
     from kokua.core.agents import configured_but_undeclared
 
     agents = example_agents()
-    agents["assistant"].tools = ["time"]
+    agents["assistant"].available = ["time"]
     config = AssistantConfig(agents=agents, entry_agent="assistant", configured_sections=("planning",))
 
     assert configured_but_undeclared(config) == ["planning"]
@@ -244,7 +244,7 @@ def test_a_configured_section_for_a_declared_toolset_is_not_reported():
     from kokua.core.agents import configured_but_undeclared
 
     agents = example_agents()
-    agents["assistant"].tools = ["planning"]
+    agents["assistant"].available = ["planning"]
     config = AssistantConfig(agents=agents, entry_agent="assistant", configured_sections=("planning",))
 
     assert configured_but_undeclared(config) == []
@@ -258,7 +258,7 @@ def test_a_defaulted_section_the_file_never_had_is_not_reported():
     from kokua.core.agents import configured_but_undeclared
 
     agents = example_agents()
-    agents["assistant"].tools = ["time"]
+    agents["assistant"].available = ["time"]
     config = AssistantConfig(
         agents=agents, entry_agent="assistant", toolset_settings={"planning": {"plan_review": False}}
     )

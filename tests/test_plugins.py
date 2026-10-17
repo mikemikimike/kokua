@@ -69,9 +69,9 @@ def _two_workers(tmp_path):
     return _config(
         tmp_path,
         agents={
-            "assistant": AgentConfig(tools=["time"], delegates_to=["roller", "plain"]),
-            "roller": AgentConfig(description="Reviews.", tools=["aimu_agents"]),
-            "plain": AgentConfig(description="Plain.", tools=["compute"]),
+            "assistant": AgentConfig(available=["time"], delegates_to=["roller", "plain"]),
+            "roller": AgentConfig(description="Reviews.", available=["aimu_agents"]),
+            "plain": AgentConfig(description="Plain.", available=["compute"]),
         },
     )
 
