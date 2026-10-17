@@ -510,14 +510,31 @@ def test_the_floor_covers_the_skill_agent_parameter_the_probe_no_longer_grips():
     assert "steering" not in inspect.signature(SkillAgent.run).parameters
 
 
-def test_the_floor_is_0_36_0():
+def test_the_floor_is_0_37_0():
     from kokua.aimu_compat import MINIMUM_AIMU
 
-    assert MINIMUM_AIMU == (0, 36, 0)
+    assert MINIMUM_AIMU == (0, 37, 0)
+
+
+def test_the_floor_covers_the_per_worker_gate_the_probe_does_not_grip():
+    """``"tool_approval"`` is a member of a closed key set, so an AIMU predating it raises ``ValueError``
+    naming the key when the spawn factory is called: loud, which is why the one probe slot stays on
+    ``RunEvent.run_id``, a capability whose absence is silent. Pinned here as a fact about the release."""
+    from aimu.tools.builtin import SUBAGENT_SPEC_KEYS
+
+    assert "tool_approval" in SUBAGENT_SPEC_KEYS
+
+
+def test_the_floor_covers_the_tool_group_stage_two_will_use():
+    """``ToolGroup`` shipped in 0.37.0 beside the gate key and nothing in Kokua calls it yet; it is the
+    floor's job until a later change uses it."""
+    from aimu.tools import ToolGroup
+
+    assert ToolGroup is not None
 
 
 def test_the_floor_covers_the_inbox_protocol_the_probe_no_longer_grips():
-    """0.34.0's probe surface is 0.36.0's floor now that ``RunEvent.run_id`` holds the one probe slot."""
+    """0.34.0's probe surface is the floor's job now that ``RunEvent.run_id`` holds the one probe slot."""
     from aimu.agents import Inbox
 
     assert Inbox is not None

@@ -169,7 +169,7 @@ def wire_agent(config: AssistantConfig, state: LiveState, agent_name: str, *, cl
         max_iterations=config.max_iterations_for(agent_name),
     )
     agent.tools = build_tools(toolsets, ToolsetContext(state=state, agent=agent, agent_name=agent_name))
-    agent.tool_approval = state.tool_approval
+    agent.tool_approval = state.gate_for(agent_name)
     rebuild_delegation_tool(agent, state)
     return agent
 

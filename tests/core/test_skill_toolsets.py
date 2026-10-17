@@ -14,6 +14,7 @@ import pytest
 from kokua.config.schema import AgentConfig
 from kokua.core.agents import build_agent_specs, build_registry, without_skill_names
 from kokua.registry.context import LiveState
+from tests.helpers import allow_all_gates
 from kokua.registry.registry import ToolsetError, select
 from tests.channels import _config
 
@@ -33,7 +34,7 @@ def write_skill(config, name: str, description: str, script: str | None = None) 
 
 
 def _state(config) -> LiveState:
-    return LiveState(config=config, registry=build_registry(config))
+    return LiveState(gate_for=allow_all_gates, config=config, registry=build_registry(config))
 
 
 def test_a_skill_on_disk_is_registered_under_its_name(tmp_path):

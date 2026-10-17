@@ -14,6 +14,7 @@ unchanged. The CLI/web entry points live in `kokua.cli` / `kokua.frontends`.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import time
 from dataclasses import replace
@@ -107,7 +108,7 @@ class Assistant:
         self._store = store
         self._config = config
         # A per-conversation agent cache. Assigned by create() once the registry's builder can bind
-        # self._approve; agents are built lazily, by which point it exists.
+        # self._gate_for; agents are built lazily, by which point it exists.
         self._registry: Optional[AgentRegistry] = None
         # Live remote-MCP connections (startup + runtime-added) kept alive for their lifetime
         # and closed on shutdown. Assigned by create().
@@ -224,7 +225,7 @@ class Assistant:
 
         scheduler = Scheduler()
         # Construct the assistant first so the registry's builder can bind its approval gate: agents are
-        # built lazily (on first get), by which point assistant._approve exists.
+        # built lazily (on first get), by which point assistant._gate_for exists.
         assistant = cls(channel, scheduler, store, config)
         assistant._workflows = commands
         assistant._undeclared_workflow_commands = undeclared_commands
@@ -269,7 +270,7 @@ class Assistant:
             turn_running=assistant.turn_running,
             schedule_rename=assistant.schedule_rename,
             stop_task_runs=assistant.stop_task_runs,
-            tool_approval=assistant._approve,
+            gate_for=assistant._gate_for,
             reapply_config=assistant._settings.apply_one,
             observer=assistant._subagent_reporter,
             registry=registry,
@@ -317,7 +318,8 @@ class Assistant:
             return
         self._started = True
         # Imported here, not at module level, for the cycle `create` documents above.
-        from kokua.core.agents import configured_but_undeclared, resolve_confirm_tools
+        from kokua.core.agents import configured_but_undeclared
+        from kokua.core.approval import resolve_approval_policies
 
         config, state = self._config, self._state
         # Reconnect MCP servers BEFORE building the first agent, so `connections` is populated when that
@@ -342,13 +344,12 @@ class Assistant:
         entry_agent = self._registry.get(self._active_id)
         # Last of the startup checks, because it is the first point where every tool this config builds
         # exists: the entry agent's own, and each worker's, built when the delegation tool above was.
-        # It both validates and resolves: a `[security].confirm_tools` entry names a toolset, and the
-        # gate matches a tool name, so the gate cannot answer at all until this has run (see
-        # `HumanGate.gated_tools`).
-        self._human.gated_tools = resolve_confirm_tools(config, state, entry_agent)
-        # Resolved from that same vocabulary and against that same answer, because an auto-approval set
-        # that is not a subset of the gated set describes a prompt that never existed.
-        self._human.auto_approval = resolve_auto_approval(config, state, entry_agent, self._human.gated_tools)
+        # It both validates and resolves: a policy entry names a toolset, and the gate matches a tool
+        # name, so no gate can answer at all until this has run (see `HumanGate.policies`).
+        self._human.policies = resolve_approval_policies(config, state, entry_agent)
+        # Resolved from the same policies, because a review entry is itself a gate: the reviewer can only
+        # be asked about tools a policy already stops.
+        self._human.auto_approval = resolve_auto_approval(config, state, entry_agent, self._human.policies)
 
         state.tasks.arm_all()
 
@@ -963,8 +964,14 @@ class Assistant:
         """Cancel the viewed conversation's tracked turn (if any); the /stop branch's helper."""
         self._cancel_turn(self._active_id)
 
-    async def _approve(self, name: str, arguments: dict) -> bool:
-        return await self._human.approve(name, arguments)
+    def _gate_for(self, agent_name: str) -> Callable:
+        """The approval hook for one agent: the shared gate with that agent's name bound in.
+
+        A partial rather than a closure so the binding is visible on the object (``.args``), and so
+        every agent, delegated or composed, reaches the same ``HumanGate.approve`` and differs only in
+        whose policy it is judged by.
+        """
+        return functools.partial(self._human.approve, agent_name)
 
     async def _handle(
         self, msg: ChannelMessage, *, conversation_id: str, workflow=None, tid: Optional[int] = None

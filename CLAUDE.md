@@ -50,7 +50,7 @@ Line length is 120 (configured in `pyproject.toml`). Run lint + tests before com
 
 ## AIMU dependency (important)
 
-Kokua is built on the [AIMU](https://github.com/saxman/aimu) library and requires `aimu>=0.36.0`. That
+Kokua is built on the [AIMU](https://github.com/saxman/aimu) library and requires `aimu>=0.37.0`. That
 floor is the requirement that ships in the wheel. Separately, `[tool.uv.sources]` points AIMU at
 `{ path = "../aimu", editable = true }`, so `uv sync` here installs the sibling checkout live: the two
 projects are developed together and architectural changes move code across the boundary.
@@ -59,7 +59,7 @@ Consequences for working in this repo:
 
 - **The version floor does not constrain your sibling checkout.** uv installs a path source without
   checking it against the specifier (a declared `aimu>=0.99.0` installs a 0.13.1 sibling and locks it
-  without complaint), so `>=0.36.0` governs an installed Kokua and nothing about your working copy.
+  without complaint), so `>=0.37.0` governs an installed Kokua and nothing about your working copy.
   Do not read the pin as a guarantee about the AIMU you are running.
 - **So a sibling on an older branch is the failure mode to expect, and the startup preflight is what
   catches it.** `kokua.aimu_compat` checks the version floor plus one capability probe, and prints the
@@ -365,7 +365,7 @@ Consequences for working in this repo:
   spawn path honors the `"inbox"` spec key, and whether 0.33.0's host-boundary guards survived the
   rename. None of those is a name, so no name lookup reaches them. `aio.SkillAgent.run`'s `steering`
   parameter became the floor's job then, in its turn.
-  **AIMU 0.36.0 is the current floor, and it is the first one whose probe grips a dataclass field:
+  **AIMU 0.36.0 was the floor until 0.37.0, and it was the first one whose probe grips a dataclass field:
   `RunEvent.run_id`.** 0.36.0 gave every run event the identity of its run and of the run that started
   it, and Kokua's record of what each model call was sent (`core/requests.py`, issue #22) is keyed by
   it: a call pairs with its response by run, a sub-agent's rounds reach its card because its run id is
@@ -380,6 +380,15 @@ Consequences for working in this repo:
   `tool_calls` / `thinking`, `RunFinished.ended_by` / `max_iterations`, the spawn tools passing
   `parent_run_id`, and `Runner.as_tool()` parenting the runs it starts. `aimu.agents.Inbox` is the
   floor's job now, in its turn.
+  **AIMU 0.37.0 is the current floor, and it is the one release whose capability did not get the probe.**
+  The capability Kokua depends on is the `"tool_approval"` entry in `SUBAGENT_SPEC_KEYS`: the spec key
+  `build_agent_specs` writes so each worker's calls reach the gate bound to its own name, and so are
+  judged by that agent's approval policy instead of its delegator's. The probe stays on `RunEvent.run_id`,
+  on the 0.28.0 reasoning: that key set is closed, so an AIMU predating the key raises `ValueError` naming
+  it when the factory is called, which is loud and arrives while a conversation's agent is built, where
+  `run_id`'s absence is silent. One probe slot goes to the capability that fails silently. `ToolGroup`
+  also shipped in 0.37.0 and nothing calls it yet, so it is the floor's job until stage 2 uses it.
+  `tests/test_aimu_compat.py` pins both. `RunEvent.run_id` is the floor's job now, in its turn.
 - **Without `../aimu`** (CI, a fresh clone, or just running Kokua), `uv sync --no-sources` resolves AIMU
   from PyPI. Nothing in `pyproject.toml` needs editing for that any more.
 - **Both console scripts route through `kokua.cli`** so they share that preflight. `kokua-web` is
@@ -461,8 +470,8 @@ change. Full rationale, with the code that backs each claim, is in
    unconditional. **A `confirm_tools` entry speaks the same vocabulary an agent's `tools` list does:**
    `<toolset>` (or `<toolset>.*`) for a whole capability, `<toolset>.<tool>` for one of its tools, with
    `core` reserved for the two tools no toolset provides (`spawn_subagent`, `activate_skill`) and
-   refused as a toolset name at registration so nothing can shadow it. `core/agents.py`'s
-   `resolve_confirm_tools` turns those entries into the tool names `HumanGate.approve` matches, which is
+   refused as a toolset name at registration so nothing can shadow it. `core/approval.py`'s
+   `resolve_approval_policies` turns those entries into the tool names `HumanGate.approve` matches, which is
    why a prefix cannot discriminate at call time and is not meant to. Prefer the bare toolset where the
    toolset is exactly the risky set: the shipped default names `fs_write` bare, so a writer a later AIMU
    adds to that group is gated on arrival, and names `compute.execute_python` explicitly, because

@@ -26,6 +26,7 @@ from kokua.toolsets.benchmark import (
     format_report,
     measure_run,
 )
+from tests.helpers import allow_all_gates
 
 
 class FakeStreamingClient:
@@ -384,7 +385,7 @@ async def test_a_declared_worker_holding_the_toolset_measures_its_own_model(monk
     from kokua.registry.context import LiveState
 
     config = _delegating_config(tmp_path)
-    state = LiveState(config=config, registry=build_registry(config))
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=build_registry(config))
     _install_client(monkeypatch, FakeStreamingClient([_text(["a"])] * (TIMED_RUNS + 1), usage={"output_tokens": 1}))
 
     specs = build_agent_specs(config, state, "assistant")

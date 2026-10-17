@@ -9,6 +9,7 @@ import pytest
 from kokua import plugins
 from kokua.config import AssistantConfig
 from tests.channels import example_agents
+from tests.helpers import allow_all_gates
 from kokua.plugins import FrontEnd, Toolset
 from kokua.registry import LiveState, ToolsetContext
 
@@ -58,7 +59,7 @@ def test_a_built_in_toolset_is_discovered():
 def _worker_specs(cfg) -> dict[str, dict]:
     from kokua.core.agents import build_agent_specs, build_registry
 
-    state = LiveState(config=cfg, registry=build_registry(cfg))
+    state = LiveState(gate_for=allow_all_gates, config=cfg, registry=build_registry(cfg))
     return build_agent_specs(cfg, state, cfg.entry_agent)
 
 

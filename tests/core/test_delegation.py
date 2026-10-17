@@ -7,13 +7,14 @@ from kokua.config.schema import AgentConfig, AssistantConfig
 from kokua.core.agents import build_agent_specs, build_registry
 from kokua.core.messaging import WORKER_SOURCE
 from kokua.registry.context import LiveState
+from tests.helpers import allow_all_gates
 
 SPAWN = "spawn_subagent"
 
 
 def _state(tmp_path, agents, entry="assistant") -> tuple[AssistantConfig, LiveState]:
     config = AssistantConfig(data_dir=tmp_path, agents=agents, entry_agent=entry)
-    state = LiveState(config=config, registry=build_registry(config))
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=build_registry(config))
     return config, state
 
 

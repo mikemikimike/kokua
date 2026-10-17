@@ -13,6 +13,7 @@ from kokua.toolsets.capabilities import (
     make_capability_tools,
 )
 from kokua.registry.context import LiveState, ToolsetContext
+from tests.helpers import allow_all_gates
 from kokua.registry.registry import Toolset, ToolsetError, register
 
 
@@ -40,7 +41,7 @@ def _state(tmp_path, *, sources=None, **config_kwargs) -> LiveState:
         **config_kwargs,
     )
     sources = sources if sources is not None else [("AIMU capability", [_toolset("web"), _toolset("fs")])]
-    return LiveState(config=config, registry=register(sources))
+    return LiveState(gate_for=allow_all_gates, config=config, registry=register(sources))
 
 
 def _tools_by_name(state) -> dict:
@@ -423,12 +424,30 @@ async def test_compose_subagent_forwards_the_approval_gate_and_the_observer(tmp_
     """Every tool a composed worker holds must still route to the human through confirm_tools, and the
     run must still reach the web sub-agent card."""
     state = _state(tmp_path)
-    state.tool_approval = lambda *a, **k: True
+    state.gate_for = lambda agent: ("gate", agent)
     state.observer = object()
     compose, spawn = _compose(state, monkeypatch)
     await compose("w", "Do it.", ["web"], "Instructions.")
-    assert spawn.calls[0]["tool_approval"] is state.tool_approval
+    assert spawn.calls[0]["tool_approval"] == ("gate", "composed:w")
     assert spawn.calls[0]["observer"] is state.observer
+
+
+async def test_a_composed_worker_named_like_an_agent_gets_the_default_tier(tmp_path, monkeypatch):
+    """The gate is bound to the composed label, never the bare name, so a worker composed as "coder"
+    is not judged by the declared coder's policy."""
+    from kokua.core.approval import DEFAULT_POLICY, ApprovalPolicies, ApprovalPolicy
+
+    empty = frozenset()
+    declared = ApprovalPolicy(agent="coder", source="[agents.coder.tools]", confirm=frozenset({"x"}), review=empty)
+    default = ApprovalPolicy(agent=DEFAULT_POLICY, source=DEFAULT_POLICY, confirm=empty, review=empty)
+    policies = ApprovalPolicies(by_agent={"coder": declared}, default=default)
+    state = _state(tmp_path)
+    state.gate_for = lambda agent: agent
+    compose, spawn = _compose(state, monkeypatch)
+    await compose("coder", "Do it.", ["web"], "Instructions.")
+    bound = spawn.calls[0]["tool_approval"]
+    assert bound == "composed:coder"
+    assert policies.for_agent(bound).source == DEFAULT_POLICY
 
 
 async def test_compose_subagent_passes_events_for_turn_metrics(tmp_path, monkeypatch):

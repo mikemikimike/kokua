@@ -7,7 +7,7 @@ installable, modular application: a small transport-agnostic core with capabilit
 Because there is no earlier release, this section describes what 0.1.0 *is* rather than what changed.
 The pre-release development history is in the git log.
 
-Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.36.0 or newer. Apache-2.0.
+Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer. Apache-2.0.
 
 ### Package and entry points
 
@@ -1973,9 +1973,11 @@ notice on startup.
   key, whether both drivers drained all three branches a steered turn could take, whether the three
   stream consumers rendered the phase, whether the budget reset on a drained mailbox was bounded, and
   whether a misbehaving host source was caught rather than trusted. `Inbox` joins the probe's job.
-  Today the floor is **0.36.0**: every run event carries `run_id` and `parent_run_id`, which the request
-  records behind "what the model saw" are keyed by, and the startup check is a signature check on
-  `aimu.events.RunEvent` for its `run_id` field. Before it the floor was **0.34.0**, the first one a rename alone moved: AIMU renamed its
+  Today the floor is **0.37.0**: a spawned worker's spec carries a `"tool_approval"` key, which is what lets
+  each agent's tool calls be judged by its own approval policy; its absence raises loudly, so the startup
+  check stays where it was. Before it the floor was **0.36.0**: every run event carries `run_id` and
+  `parent_run_id`, which the request records behind "what the model saw" are keyed by, and the startup
+  check is a signature check on `aimu.events.RunEvent` for its `run_id` field. Before that it was **0.34.0**, the first one a rename alone moved: AIMU renamed its
   mid-turn-message seam from `Steering` to `Inbox`, with no legacy path, and taught it which agent is
   opening each reader. `Inbox.reader(agent=...)` is called once per run, at its start, and `agent` is
   that run's own name, offered so a host can route a message to the one run it was meant for rather than

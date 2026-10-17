@@ -294,7 +294,7 @@ unattended. A `confirm_tools` entry names a toolset (`compute`, or `compute.exec
 resolution is what turns a capability the user declared into the names the gate matches; the prefix
 buys a gate that can name a whole capability and an error that can point at the right one, not a
 discriminator at the moment of the call.
-[`core/agents.py`](https://github.com/saxman/kokua/blob/main/src/kokua/core/agents.py)'s `resolve_confirm_tools` and
+[`core/approval.py`](https://github.com/saxman/kokua/blob/main/src/kokua/core/approval.py)'s `resolve_approval_policies` and
 [`config/file.py`](https://github.com/saxman/kokua/blob/main/src/kokua/config/file.py)'s lock-pattern checks are the two startup errors
 above. [`SECURITY.md`](https://github.com/saxman/kokua/blob/main/SECURITY.md) names which barrier a vulnerability report is about, and which
 behavior is the program working as documented.

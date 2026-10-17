@@ -133,16 +133,18 @@ argument in it is a decision worth reading:
     return make_async_subagent_tool(
         config.default_model,
         agent_types=build_agent_specs(config, state, delegator),
-        tool_approval=state.tool_approval,
+        tool_approval=state.gate_for(DEFAULT_POLICY),
         observer=observer,
         events=record_event,
     )
 ```
 
 `config.default_model`, not the caller's own client, so a worker declaring no model runs on the
-configured default rather than inheriting whatever the delegator was pinned to. `tool_approval` is the
-same human gate the caller's own tools pass through, carried across the boundary: a worker's
-`execute_python` is routed to you, not silently allowed. `events=record_event` is what makes the
+configured default rather than inheriting whatever the delegator was pinned to. `tool_approval` here is only
+the factory-level gate, bound to the default tier; Kokua spawns by agent type, and each spec
+`build_agent_specs` writes carries its own `"tool_approval"`, the same human gate bound to that worker's
+name, so a worker's `execute_python` is judged by the worker's own approval policy and routed to you, not
+silently allowed. `events=record_event` is what makes the
 worker's model calls count into the delegating turn's cost record, which is newer than it sounds and is
 one of the capabilities Kokua's AIMU floor exists to guarantee.
 

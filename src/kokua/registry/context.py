@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
 
 from aimu.aio import Scheduler
 from aimu.memory import DocumentStore, SemanticMemoryStore
@@ -73,7 +73,11 @@ class LiveState:
     # Cancels a scheduled task's in-flight firings, returning (how many, whether one was the run the call
     # came from). Assigned by the composition root, which owns the turn bookkeeping this reads.
     stop_task_runs: Optional[Callable[[str], tuple[int, bool]]] = None
-    tool_approval: Optional[Callable] = None
+    # A gate per agent name, so each agent's calls are judged by its own approval policy. Called with the
+    # name and returning the hook AIMU runs before that agent's tool calls. A callable rather than a
+    # fixed gate because the policies it consults exist only after every agent is wired, and the gate
+    # looks them up at call time.
+    gate_for: Optional[Callable[[str], Callable[[str, dict], Awaitable[bool]]]] = None
     observer: Optional[SubagentObserver] = None
     registry: dict = field(default_factory=dict)
     # Every tool name `registry.build_tools` has produced so far, under the toolset that produced it,

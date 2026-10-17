@@ -292,7 +292,7 @@ async def test_new_abandons_a_waiting_approval_rather_than_leaving_it_hanging(tm
     await assistant.start()
     token = streaming_conversation.set(assistant._active_id)
     try:
-        asking = asyncio.create_task(assistant._approve("add_skill_script", {"skill_name": "x"}))
+        asking = asyncio.create_task(assistant._gate_for("assistant")("add_skill_script", {"skill_name": "x"}))
         await asyncio.sleep(0)  # let it register as pending before the loop reads "/new"
         assert assistant._human.approval.pending
 

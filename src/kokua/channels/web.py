@@ -12,7 +12,7 @@ carries the running turn's conversation id (set by ``Assistant._handle``/``_proa
 running that turn); :meth:`WebChannel._foreground` compares it against
 :attr:`WebChannel.active_conversation_id` (the viewed conversation) to decide whether to emit. ``None``
 means "no turn context" (e.g. a direct push, or the CLI channel, which has no muting at all) and is
-always treated as foreground. ``Assistant._approve`` reads the same contextvar (against
+always treated as foreground. ``HumanGate.approve`` reads the same contextvar (against
 ``Assistant._active_id`` rather than this channel's ``active_conversation_id``) to gate tool approval on
 foreground: a background turn auto-denies a gated tool since no user is watching to confirm it.
 
@@ -51,7 +51,7 @@ streaming_conversation: ContextVar[Optional[str]] = ContextVar("streaming_conver
 # True while a proactive/scheduled turn runs in this task (set by Assistant._proactive /
 # _run_in_new_session). Unlike streaming_conversation, this does not depend on which conversation is
 # viewed: a firing on a channel with no conversation list runs in the viewed conversation and would
-# otherwise look foreground, so Assistant._approve reads this to auto-deny a
+# otherwise look foreground, so HumanGate.approve reads this to auto-deny a
 # gated tool for any proactive turn (nobody is watching to confirm an unattended full-access call).
 proactive_turn: ContextVar[bool] = ContextVar("proactive_turn", default=False)
 

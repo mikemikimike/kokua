@@ -21,7 +21,7 @@ from kokua.core.auto_approval import (
     decide,
     review_call,
 )
-from tests.channels import FakeChannel, _config
+from tests.channels import FakeChannel, _config, example_agents
 from tests.helpers import MockAsyncModelClient
 
 
@@ -165,10 +165,21 @@ def test_the_fence_check_is_not_case_sensitive_and_catches_a_bare_tag(forgery):
 _REVIEWER = "approval"
 
 
+#: The shipped confirm list with `run_command` moved out of it: a tool in both halves of a policy is a
+#: startup error, so a test putting it in `default_review` has to take it out of `default_confirm`.
+_CONFIRM_WITHOUT_RUN_COMMAND = [
+    "skills.add_skill_script",
+    "mcp.add_mcp_server",
+    "compute.execute_python",
+    "fs_write",
+    "config.update_config",
+]
+
+
 def _auto(**overrides) -> dict:
     """The auto-approval half of a config, defaulted to a gate that resolves cleanly.
 
-    `run_command` is the tool because the shipped `[assistant.tools].confirm` gates it and
+    `run_command` is the tool because the shipped `[assistant.tools].review` names it and
     `[security].never_auto_approve` does not hold it back, which is the only combination a reviewer may
     be asked about.
     """
@@ -176,7 +187,8 @@ def _auto(**overrides) -> dict:
         model="ollama:a",
         auto_approval_enabled=True,
         auto_approval_reviewers=[_REVIEWER],
-        auto_approval_tools=["compute.run_command"],
+        default_confirm=_CONFIRM_WITHOUT_RUN_COMMAND,
+        default_review=["compute.run_command"],
         reviewers={_REVIEWER: ReviewerConfig(model="ollama:qwen3:8b", system_message="judge it")},
     )
     fields.update(overrides)
@@ -212,7 +224,8 @@ async def test_disabled_resolves_to_nothing(tmp_path):
         tmp_path,
         auto_approval_enabled=False,
         auto_approval_reviewers=[],
-        auto_approval_tools=["totally_made_up_toolset"],
+        default_confirm=_CONFIRM_WITHOUT_RUN_COMMAND,
+        default_review=[],
         reviewers={},
     )
     assert resolved is None
@@ -220,7 +233,6 @@ async def test_disabled_resolves_to_nothing(tmp_path):
 
 async def test_resolves_tool_names_and_the_reviewer(tmp_path):
     auto = await _resolve(tmp_path)
-    assert auto.tools == frozenset({"run_command"})
     assert auto.toolset_of["run_command"] == "compute"
     assert [reviewer.name for reviewer in auto.reviewers] == [_REVIEWER]
     assert auto.reviewers[0].model == "ollama:qwen3:8b"
@@ -266,37 +278,56 @@ async def test_inherited_thinking_is_not_a_declared_key(tmp_path):
     generation alone."""
     auto = await _resolve(tmp_path, thinking="high")
     assert auto.reviewers[0].thinking == "high"
-    assert auto.tools == frozenset({"run_command"})
 
 
-async def test_enabled_with_no_tools_fails(tmp_path):
-    with pytest.raises(ConfigError, match="names no tool"):
-        await _resolve(tmp_path, auto_approval_tools=[])
+async def test_auto_approval_requires_a_review_entry_somewhere(tmp_path):
+    with pytest.raises(ConfigError, match=r"no review list names a tool"):
+        await _resolve(tmp_path, default_confirm=_CONFIRM_WITHOUT_RUN_COMMAND, default_review=[])
+
+
+async def test_a_review_entry_on_one_agent_is_enough(tmp_path):
+    """The default tier names nothing, but coder reviews run_command, so there is something to act on."""
+    agents = example_agents()
+    agents["coder"] = dataclasses.replace(agents["coder"], confirm=[], review=["compute.run_command"])
+    auto = await _resolve(tmp_path, agents=agents, default_confirm=_CONFIRM_WITHOUT_RUN_COMMAND, default_review=[])
+    assert auto.toolset_of["run_command"] == "compute"
 
 
 async def test_a_tool_entry_naming_nothing_fails_with_the_near_miss(tmp_path):
-    """The same vocabulary confirm_tools uses, so the same misspelling gets the same suggestion, and
-    the closing sentence says what this list's dead entry costs: a prompt that still arrives."""
+    """The same vocabulary a confirm list uses, so the same misspelling gets the same suggestion, and
+    the message says a dead entry gates nothing, since a review entry is itself a gate."""
     with pytest.raises(ConfigError) as error:
-        await _resolve(tmp_path, auto_approval_tools=["compute.run_commnd"])
+        await _resolve(tmp_path, default_review=["compute.run_commnd"])
     message = str(error.value)
-    assert "[security.auto_approval].tools" in message
+    assert "[assistant.tools].review" in message
     assert "compute.run_commnd" in message and "run_command" in message
-    assert "still stops and asks" in message
+    assert "would gate nothing" in message
 
 
 async def test_a_floored_tool_cannot_be_reviewed(tmp_path):
     """update_config changes what may act later, so approving one call stops constraining anything:
     [security].never_auto_approve holds it back whatever this list says."""
     with pytest.raises(ConfigError, match="never_auto_approve"):
-        await _resolve(tmp_path, auto_approval_tools=["config.update_config"])
+        await _resolve(
+            tmp_path,
+            default_confirm=[entry for entry in _CONFIRM_WITHOUT_RUN_COMMAND if entry != "config.update_config"],
+            default_review=["config.update_config"],
+        )
 
 
-async def test_reviewing_an_ungated_tool_fails(tmp_path):
-    """calculate is a real tool of a real toolset, and nothing gates it: reviewing it saves no prompt,
-    because that call already runs without one."""
-    with pytest.raises(ConfigError, match="which nothing gates"):
-        await _resolve(tmp_path, auto_approval_tools=["compute.calculate"])
+async def test_auto_approval_refuses_a_floored_tool_in_any_review(tmp_path):
+    """The floor is checked against every agent's own review list, and the message names the table to edit."""
+    agents = example_agents()
+    coder = agents["coder"]
+    agents["coder"] = dataclasses.replace(
+        coder, available=[*coder.available, "config"], confirm=[], review=["config.update_config"]
+    )
+    message = (
+        r"\[agents\.coder\.tools\]\.review reaches update_config, "
+        r"which \[security\]\.never_auto_approve holds back"
+    )
+    with pytest.raises(ConfigError, match=message):
+        await _resolve(tmp_path, agents=agents)
 
 
 async def test_a_reviewer_on_the_assistants_own_model_warns_and_still_resolves(tmp_path, caplog):
@@ -357,7 +388,6 @@ def auto() -> AutoApproval:
     the call, and a start would only supply a tool vocabulary nothing on this path reads.
     """
     return AutoApproval(
-        tools=frozenset({"run_command"}),
         toolset_of={"run_command": "compute"},
         reviewers=(_resolved(_REVIEWER, "ollama:b"),),
         timeout_seconds=10.0,

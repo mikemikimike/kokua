@@ -226,11 +226,11 @@ class AssistantConfig:
     # Hot: one of ``CORE_RUNTIME_SETTINGS`` (config/table.py); read once per turn by ``TurnRunner``.
     capture_requests: bool = True
     # The default tier of tools that require interactive confirmation before each call, for every agent that
-    # does not declare its own pair in [agents.<name>.tools] ([assistant.tools].confirm) (see core.interaction). These
+    # does not declare its own pair in [agents.<name>.tools] ([assistant.tools].confirm) (see the per-agent gate, core.interaction.HumanGate.approve). These
     # run with full machine access; an empty list disables approval. Proactive turns auto-deny them.
     # Each entry names the toolset providing the tool: "<toolset>" or "<toolset>.*" for all of them,
     # "<toolset>.<tool>" for one, with "core" reserved for the tools no toolset provides. Resolved to
-    # tool names at startup by core.agents.resolve_confirm_tools, which rejects an entry gating nothing.
+    # tool names at startup by core.approval.resolve_approval_policies, which rejects an entry gating nothing.
     # `fs_write` is named bare where the others name a tool, and the asymmetry is the point: that toolset
     # is `select(builtin.fs, include=builtin.unscoped)`, so it holds every writer AIMU puts in that group
     # and nothing else. Naming its two tools would gate today's writers and leave tomorrow's ungated on
