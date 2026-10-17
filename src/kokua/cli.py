@@ -119,6 +119,11 @@ def build_arg_parser(prog: str = "kokua") -> argparse.ArgumentParser:
     )
     init_parser.add_argument("--force", action="store_true", help="Overwrite an existing config file.")
 
+    subparsers.add_parser(
+        "agents",
+        help="Show each agent's available tools, what is in context, and what asks before it runs.",
+    )
+
     skills_parser = subparsers.add_parser("skills", help="List or install the skills this repository ships.")
     skills_sub = skills_parser.add_subparsers(dest="skills_command")
     skills_sub.add_parser("list", help="List the skills bundled in this repository's skills/ directory.")
@@ -366,6 +371,67 @@ def _print_toolsets(config: AssistantConfig) -> None:
         print()
 
 
+def format_agent_access(config: AssistantConfig) -> list[str]:
+    """The lines ``kokua agents`` prints: per agent, what it may use, what is in context, what asks first.
+
+    Reads declarations only. Nothing is built, so this runs with the model server down and shows what the
+    config says rather than what a live agent holds. Residency has no declaration yet, so every available
+    toolset is resident and the line says that instead of repeating the list.
+    """
+
+    def entries(names: list[str]) -> str:
+        return ", ".join(names) if names else "(none)"
+
+    lines: list[str] = []
+    for name, agent in config.agents.items():
+        confirm, review, source = config.approval_entries_for(name)
+        lines += [
+            name,
+            f"  available: {entries(agent.available)}",
+            "  resident:  every available toolset",
+            f"  confirm:   {entries(confirm)}  (from {source})",
+            f"  review:    {entries(review)}  (from {source})",
+            "",
+        ]
+    lines.append("composed workers: confirm and review from [assistant.tools]")
+    return lines
+
+
+def access_summary_lines(config: AssistantConfig) -> list[str]:
+    """One line per declared agent, in entries rather than resolved tool names.
+
+    Runs at startup before anything is built, so it can only count what the config declares.
+    """
+    lines = []
+    for name, agent in config.agents.items():
+        confirm, review, source = config.approval_entries_for(name)
+        count = len(agent.available)
+        line = f"{name}: {count} available, {count} resident, {len(confirm)} confirm, {len(review)} review"
+        if source == "[assistant.tools]":
+            line += f" (from {source})"
+        lines.append(line)
+    return lines
+
+
+def print_access_summary(config: AssistantConfig) -> None:
+    """Write the summary to stderr, so a front end's stdout (and a piped ``kokua``) stays clean."""
+    for line in access_summary_lines(config):
+        print(line, file=sys.stderr)
+
+
+def _print_agents(config: AssistantConfig) -> None:
+    """Validate the agents against the registry, then print each one's access. Builds no toolset."""
+    # Deferred for the reason `_print_toolsets` defers it.
+    from kokua.core.agents import build_registry, validate_agents
+
+    try:
+        validate_agents(config, build_registry(config))
+    except (ConfigError, ToolsetError) as e:
+        print(e, file=sys.stderr)
+        raise SystemExit(2) from None
+    print("\n".join(format_agent_access(config)))
+
+
 def _resolve_export_session(args: argparse.Namespace, config: AssistantConfig) -> tuple[Optional[Session], int]:
     """The stored session `args.conversation` names (or ``None``), and how many sessions share its
     fragment.
@@ -541,6 +607,10 @@ def main() -> None:
         _print_toolsets(config)
         return
 
+    if args.command == "agents":
+        _print_agents(config)
+        return
+
     # Also after resolve_config, for the same reason: it needs config.sessions_path and
     # config.downloads_path. Unlike running a front end, it builds no Assistant and configures no
     # logging, since reading a stored conversation back off disk needs neither.
@@ -549,6 +619,7 @@ def main() -> None:
 
     configure_logging(config)  # rotating file log + faulthandler, before the assistant starts
     frontend = plugins.get_frontend(config.frontend)
+    print_access_summary(config)
     try:
         asyncio.run(frontend.run(config, args))
     except KeyboardInterrupt:
