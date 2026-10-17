@@ -694,6 +694,9 @@ async def test_the_shipped_example_resolves_to_todays_gate(tmp_path):
     path = tmp_path / "config.toml"
     shutil.copyfile(str(files("kokua").joinpath("config.example.toml")), path)
     loaded = load(str(path), table=core_table())
+    # A scaffolded config writes its lock list out in full, so the default list's entry alone would
+    # leave [assistant.tools] writable by update_config.
+    assert "assistant.tools.*" in loaded["locked_config_keys"]
     config, state, entry = await _wired(tmp_path)
     config = dataclasses.replace(
         config, default_confirm=loaded["default_confirm"], default_review=loaded["default_review"]

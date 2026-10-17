@@ -166,7 +166,7 @@ declared](capability-is-declared.md) is that rule, and those exceptions, in full
 One thing the transcript above makes unavoidable: `get_current_date_and_time` is not in this repository.
 It is AIMU's. Kokua's entire [`time`
 toolset](https://github.com/saxman/kokua/blob/main/src/kokua/toolsets/time.py) is one `Toolset`
-declaration handing AIMU's clock group a name an agent can put in its `tools` list, and it defines no
+declaration handing AIMU's clock group a name an agent can put in its `available` list, and it defines no
 tool of its own. The docstring behind that `timezone` parameter, the one that produced the schema the
 model filled in, lives in `aimu.tools.builtin`:
 
@@ -212,7 +212,8 @@ it pays for it with a full extra round trip carrying the entire conversation. Un
 calls ([the turn loop](the-turn-loop.md)), a few self-corrections are the difference between an answer
 and a forced wrap-up.
 
-**Approval gates cost latency and buy control.** Kokua's `[security].confirm_tools` names the tools that
+**Approval gates cost latency and buy control.** Kokua's per-agent approval policy (the `confirm` and
+`review` lists of `[assistant.tools]` or of an agent's own `[agents.<name>.tools]`) names the tools that
 stop and ask before running, each with the toolset that provides it in front, and the shipped default
 includes `compute.execute_python`, `compute.run_command`, and `config.update_config`, since those run
 with full access to your machine. A bare `compute` there would gate that whole capability instead. The cost is real and it is human

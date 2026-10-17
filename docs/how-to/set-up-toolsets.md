@@ -2,7 +2,7 @@
 
 A *toolset* is one **named capability** an agent can ask for: a `Toolset` object carrying a name, a
 description, and a `build(ctx)` that returns tool callables. Every toolset an install offers, wherever it
-came from, lives in one namespace. An agent's `tools` list names toolsets from that namespace, and the
+came from, lives in one namespace. An agent's `available` list names toolsets from that namespace, and the
 tools the agent can actually call are whatever those toolsets built.
 
 A toolset can also carry a `Workflow` instead of, or alongside, its tools: a turn strategy the user
@@ -44,7 +44,7 @@ uv run kokua --list-frontends     # the other plugin group
 
 `--list-toolsets` reads your config file, since the registry depends on it (which servers are configured,
 whether plugins are loaded), so run `kokua config init` first if you have no config yet. The output groups
-names by provider, because a `tools` list deliberately does not say where a name comes
+names by provider, because an `available` list deliberately does not say where a name comes
 from (`"stocks"`, not `"mcp:stocks"`), so this command is the one place provenance is visible:
 
 | Provider | What is in it |
@@ -93,22 +93,30 @@ agent = "assistant"          # the entry agent, and the root of the delegation g
 [agents.assistant]
 description = "The assistant the user talks to."
 system_message = "You are a personal assistant running on the user's own machine. Be concise and helpful."
-tools = ["memory", "documents", "skills", "config", "mcp", "scheduling", "conversations", "planning", "capabilities", "time"]
 delegates_to = ["researcher", "report-writer"]
+
+[agents.assistant.tools]
+available = ["memory", "documents", "skills", "config", "mcp", "scheduling", "conversations", "planning", "capabilities", "time"]
 
 [agents.researcher]
 description = "Research specialist: gather and verify information from the web."
-tools = ["web", "misc", "time"]
 system_message = """\
 You are a research sub-agent. Investigate the task with web search and page lookups, verify claims \
 against sources rather than memory, and return a concise findings summary that names its sources."""
 
+[agents.researcher.tools]
+available = ["web", "misc", "time"]
+
 [agents.report-writer]
 description = "Builds and emails PDF reports."
-tools = ["markdown-to-pdf", "email-report", "fs", "time"]
+
+[agents.report-writer.tools]
+available = ["markdown-to-pdf", "email-report", "fs", "time"]
 ```
 
-- **`tools`** is the whole capability declaration, in one flat list over the one namespace. A built-in
+- **`[agents.<name>.tools].available`** is the whole capability declaration, in one flat list over the one
+  namespace. (The same subtable can also carry the agent's own `confirm` and `review`; see
+  [Tool access](../explanation/tool-access.md).) A built-in
   group, a core capability, a plugin toolset, and an MCP server are all named the same way.
 - **`delegates_to`** is itself the switch: a non-empty list gives that agent a
   `spawn_subagent(agent_type, task)` tool offering **exactly** the agents it names, each built from its
@@ -149,7 +157,7 @@ conversations, `planning`, `capabilities`, the clock). Give that agent one domai
 would then contradict the tools the model can see.
 
 Note what `cross_cutting` is **not**: it is not a permission boundary. An agent whose table says
-`tools = ["config"]` really does get `update_config`. See
+`available = ["config"]` really does get `update_config`. See
 [design principles](../explanation/design-principles.md#corollary-a-capability-is-declared-never-defaulted)
 for why that is the intended shape, and what the actual security boundary is.
 
@@ -168,7 +176,7 @@ session store or connects to anything, so a bad config fails with nothing writte
 
 | Mistake | What happens |
 | --- | --- |
-| Unknown name in an agent's `tools` | **Startup fails**, naming the agent, the name, and every available toolset. |
+| Unknown name in an agent's `available` list | **Startup fails**, naming the agent, the name, and every available toolset. |
 | `skills` on any agent but the entry agent | **Startup fails.** Spawned workers are plain AIMU agents and cannot host it. |
 | Unknown key in an `[agents.*]` table | **Startup fails**, naming the key. Only `description`, `system_message`, `tools`, `delegates_to`, `model`, `thinking`, `generation`, and `max_iterations` are accepted. |
 | An old per-role key (`groups`, `tool_packs`, `mcp_servers`) | **Startup fails**, telling you to list it in `tools` instead. |
@@ -229,7 +237,7 @@ TOOLSET = Toolset(
 weather = "my_weather_toolset:TOOLSET"
 ```
 
-`pip install` it, confirm with `kokua --list-toolsets`, then give an agent `tools = ["weather", ...]`.
+`pip install` it, confirm with `kokua --list-toolsets`, then name it in an agent's `[agents.<name>.tools].available`.
 Installing it is not enough, for the reason at the top of this guide.
 
 **Every toolset Kokua ships is written exactly this way**, which is the point: the shape above is not a

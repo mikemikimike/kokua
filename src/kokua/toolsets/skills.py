@@ -21,7 +21,7 @@ callable in the same turn, which cannot be true if the new skill falls outside a
 at startup. ``update_skill`` needs the same thing for a different reason: a skill it cannot see is one
 it reports as not found.
 
-Of the three, the shipped ``[security].confirm_tools`` gates ``add_skill_script`` alone. A gate is for a
+Of the three, the shipped ``[assistant.tools]`` ``confirm`` list gates ``add_skill_script`` alone. A gate is for a
 call that reaches past the model, which a script does (it runs as a real subprocess with the user's
 privileges) and prose does not, and ``update_skill`` is held to the same line as ``author_skill`` for
 that reason: gating the tool that edits instructions while leaving ungated the one that writes them

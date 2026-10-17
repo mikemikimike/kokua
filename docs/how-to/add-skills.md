@@ -14,8 +14,8 @@ shorter than it looks: there is one directory, and three ways to put something i
 **entry agent** (the one `[assistant].agent` names) can hold it:
 
 ```toml
-[agents.assistant]
-tools = ["skills", "memory", "time"]      # `kokua config init` writes this and more
+[agents.assistant.tools]
+available = ["skills", "memory", "time"]      # `kokua config init` writes this and more
 ```
 
 Declaring `skills` on any other agent is a startup error, because a spawned worker is a plain AIMU
@@ -33,7 +33,9 @@ agent:
 ```toml
 [agents.reporter]
 description = "Builds and mails reports."
-tools = ["markdown-to-pdf", "email-report", "fs", "compute", "time"]
+
+[agents.reporter.tools]
+available = ["markdown-to-pdf", "email-report", "fs", "compute", "time"]
 ```
 
 A skill name sits beside `web` and an MCP server's name and does not say which kind it is. `kokua
@@ -42,7 +44,7 @@ startup listing the ones that are.
 
 **Give a script-carrying skill an agent that can run scripts.** A worker declaring a skill gets that
 skill's `{skill}__{stem}` script tools and `activate_skill` through the registry, and the skill's own
-instructions usually tell it to run something -- so `fs` and `compute` belong in the same `tools` list.
+instructions usually tell it to run something -- so `fs` and `compute` belong in the same `available` list.
 
 **One rule worth knowing:** an agent holding the `skills` authoring toolset sees *every* skill on disk,
 not just the ones it declares. Scoping an author's catalogue would hide the skill it just wrote, and
@@ -148,7 +150,7 @@ turn.
 - **To fix a broken script, reuse the exact same filename.** That overwrites in place and the tool keeps
   its name. A different filename creates a second script and leaves the broken one callable.
 - The skill must exist first. Calling it for an unknown skill returns the list of skills that do exist.
-- It is **gated** by default (`[security] confirm_tools`), so each call waits for your `y/N` in the
+- It is **gated** by default (`[assistant.tools].confirm`), so each call waits for your `y/N` in the
   terminal or Allow/Deny in the web UI.
 
 Scripts run as real subprocesses with your user's privileges and no sandbox. Their stdout becomes the

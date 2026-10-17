@@ -319,7 +319,7 @@ def undeclared_workflow_commands(config: AssistantConfig, registry: ToolsetRegis
 
     This is the gap ``build_command_map`` leaves on purpose: a config that predates naming a
     workflow's toolset (or dropped it) still gets the command typed at it verbatim -- the web Plan
-    toggle sends ``"/plan <task>"`` over the socket regardless of what ``[agents.*].tools`` says -- so
+    toggle sends ``"/plan <task>"`` over the socket regardless of what ``[agents.*.tools].available`` says -- so
     the serve loop needs to recognize the word even though no declared toolset claims it, to answer
     with what config change would grant it instead of running a plain turn on the literal command text.
 
@@ -345,7 +345,7 @@ def configured_but_undeclared(config: AssistantConfig) -> list[str]:
     recognize ``/plan`` typed at it and name the fix instead of running a plain turn on the literal
     text. This one checks every agent's tools and looks at *config sections*, so a warning can fire the
     moment the assistant starts, before anyone has typed anything: writing ``[planning]`` and leaving
-    ``planning`` out of every ``[agents.*].tools`` means its settings are read by nobody, which is
+    ``planning`` out of every ``[agents.*.tools].available`` means its settings are read by nobody, which is
     otherwise silent until someone notices the checkboxes doing nothing.
 
     Checked against every agent's tools, not just the entry agent's: a section belongs to whichever
@@ -758,7 +758,7 @@ def _resolve_gate_entry(entry: str, vocabulary: dict[str, set[str]], registry: M
         if toolset in registry:
             return set(), (
                 f"{entry!r} names the {toolset!r} toolset, which no agent declares, so it builds no "
-                f"tools and holds nothing back. Add {toolset!r} to an [agents.<name>].tools list, or "
+                f"tools and holds nothing back. Add {toolset!r} to an [agents.<name>.tools].available list, or "
                 "drop the gate."
             )
         close = difflib.get_close_matches(toolset, sorted(set(vocabulary) | set(registry)), n=2)

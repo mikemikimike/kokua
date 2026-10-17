@@ -811,7 +811,7 @@ class Assistant:
                         workflow = candidate
                     elif word in self._undeclared_workflow_commands:
                         # An installed toolset offers /word, just not to this entry agent -- e.g. a
-                        # config that predates naming "planning" in [agents.<entry>].tools. Answered
+                        # config that predates naming "planning" in [agents.<entry>.tools].available. Answered
                         # here instead of falling through to a plain turn, which would otherwise run
                         # the model on the literal "/word <task>" string and persist that into history.
                         # Deliberately narrow to a word some installed workflow actually offers: a

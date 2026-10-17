@@ -6,7 +6,7 @@ startup, or the assistant's own `add_mcp_server` tool, called mid-conversation. 
 place, and it is the step people miss:
 
 > A configured server is a **toolset**, named by its `name`. It reaches an agent only when that agent's
-> `tools` list in `[agents.<name>]` names it.
+> `available` list in `[agents.<name>.tools]` names it.
 
 Connect a server without naming it in an agent and you get a working connection nothing can use.
 
@@ -41,7 +41,9 @@ Then give an agent the server, and restart:
 ```toml
 [agents.stock-trader]
 description = "Looks up quotes and places trades."
-tools = ["stocks", "compute", "time"]     # "stocks" is the [[mcp.server]].name above
+
+[agents.stock-trader.tools]
+available = ["stocks", "compute", "time"]     # "stocks" is the [[mcp.server]].name above
 ```
 
 A name in `tools` that matches no toolset is a **startup error** listing the available names, so a typo
@@ -119,7 +121,7 @@ The shipped entry agent declares the `mcp` toolset, so it carries `add_mcp_serve
 > "Connect to https://broker.example.com/mcp and use it to check my positions."
 
 `add_mcp_server(url, bearer_token=None)` connects, reports the tool names it found, and rebuilds every
-live agent's `spawn_subagent`. It is gated by `[security] confirm_tools`, so it waits for your approval
+live agent's `spawn_subagent`. It is gated by `[assistant.tools].confirm`, so it waits for your approval
 first.
 
 **What that connection can actually reach depends on whether the server was already in `config.toml` at
@@ -159,7 +161,7 @@ Two consequences of the runtime path being real:
 - **Finishing a runtime add takes an edit and a restart.** Since every server needs a name, the write
   derives one from the server's host (`broker.example.com` becomes `broker-example-com`, with a numeric
   suffix if that name is already taken), so the config it leaves behind always loads. Then:
-  1. add that name (or rename it to something friendlier) to an agent's `tools` by hand. `[agents.*]` is
+  1. add that name (or rename it to something friendlier) to an agent's `available` list by hand. `[agents.*]` is
      locked by default: `update_config` refuses the whole section, precisely so the assistant cannot
      grant itself the capability it just connected;
   2. **restart Kokua**, because the namespace and the agent tables are both read only at startup.

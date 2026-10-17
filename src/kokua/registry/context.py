@@ -81,7 +81,7 @@ class LiveState:
     observer: Optional[SubagentObserver] = None
     registry: dict = field(default_factory=dict)
     # Every tool name `registry.build_tools` has produced so far, under the toolset that produced it,
-    # accumulated as agents are wired. It is the vocabulary the `[security].confirm_tools` startup check
+    # accumulated as agents are wired. It is the vocabulary the approval-entry startup check
     # matches against, and that check reads a `toolset.tool` grammar, so provenance is the point rather
     # than a bonus: a flat set could not tell `compute.execute_python` from `web.execute_python`. It
     # lives here rather than being returned by a builder because the names arrive from several builds at

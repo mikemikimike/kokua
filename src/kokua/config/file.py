@@ -283,7 +283,7 @@ def _parse_mcp_servers(value: Any) -> list[MCPServerConfig]:
         if not isinstance(name, str) or not name:
             raise ConfigError(
                 f"[[mcp.server]] requires a string 'name' (server {url}): a server is named so an "
-                "agent can declare it in its tools list."
+                "agent can name it in its available list."
             )
         unknown = set(entry) - {"url", "token_env", "name"}
         if unknown:
@@ -651,7 +651,7 @@ def _named_section(section: str) -> str:
     """A schema section written the way a config file writes it, for error text only.
 
     The inverse of :func:`_schema_section`, and it exists because a hint is something a model acts on
-    literally: told "did you mean [agents.*].tools?", it calls ``update_config`` with that section
+    literally: told "did you mean [agents.*.tools]?", it calls ``update_config`` with that section
     verbatim, and a write policy that has unlocked agent tables then creates an agent named ``*``. The
     placeholder cannot be actioned that way, so a misread costs a second attempt rather than a junk
     table on disk.

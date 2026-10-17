@@ -150,7 +150,7 @@ between them sounds like.
 The rule is written down, in exactly these words:
 [a capability is declared, never
 defaulted](../explanation/design-principles.md#corollary-a-capability-is-declared-never-defaulted). An
-agent's capability is what its `[agents.<name>]` table declares: the `tools` list, plus the
+agent's capability is what its `[agents.<name>]` table declares: the `available` list, plus the
 `spawn_subagent` that a non-empty `delegates_to` earns. No code path adds a capability no key in that
 table asked for, and no flag can disagree with a declaration.
 
@@ -163,8 +163,10 @@ the transcript above is that block's behavior:
 ...
 description = "The assistant the user talks to."
 system_message = "You are a personal assistant running on the user's own machine. Be concise and helpful."
-tools = ["memory", "documents", "skills", "config", "mcp", "scheduling", "conversations", "planning", "capabilities", "time", "benchmark"]
 delegates_to = ["researcher", "coder", "introspector"]
+
+[agents.assistant.tools]
+available = ["memory", "documents", "skills", "config", "mcp", "scheduling", "conversations", "planning", "capabilities", "time", "benchmark"]
 ```
 
 Eleven names, no `fs`, no `compute`, no `web`. Every name is resolved against a registry built at
@@ -209,23 +211,23 @@ provenance label. A mismatch would otherwise register a real toolset under a nam
 
 **Three documented exceptions, named rather than glossed.**
 
-*`delegates_to` grants a tool the `tools` list does not name.* A non-empty `delegates_to` earns the
+*`delegates_to` grants a tool the `available` list does not name.* A non-empty `delegates_to` earns the
 agent `spawn_subagent(agent_type, task)` over exactly the agents it names, built by
 `make_delegation_tool` in
 [`core/agents.py`](https://github.com/saxman/kokua/blob/main/src/kokua/core/agents.py). This is the
 mildest of the three, because it is still a declaration and only a different key: the assistant in the
 block above holds `spawn_subagent` because of its last line, not because of the line before it. It is
-listed here anyway, since a reader counting tools from the `tools` list alone will come up one short,
-and [Delegation](delegation.md) shows the tool being used by an agent whose `tools` never mentions it.
+listed here anyway, since a reader counting tools from the `available` list alone will come up one short,
+and [Delegation](delegation.md) shows the tool being used by an agent whose `available` never mentions it.
 
 *A composed sub-agent draws from the whole registry.* `compose_subagent`
 ([`toolsets/capabilities.py`](https://github.com/saxman/kokua/blob/main/src/kokua/toolsets/capabilities.py))
 builds a worker from names the model picked out of the catalogue, with no table involved. It is an
-exception at one level and not at the next: only an agent whose own `tools` names `capabilities` holds
+exception at one level and not at the next: only an agent whose own `available` names `capabilities` holds
 that tool, so the exception is entered by declaration. The worker is built per call and discarded with
 the call, it may not be handed `capabilities` itself, how far composition nests is
-`[capabilities].max_depth` rather than the model's decision, and its calls still route through
-`[security].confirm_tools`. What the rule protects is a *persistent* agent's reach, and a worker
+`[capabilities].max_depth` rather than the model's decision, and its calls are still gated, as
+`composed:<label>` under the default `[assistant.tools]` pair. What the rule protects is a *persistent* agent's reach, and a worker
 composed for one task is not an agent the config describes. [Delegation](delegation.md) is that
 mechanism in full.
 
@@ -243,16 +245,16 @@ to warn at startup about a provisioned toolset no agent named, and the warning w
 telling a toolset somebody installed on purpose from one that merely ships would take a provenance rule
 over the whole namespace, and a line printed on every start is a line people learn to skip. So the
 diagnosis is a command rather than a warning. `kokua --list-toolsets` prints every name an
-`[agents.<name>].tools` list may use, grouped by provider, after reading your config, so it includes
-your MCP servers and your skills. What it does not tell you is which agent holds what: for that you
-read the tables.
+`[agents.<name>.tools].available` list may use, grouped by provider, after reading your config, so it includes
+your MCP servers and your skills. What it does not tell you is which agent holds what: `kokua agents` does, printing each
+agent's availability and approval lists as the config declares them.
 
 **Declaration is per agent, and workers are the easy thing to get wrong.** The shipped `researcher`
 declares `["web", "misc", "time"]`. It cannot read a file, and delegating a file-reading task to it
 returns an apology rather than an error. Widening the entry agent widens nothing for its workers.
 
-**What is loud, so you know what to expect.** An unknown name in a `tools` list fails startup. A cycle
-in `delegates_to` fails startup. A `[security].confirm_tools` entry that would gate nothing fails
+**What is loud, so you know what to expect.** An unknown name in an `available` list fails startup. A cycle
+in `delegates_to` fails startup. A `confirm` or `review` entry that would gate nothing fails
 startup, with the near misses suggested, because a gate that matches nothing prompts for nothing and
 nobody notices a prompt that never comes. Note that the gate list speaks the same vocabulary this page
 is about: an entry is `<toolset>` for a whole capability or `<toolset>.<tool>` for one of its tools, so

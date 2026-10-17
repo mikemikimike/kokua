@@ -122,7 +122,9 @@ delegates_to = ["researcher", "coder", "introspector"]
 
 [agents.researcher]
 description = "Research specialist: gather and verify information from the web."
-tools = ["web", "misc", "time"]
+
+[agents.researcher.tools]
+available = ["web", "misc", "time"]
 ```
 
 Nothing else grants that tool. The delegate is built in
@@ -154,10 +156,12 @@ one of the capabilities Kokua's AIMU floor exists to guarantee.
         specs[name] = {
             "system_message": f"{agent.description or name}\n\n{message}",
             "tools": tools,
+            "tool_approval": state.gate_for(name),
         }
 ```
 
-AIMU reads a spec's first line as that role's menu label, which is the line the transcript above shows
+The `"tool_approval"` line binds that worker's gate to its own name, so its calls are judged by its own
+approval policy rather than its delegator's. AIMU reads a spec's first line as that role's menu label, which is the line the transcript above shows
 the model choosing between. Change a `description` in `config.toml` and you change how delegation is
 routed. Nesting is Kokua's own rather than AIMU's: a target that itself delegates gets its own spawn
 tool injected into its spec, and AIMU is called with `max_depth=1` at each level, which is why
@@ -174,7 +178,8 @@ exception is entered by declaration. The worker is constructed per call and dies
 widens is one task's reach and never a persistent agent's. It may not be handed `capabilities` itself,
 since a worker holding a fresh copy would read the depth budget from scratch instead of spending down
 the caller's, so `[capabilities].max_depth` (default 3, `0` off) is what governs nesting. And its calls
-route through `[security].confirm_tools` exactly as a declared worker's do.
+are gated as well, under the label `composed:<label>` and always the default `[assistant.tools]` pair: no table
+describes a composed worker, so it takes the default rather than anything its delegator declared.
 
 A name can resolve and still give a worker nothing: `image` builds no tool until `AIMU_IMAGE_MODEL` is
 set, and `list_capabilities` lists it either way, because discovery never builds a toolset. So
@@ -213,7 +218,8 @@ config is what lets several independent `spawn_subagent` calls overlap. Without 
 are three waits end to end.
 
 **The approval gate crosses the boundary, including when nobody is there.** A worker's gated call is
-routed to you, so delegation cannot launder capability past `confirm_tools`. The corollary is that an
+routed to you under that worker's own approval policy, so delegation cannot launder capability past the
+gate. The corollary is that an
 unattended turn, such as a scheduled one, auto-denies those calls, so a delegation that works when you
 are watching can come back empty-handed at 3am with no error.
 

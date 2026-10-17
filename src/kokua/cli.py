@@ -4,7 +4,7 @@ Resolves an :class:`~kokua.config.AssistantConfig` from (in increasing precedenc
 defaults, an optional TOML config file, and command-line flags, then runs the selected front end
 (default ``cli``; ``web`` and any installed plugin are also selectable). ``--list-frontends`` lists the
 front-end plugins; ``--list-toolsets`` lists the whole toolset registry, which is the discovery command
-for the single namespace an ``[agents.*]`` table's ``tools`` list draws on.
+for the single namespace an ``[agents.*.tools]`` table's ``available`` list draws on.
 
 Flag defaults are the ``None`` sentinel rather than the real default value, so an unspecified flag
 defers to the config file (and then the built-in default) instead of overriding it.

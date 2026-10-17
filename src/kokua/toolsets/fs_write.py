@@ -3,7 +3,7 @@
 Defines no tools of its own: an agent declaring ``fs_write`` gets ``write_file`` and ``edit_file``.
 Neither confines a write to any root, deliberately and by AIMU's own design (a root check a symlink or
 a relative path can walk out of reads as containment while providing none), so this reaches any path the
-account running Kokua can write. Both are in the shipped ``[security].confirm_tools`` for that reason,
+account running Kokua can write. Both are in the shipped ``[assistant.tools]`` ``review`` list for that reason,
 alongside ``execute_python`` and ``run_command``.
 
 This is a second toolset rather than two more tools in ``fs`` because one name cannot say both things.
@@ -12,7 +12,7 @@ capability: an agent's ``tools`` list names a toolset or it does not. With a sin
 way to write down "read a file and do not write one", which is what the shipped ``introspector`` needs
 and what the shipped ``coder`` does not.
 
-The split is also what keeps the approval gate meaningful. ``[security].confirm_tools`` gates
+The split is also what keeps the approval gate meaningful. The shipped ``[assistant.tools]`` policy gates
 ``execute_python`` and ``run_command`` because they write with this process's privileges; an ungated
 ``write_file`` in the same agent would be a shorter route to the same outcome, so the gate would have
 been approving the long way round and waving the short one through.
