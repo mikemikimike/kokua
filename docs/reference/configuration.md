@@ -427,7 +427,7 @@ availability is declared per agent and never defaulted. The two lists must not n
 ### `confirm`
 
 Tools that require interactive confirmation before each call: a terminal `y/N`, or Allow/Deny in the web
-UI. Set to `[]` to ask about none of these. Proactive turns (scheduled tasks, anything the assistant
+UI. Set to `[]` to clear this list; calls in `review` still prompt, so turning approval off entirely means emptying both `confirm` and `review`. Proactive turns (scheduled tasks, anything the assistant
 starts unprompted) **auto-deny** a gated call regardless, since there is no one at the keyboard to ask.
 `--confirm-tools` overrides this key for one run.
 
@@ -1275,7 +1275,7 @@ Flags override the file for one run and are never written back.
 | `--frontend NAME` | `[frontend].name` |
 | `--model STRING` | `[assistant].model` |
 | `--system TEXT` | the entry agent's opener, leaving a worker's alone |
-| `--confirm-tools NAMES` | `[assistant.tools].confirm`, comma-separated `toolset.tool` entries; empty string disables |
+| `--confirm-tools NAMES` | `[assistant.tools].confirm` only, comma-separated `toolset.tool` entries; must not name anything in `review`; an empty string clears `confirm` but leaves `review` prompting |
 | `--mcp URL` | adds a server for this run, unauthenticated or OAuth |
 | `--host`, `--port` | `[web].host`, `[web].port` |
 

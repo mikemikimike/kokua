@@ -27,9 +27,12 @@ available = ["web", "misc", "time", "messaging"]   # inherits [assistant.tools]'
 ## Availability: fixed by the host, never by the model
 
 `available` is the list of toolsets an agent can call, and nothing else: no code path adds a tool to an
-agent that did not name it. That is the corollary to
-[principle 2](design-principles.md#corollary-a-capability-is-declared-never-defaulted) in the
-terms of this page, and it is the same everywhere the field has looked.
+agent that did not name it, with a few exceptions that are themselves entered by declaration: a
+non-empty `delegates_to` earns `spawn_subagent`, the entry agent's `SkillAgent` carries the skill
+catalogue and script tools whether or not it declares `skills`, and `compose_subagent` draws from the
+whole registry for an agent that declares `capabilities`. That is the corollary to
+[principle 2](design-principles.md#corollary-a-capability-is-declared-never-defaulted), which states
+the exceptions in full, in the terms of this page, and it is the same everywhere the field has looked.
 
 - Anthropic's Messages API fixes the capability in the request's `tools` array. Its tool search can
   hide a tool's definition until needed (`defer_loading`), but only for tools already in that array;

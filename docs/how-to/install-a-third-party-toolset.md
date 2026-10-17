@@ -224,5 +224,5 @@ skill on disk rather than a scoped list.
 - [Configuration reference](../reference/configuration.md#toolset-sections): how any toolset's `[<name>]`
   section is validated, and what a name collision with a core section does.
 - [Configuration reference](../reference/configuration.md#assistanttools): the full behavior of
-  `[assistant.tools]`, including the three entry forms and the four ways an entry can gate
+  `[assistant.tools]`, including the three entry forms and the five ways an entry can gate
   nothing.

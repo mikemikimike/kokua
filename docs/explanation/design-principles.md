@@ -135,8 +135,8 @@ being rewritten by the assistant itself: the entry agent's `add_skill_script` an
 `update_config`'s refusal entirely. The default policy gating both is what makes "locked by
 default" hold in practice rather than only in `update_config`'s own code, and it is why
 `[assistant.tools]` is itself one of the locked-by-default sections (`assistant.tools.*`).
-`config.example.toml` documents `confirm = []` as the way to turn the default approvals off, so this
-backstop is a default a user can remove, not a wall.
+Emptying both `confirm` and `review` in `[assistant.tools]` turns the default approvals off (emptying
+`confirm` alone leaves `review` prompting), so this backstop is a default a user can remove, not a wall.
 
 ## 3. `config.toml` is the single source of settings, and the app writes it
 
