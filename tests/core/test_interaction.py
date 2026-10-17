@@ -325,14 +325,14 @@ async def _answer_the_prompt(gate, name, arguments, *, with_answer: bool) -> boo
     return await task
 
 
-async def _settle_without_a_prompt(gate, name, arguments) -> bool:
+async def _settle_without_a_prompt(gate, name, arguments, *, agent="assistant") -> bool:
     """`approve`'s answer on a path that must not stop to ask, bounded so a regression fails.
 
     A plain `await` here would hang instead: these paths raise no prompt, so nothing in the test is
     waiting to answer one, and a gate that started asking would leave the request outstanding forever.
     """
     try:
-        return await asyncio.wait_for(gate.approve("assistant", name, arguments), timeout=_SETTLE_TIMEOUT)
+        return await asyncio.wait_for(gate.approve(agent, name, arguments), timeout=_SETTLE_TIMEOUT)
     except TimeoutError:
         raise AssertionError(f"approve({name!r}) stopped to ask instead of settling") from None
 
@@ -393,6 +393,54 @@ async def test_an_ineligible_gated_tool_is_never_reviewed(monkeypatch, in_turn):
 
     assert ui.asked == ["approve:update_config"]
     assert ui.auto_approvals == []
+
+
+def _two_tiers(*, coder_confirm=(), coder_review=(), default_confirm=(), default_review=()) -> ApprovalPolicies:
+    default = ApprovalPolicy(
+        agent=DEFAULT_POLICY,
+        source=DEFAULT_POLICY,
+        confirm=frozenset(default_confirm),
+        review=frozenset(default_review),
+    )
+    coder = ApprovalPolicy(
+        agent="coder",
+        source="[agents.coder.tools]",
+        confirm=frozenset(coder_confirm),
+        review=frozenset(coder_review),
+    )
+    return ApprovalPolicies(by_agent={"coder": coder}, default=default)
+
+
+async def test_a_worker_that_only_confirms_a_tool_is_not_reviewed_for_it(monkeypatch, in_turn):
+    """The review decision reads the calling agent's own policy, not the default tier's."""
+    monkeypatch.setattr("kokua.core.interaction.review_call", _never_called("coder confirms run_command"))
+    ui = _UI()
+    gate = _gate(ui)
+    gate.policies = _two_tiers(coder_confirm={"run_command"}, default_review={"run_command"})
+    gate.auto_approval = _auto()
+
+    task = asyncio.create_task(gate.approve("coder", "run_command", {"command": "ls"}))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert ui.asked == ["approve:run_command"]
+    assert ui.auto_approvals == []
+    gate.approval.resolve(False)
+    assert await task is False
+
+
+async def test_a_worker_that_reviews_a_tool_the_default_only_confirms_is_reviewed(monkeypatch, in_turn):
+    monkeypatch.setattr(
+        "kokua.core.interaction.review_call", _answers(Outcome(True, "runs the test suite", "ollama:b"))
+    )
+    ui = _UI()
+    gate = _gate(ui)
+    gate.policies = _two_tiers(coder_review={"run_command"}, default_confirm={"run_command"})
+    gate.auto_approval = _auto()
+
+    assert await _settle_without_a_prompt(gate, "run_command", {"command": "ls"}, agent="coder") is True
+
+    assert ui.asked == []
+    assert len(ui.auto_approvals) == 1
 
 
 async def test_a_proactive_turn_is_never_reviewed(monkeypatch, in_turn):

@@ -380,14 +380,14 @@ Consequences for working in this repo:
   `tool_calls` / `thinking`, `RunFinished.ended_by` / `max_iterations`, the spawn tools passing
   `parent_run_id`, and `Runner.as_tool()` parenting the runs it starts. `aimu.agents.Inbox` is the
   floor's job now, in its turn.
-  **AIMU 0.37.0 is the current floor, and it is the one release whose capability did not get the probe.**
+  **AIMU 0.37.0 is the current floor, and it is another release whose capability did not get the probe.**
   The capability Kokua depends on is the `"tool_approval"` entry in `SUBAGENT_SPEC_KEYS`: the spec key
   `build_agent_specs` writes so each worker's calls reach the gate bound to its own name, and so are
   judged by that agent's approval policy instead of its delegator's. The probe stays on `RunEvent.run_id`,
   on the 0.28.0 reasoning: that key set is closed, so an AIMU predating the key raises `ValueError` naming
   it when the factory is called, which is loud and arrives while a conversation's agent is built, where
   `run_id`'s absence is silent. One probe slot goes to the capability that fails silently. `ToolGroup`
-  also shipped in 0.37.0 and nothing calls it yet, so it is the floor's job until stage 2 uses it.
+  also shipped in 0.37.0 and nothing calls it yet, so it is the floor's job until something uses it.
   `tests/test_aimu_compat.py` pins both. `RunEvent.run_id` is the floor's job now, in its turn.
 - **Without `../aimu`** (CI, a fresh clone, or just running Kokua), `uv sync --no-sources` resolves AIMU
   from PyPI. Nothing in `pyproject.toml` needs editing for that any more.

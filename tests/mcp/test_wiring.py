@@ -15,7 +15,7 @@ from kokua.config.schema import AgentConfig
 from kokua.core.assistant import Assistant
 from tests.channels import AlertCapturingChannel, FakeChannel, _config
 from tests.fakes import _FakeMCP, _await_value, _fake_mcp_tool, _offline_until_connected
-from tests.helpers import MockAsyncModelClient, core_table
+from tests.helpers import MockAsyncModelClient, allow_all_gates, core_table
 
 
 def _using(name: str, url: str) -> dict:
@@ -82,7 +82,9 @@ def _worker_tools(assistant) -> set[str]:
         "remote": AgentConfig(description="Uses every connected server.", available=[s.name for s in servers]),
     }
     config = replace(assistant._config, agents=agents, entry_agent="assistant", mcp_servers=servers)
-    state = LiveState(config=config, connections=assistant._mcp_servers, registry=build_registry(config))
+    state = LiveState(
+        gate_for=allow_all_gates, config=config, connections=assistant._mcp_servers, registry=build_registry(config)
+    )
     specs = build_agent_specs(config, state, "assistant")
     return {fn.__name__ for spec in specs.values() for fn in spec["tools"]}
 

@@ -445,7 +445,10 @@ async def test_a_composed_worker_named_like_an_agent_gets_the_default_tier(tmp_p
     state.gate_for = lambda agent: agent
     compose, spawn = _compose(state, monkeypatch)
     await compose("coder", "Do it.", ["web"], "Instructions.")
-    bound = spawn.calls[0]["tool_approval"]
+    call = spawn.calls[0]
+    # AIMU lets a spec's own "tool_approval" override the factory's, so the effective gate is the spec's
+    # when it carries one.
+    bound = call["agent_types"]["coder"].get("tool_approval", call["tool_approval"])
     assert bound == "composed:coder"
     assert policies.for_agent(bound).source == DEFAULT_POLICY
 

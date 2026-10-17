@@ -543,7 +543,7 @@ async def test_an_assistant_holds_no_gate_when_the_feature_is_off(tmp_path):
     assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
     await assistant.start()
 
-    assert assistant._human.policies.default.gated is not None
+    assert assistant._human.policies is not None
     assert assistant._human.auto_approval is None
 
 

@@ -146,6 +146,25 @@ def test_an_agent_named_for_a_bus_address_is_rejected():
         assert reserved in str(excinfo.value)
 
 
+def test_an_agent_name_cannot_collide_with_a_gate_name():
+    """A composed worker is gated as 'composed:<label>' and the default tier as '[assistant.tools]'; a
+    hand-written quoted table with either shape would share that name, so both characters are refused."""
+    for reserved in ("composed:coder", "[assistant.tools]"):
+        agents = _valid()
+        agents[reserved] = AgentConfig(available=["time"])
+        config = _config(agents)
+        with pytest.raises(ConfigError, match="reserved for the approval gate") as excinfo:
+            validate_agents(config, build_registry(config))
+        assert reserved in str(excinfo.value)
+
+
+def test_other_quoted_agent_names_stay_legal():
+    agents = _valid()
+    agents["my-agent.v2"] = AgentConfig(available=["time"])
+    config = _config(agents)
+    validate_agents(config, build_registry(config))
+
+
 def test_a_missing_entry_agent_is_rejected():
     config = _config(_valid(), entry="supervisor")
     with pytest.raises(ConfigError) as excinfo:

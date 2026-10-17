@@ -283,7 +283,8 @@ def _make_compose_tool(state: "LiveState", *, remaining_depth: int | None, model
             model,
             agent_types={label: spec},
             max_depth=1,
-            # The label cannot equal a declared agent's name, so a composed worker always gets the default tier.
+            # The label cannot equal a declared agent's name (validate_agents refuses ':' in one), so a
+            # composed worker always gets the default tier.
             tool_approval=state.gate_for(_SELECT_LABEL.format(name=label)),
             observer=state.observer,
             # Missing until now, the same way `inbox` was: `_spawn_tool`/`make_delegation_tool` (the

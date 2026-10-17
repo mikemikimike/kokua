@@ -151,6 +151,9 @@ def build_registry(config: AssistantConfig) -> ToolsetRegistry:
 #: startup rather than at reader-open time, because the collision is in the config and is silent
 #: everywhere else.
 RESERVED_AGENT_NAMES = frozenset({USER, EVERYONE})
+#: Characters no declared agent name may contain: the approval gate binds composed workers and the default
+#: tier under names built from them, and a declared agent must never be able to equal one.
+RESERVED_GATE_NAME_CHARACTERS = (":", "[")
 
 
 def validate_agents(config: AssistantConfig, registry: Mapping[str, Toolset]) -> None:
@@ -174,6 +177,13 @@ def validate_agents(config: AssistantConfig, registry: Mapping[str, Toolset]) ->
             f"table. Configured agents: {known}."
         )
     for name, agent in config.agents.items():
+        if any(character in name for character in RESERVED_GATE_NAME_CHARACTERS):
+            raise ConfigError(
+                f"[agents.{name!r}] contains ':' or '[', which are reserved for the approval gate's own "
+                "names (a composed worker is gated as 'composed:<label>' and the default tier as "
+                "'[assistant.tools]'). An agent with such a name could be mistaken for one of those, so a "
+                "worker composed to look like it would inherit its approval policy. Rename the agent."
+            )
         if name in RESERVED_AGENT_NAMES:
             raise ConfigError(
                 f"[agents.{name}] uses a name reserved by the message bus. An agent's declared name is "

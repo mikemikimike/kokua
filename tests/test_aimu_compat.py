@@ -525,7 +525,7 @@ def test_the_floor_covers_the_per_worker_gate_the_probe_does_not_grip():
     assert "tool_approval" in SUBAGENT_SPEC_KEYS
 
 
-def test_the_floor_covers_the_tool_group_stage_two_will_use():
+def test_the_floor_covers_the_tool_group_nothing_uses_yet():
     """``ToolGroup`` shipped in 0.37.0 beside the gate key and nothing in Kokua calls it yet; it is the
     floor's job until a later change uses it."""
     from aimu.tools import ToolGroup
