@@ -588,13 +588,13 @@ class WebChannel(BaseWebChannel):
         """
         await self.send_frame({"type": "download", "name": name, "url": url})
 
-    async def send_approval_request(self, name: str, arguments: Any) -> None:
+    async def send_approval_request(self, name: str, arguments: Any, *, agent: Optional[str] = None) -> None:
         """Ask the browser to approve a tool call; the page replies with a normal 'y'/'n' frame.
 
         The reply flows back through the ordinary inbound path (receive()), so the Assistant's serve
         loop routes it to the pending approval -- no interception is needed here.
         """
-        await self.send_frame({"type": "approval", "name": name, "arguments": arguments})
+        await self.send_frame({"type": "approval", "name": name, "arguments": arguments, "agent": agent})
 
     async def send_auto_approval(
         self,

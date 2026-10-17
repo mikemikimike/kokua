@@ -246,12 +246,22 @@ class ChannelUI:
         else:
             await self._channel.send(text)
 
-    async def ask_approval(self, name: str, arguments: Any) -> None:
-        """Prompt for tool approval, as a frame or as a plain-text question."""
+    async def ask_approval(self, name: str, arguments: Any, *, agent: Optional[str] = None) -> None:
+        """Prompt for tool approval, as a frame or as a plain-text question.
+
+        ``agent`` names who is asking, since a delegated worker's call reaches the same prompt as the
+        entry agent's and the user is deciding whether *that* agent may act. It is forwarded only when
+        known, so a channel written against the older one-argument frame method keeps working.
+        """
         if self._approval_request is not None:
-            await self._approval_request(name, arguments)
-        else:
+            if agent is None:
+                await self._approval_request(name, arguments)
+            else:
+                await self._approval_request(name, arguments, agent=agent)
+        elif agent is None:
             await self._channel.send(f"[approve] Allow {name}({arguments})? [y/N]")
+        else:
+            await self._channel.send(f"[approve] Allow {agent} to run {name}({arguments})? [y/N]")
 
     async def show_auto_approval(
         self,

@@ -79,8 +79,11 @@ class RichChannel(Protocol):
         conversation to open, the URL to follow, and the group whose next card supersedes this one.
         """
 
-    async def send_approval_request(self, name: str, arguments: Any) -> None:
-        """Prompt for tool-call approval. The reply arrives through the ordinary inbound path."""
+    async def send_approval_request(self, name: str, arguments: Any, *, agent: Optional[str] = None) -> None:
+        """Prompt for tool-call approval. The reply arrives through the ordinary inbound path.
+
+        ``agent`` is the name of the agent asking, or None when unknown.
+        """
 
     async def send_auto_approval(
         self,

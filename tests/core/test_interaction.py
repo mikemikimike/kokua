@@ -129,11 +129,13 @@ async def test_a_second_askers_default_does_not_leak_onto_the_first():
 class _UI:
     def __init__(self):
         self.asked: list[str] = []
+        self.asked_by: list[str | None] = []
         self.auto_approvals: list[tuple[str, dict, bool, str, str, str]] = []
         self.alerts: list[str] = []
 
-    async def ask_approval(self, name, arguments):
+    async def ask_approval(self, name, arguments, *, agent=None):
         self.asked.append(f"approve:{name}")
+        self.asked_by.append(agent)
 
     async def show_auto_approval(self, name, arguments, *, approved, reason, model, conversation_id=None):
         self.auto_approvals.append((name, arguments, approved, reason, model, conversation_id))
@@ -323,6 +325,18 @@ async def _answer_the_prompt(gate, name, arguments, *, with_answer: bool) -> boo
         raise AssertionError(f"approve({name!r}) never stopped to ask") from None
     gate.approval.resolve(with_answer)
     return await task
+
+
+async def test_the_gate_names_the_asking_agent_on_its_prompt():
+    ui = _UI()
+    gate = _gate(ui)
+    task = asyncio.create_task(gate.approve("coder", "execute_python", {"code": "1"}))
+    async with asyncio.timeout(_SETTLE_TIMEOUT):
+        while not gate.approval.pending:
+            await asyncio.sleep(0.001)
+    gate.approval.resolve(True)
+    assert await task is True
+    assert ui.asked_by == ["coder"]
 
 
 async def _settle_without_a_prompt(gate, name, arguments, *, agent="assistant") -> bool:

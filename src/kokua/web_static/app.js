@@ -2200,7 +2200,7 @@ function handleFrame(event) {
     // minutes ago counts on from there rather than restarting at zero.
     setWorking(frame.active ? (frame.elapsed || 0) * 1000 : null);
   } else if (frame.type === "approval") {
-    renderApproval(frame.name, frame.arguments);
+    renderApproval(frame.name, frame.arguments, frame.agent);
   } else if (frame.type === "auto_approval") {
     renderAutoApproval(frame);
   } else if (frame.type === "plan") {
@@ -2386,12 +2386,14 @@ function handleFrame(event) {
 
 // A gated tool needs confirmation: show the call and Allow/Deny buttons. The reply is a plain
 // "y"/"n" frame, which the server routes to the waiting tool call (same path as typing it).
-function renderApproval(name, args) {
+function renderApproval(name, args, agent) {
   const el = document.createElement("div");
   el.className = "bubble approval";
   const prompt = document.createElement("div");
   prompt.className = "prompt";
-  prompt.textContent = "Allow ";
+  // Naming the agent matters because a delegated worker's call lands in the same log as the entry
+  // agent's; without it the user cannot tell whose action they are allowing.
+  prompt.textContent = agent ? `Allow ${agent} to run ` : "Allow ";
   const code = document.createElement("code");
   code.textContent = toolLine(name, args);
   prompt.appendChild(code);

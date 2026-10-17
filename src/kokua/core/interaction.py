@@ -222,7 +222,7 @@ class HumanGate:
             )
             if outcome.approved:
                 return True
-        return await self.approval.ask(lambda: self._ui.ask_approval(name, arguments))
+        return await self.approval.ask(lambda: self._ui.ask_approval(name, arguments, agent=agent))
 
     async def _deny_switched_away(self, name: str, turn_conversation: Optional[str]) -> bool:
         """Deny a gated call whose turn is not the conversation on screen, and say so. Always False.

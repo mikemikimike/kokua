@@ -961,7 +961,15 @@ async def test_web_channel_send_approval_request_emits_frame():
     ws = _FakeWS()
     channel = WebChannel(ws)
     await channel.send_approval_request("add_skill_script", {"skill_name": "x"})
-    assert ws.frames == [{"type": "approval", "name": "add_skill_script", "arguments": {"skill_name": "x"}}]
+    assert ws.frames == [
+        {"type": "approval", "name": "add_skill_script", "arguments": {"skill_name": "x"}, "agent": None}
+    ]
+
+
+async def test_web_approval_frame_carries_the_agent():
+    ws = _FakeWS()
+    await WebChannel(ws).send_approval_request("run_command", {}, agent="coder")
+    assert ws.frames == [{"type": "approval", "name": "run_command", "arguments": {}, "agent": "coder"}]
 
 
 async def test_web_channel_sends_an_auto_approval_frame():

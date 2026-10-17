@@ -137,7 +137,7 @@ async def test_approve_serializes_concurrent_gated_calls(tmp_path):
     prompts: list[str] = []
     order: list[str] = []
 
-    async def fake_prompt(name, arguments):
+    async def fake_prompt(name, arguments, *, agent=None):
         prompts.append(name)
         # Yield to the event loop before resolving so the two gathered coroutines can interleave.
         # Without the lock the second call overwrites the pending slot here, causing the
