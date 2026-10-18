@@ -949,6 +949,32 @@ async def test_a_floor_entry_on_an_entry_agent_skill_resolves_at_startup(tmp_pat
     assert auto.floor and not auto.floor & policies.default.review
 
 
+async def test_a_floor_entry_on_a_skill_covers_a_script_added_mid_session(tmp_path):
+    """The floor is a gate entry like any other: naming the skill holds back what it offers now, so a
+    script added after startup is in it before any agent can be handed that script."""
+    from tests.core.test_approval import _add_second_script, _write_skill
+
+    from kokua.config.schema import AgentConfig
+
+    config = _config(
+        tmp_path,
+        **_auto(
+            agents={"assistant": AgentConfig(available=["skills", "compute", "time"])},
+            default_confirm=["skills.add_skill_script"],
+            never_auto_approve=["weekly-digest"],
+        ),
+    )
+    _write_skill(config)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        await assistant.start()
+        assert assistant._human.auto_approval.floor == {"weekly_digest__collect_notes"}
+        await _add_second_script(assistant)
+        assert assistant._human.auto_approval.floor == {"weekly_digest__collect_notes", "weekly_digest__second"}
+    finally:
+        assistant._state.close()
+
+
 async def test_a_floor_entry_on_an_entry_agent_skill_refuses_a_review_reaching_it_at_startup(tmp_path):
     with pytest.raises(ConfigError, match="never_auto_approve holds back"):
         await _started_with_skill(tmp_path, default_review=["weekly-digest"], never_auto_approve=["weekly-digest"])

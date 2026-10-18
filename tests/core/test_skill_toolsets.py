@@ -174,3 +174,79 @@ def _ctx(state: LiveState):
     from kokua.registry.context import ToolsetContext
 
     return ToolsetContext(state=state, agent=None, agent_name="assistant")
+
+
+def test_a_skill_tools_refresh_retires_its_client_until_close(tmp_path, monkeypatch):
+    """A worker spawned before a refresh may still call the old client's tools, so the old client stays
+    open until the state closes, and closing releases every client ever built."""
+    closed: list[int] = []
+
+    class FakeClient:
+        def __init__(self, server):
+            self.number = len(built)
+            built.append(self)
+
+        def as_tools(self):
+            return []
+
+        def close(self):
+            closed.append(self.number)
+
+    built: list[FakeClient] = []
+    monkeypatch.setattr("aimu.tools.MCPClient", FakeClient)
+    config = _config(tmp_path)
+    write_skill(config, "citation-check", "Verify a claim.")
+    state = _state(config)
+
+    assert "citation-check" in state.skill_tools
+    write_skill(config, "weekly-digest", "Digest the week.")
+    state.refresh_skill_tools()
+
+    assert "weekly-digest" in state.skill_tools
+    assert closed == []
+    state.close()
+    assert closed == [0, 1]
+
+
+def test_a_build_finishing_after_a_refresh_does_not_restore_the_old_map(tmp_path, monkeypatch):
+    """A deferred skill group builds in a worker thread. A build that read the skills before a refresh and
+    stores its map after it would hand every worker the pre-refresh map until the next write, so the
+    refresh has to wait for a build already under way."""
+    import threading
+
+    class FakeClient:
+        def __init__(self, server):
+            pass
+
+        def as_tools(self):
+            return []
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("aimu.tools.MCPClient", FakeClient)
+    config = _config(tmp_path)
+    write_skill(config, "citation-check", "Verify a claim.")
+    state = _state(config)
+    computed, release = threading.Event(), threading.Event()
+    build = state._build_skill_tools
+
+    def paused_build():
+        result = build()
+        computed.set()
+        release.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(state, "_build_skill_tools", paused_build)
+    reader = threading.Thread(target=lambda: state.skill_tools)
+    reader.start()
+    assert computed.wait(timeout=5)
+    write_skill(config, "weekly-digest", "Digest the week.")
+    refresher = threading.Thread(target=state.refresh_skill_tools)
+    refresher.start()
+    refresher.join(timeout=0.2)
+    release.set()
+    reader.join(timeout=5)
+    refresher.join(timeout=5)
+
+    assert "weekly-digest" in state.skill_tools

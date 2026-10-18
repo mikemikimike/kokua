@@ -201,6 +201,9 @@ class AutoApproval:
     # now reaches the floor is refused.
     floor: frozenset[str] = frozenset()
     pending_floor: frozenset[str] = frozenset()
+    # Every floor entry as written, so a later build of a toolset grows the floor the way it grows a
+    # policy (see ``kokua.core.approval``).
+    floor_entries: frozenset[str] = frozenset()
 
     @property
     def model_label(self) -> str:
@@ -210,26 +213,18 @@ class AutoApproval:
     def with_built(self, policies: ApprovalPolicies, toolset: str, tool_names: frozenset[str]) -> AutoApproval:
         """This gate after ``toolset`` built ``tool_names``, checked against ``policies`` (already updated).
 
-        Resolves the floor entries waiting on the toolset, refuses the build when any review list now
-        reaches the floor (a late ``review = ["mcp"]`` must not make ``add_mcp_server`` auto-approvable
-        just because the toolset arrived after startup), and labels every reviewed tool with its toolset
-        so the packet names the capability. Pure: the caller keeps the old object when this raises.
+        Matches every floor entry naming the toolset against what it built (a skill that gained a script
+        holds the new one back too), refuses the build when any review list now reaches the floor (a late
+        ``review = ["mcp"]`` must not make ``add_mcp_server`` auto-approvable just because the toolset
+        arrived after startup), and labels every reviewed tool with its toolset so the packet names the
+        capability. Pure: the caller keeps the old object when this raises.
         """
-        from kokua.core.agents import _resolve_gate_entry
+        from kokua.core.agents import resolve_built_entries
 
-        floor = set(self.floor)
-        waiting = set(self.pending_floor)
-        for entry in sorted(waiting):
-            if entry.split(".")[0] != toolset:
-                continue
-            names, fault = _resolve_gate_entry(entry, {toolset: set(tool_names)}, {})
-            if fault:
-                raise ConfigError(
-                    f"[security].never_auto_approve names {entry!r}, but the {toolset!r} toolset, now built, "
-                    f"provides no such tool. Fix the entry; until then {toolset!r} cannot be loaded. {fault}."
-                )
-            floor |= names
-            waiting.discard(entry)
+        names, waiting = resolve_built_entries(
+            self.floor_entries, self.pending_floor, toolset, tool_names, setting="[security].never_auto_approve"
+        )
+        floor = self.floor | names
         _refuse_floor_reach([policies.default, *policies.by_agent.values()], floor)
         reviewed = frozenset().union(*(policy.review for policy in [policies.default, *policies.by_agent.values()]))
         toolset_of = dict(self.toolset_of)
@@ -290,7 +285,13 @@ def resolve_auto_approval(
     # `tests/toolsets/test_registration.py`, is what would fail if this moved back to the top of the
     # file; see `toolsets/capabilities.py` for the same deferral against the same surface, and
     # `config/settings_sources.py` for the analogous deferral against its own upward-import rule.
-    from kokua.core.agents import built_toolsets, gateable_tools, pending_gate_entries, resolve_gate_entries
+    from kokua.core.agents import (
+        built_toolsets,
+        deferred_for,
+        gateable_tools,
+        pending_gate_entries,
+        resolve_gate_entries,
+    )
 
     if not config.auto_approval_enabled:
         return None
@@ -346,7 +347,7 @@ def resolve_auto_approval(
             "reviewed. Add entries to [assistant.tools].review or to an agent's [agents.<name>.tools].review."
         )
     vocabulary = gateable_tools(state, entry_agent)
-    deferred = {toolset for name in config.agents for toolset in config.deferred_for(name)}
+    deferred = {toolset for name in config.agents for toolset in deferred_for(config, state.registry, name)}
     pending_floor = pending_gate_entries(config.never_auto_approve, deferred, built_toolsets(state))
     floor = resolve_gate_entries(
         [entry for entry in config.never_auto_approve if entry not in pending_floor],
@@ -367,6 +368,7 @@ def resolve_auto_approval(
         max_per_turn=config.auto_approval_max_per_turn,
         floor=floor,
         pending_floor=frozenset(pending_floor),
+        floor_entries=frozenset(config.never_auto_approve),
     )
 
 

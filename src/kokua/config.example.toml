@@ -153,8 +153,9 @@ timeout_seconds = 10
 max_per_turn = 5
 
 # Every agent, declared whole, and locked by default (see [security].locked_config_keys below). An
-# agent's `available` list, in its [agents.<name>.tools] table, IS its capability: nothing is added in
-# code, and nothing is implicit, including the clock (declare "time" to get it). The same table may
+# agent's `available` list (or the string "all", which requires `resident`), in its
+# [agents.<name>.tools] table, IS its capability: nothing is added in code, and nothing is implicit,
+# including the clock (declare "time" to get it). The same table may
 # carry the agent's own `confirm` and `review` lists, replacing [assistant.tools] as a pair; leave both
 # out to inherit it. An optional `resident` list, a subset of `available`, is what is in the agent's
 # tools from its first turn; the rest it loads on demand. Leave it out and everything available is resident.
@@ -162,9 +163,9 @@ max_per_turn = 5
 # One namespace covers everything, so an `available` entry may be an AIMU built-in group ("web", "fs",
 # "fs_write", "compute", "time", "misc", "audio", "speech", "transcription"), one of Kokua's own ("memory",
 # "documents", "skills", "capabilities", "config", "conversations", "mcp", "messaging", "planning",
-# "scheduling"), a plugin toolset ("aimu_agents", "benchmark", "github_backup", "image"), a skill by name, or an
-# MCP server by its [[mcp.server]] name. `kokua --list-toolsets` lists them; an unknown name fails
-# startup.
+# "scheduling"), one of Kokua's optional toolsets ("aimu_agents", "benchmark", "github_backup", "image"),
+# a skill by name, or an MCP server by its [[mcp.server]] name. `kokua --list-toolsets` lists them; an
+# unknown name fails startup.
 #
 # `model` / `thinking` / `generation` override the [assistant] defaults for one agent and are never
 # inherited by its sub-agents. A non-empty `delegates_to` gives the agent spawn_subagent(agent_type,
@@ -180,6 +181,7 @@ system_message = "You are a personal assistant running on the user's own machine
 delegates_to = ["researcher", "coder", "introspector"]
 [agents.assistant.tools]
 available = ["memory", "documents", "skills", "config", "mcp", "scheduling", "conversations", "planning", "capabilities", "time", "benchmark", "messaging"]
+# available = "all"   # every installed toolset; requires resident
 # In its tools from the first turn; the rest of `available` it loads on demand with load_tools.
 resident = ["memory", "config", "conversations", "planning", "capabilities", "time", "messaging"]
 
@@ -315,11 +317,12 @@ cost them their data."""
 # system_message = "..."       # unset: planning's own shipped standard applies
 
 # Remote MCP servers to connect at startup, one [[mcp.server]] table each. `url` and `name` are
-# required; `name` is how the server enters the toolset namespace, so an agent's `available` list must name it
-# for the server to reach anything. `token_env` names an env var holding a bearer token (omit it when
-# unauthenticated, or for OAuth, which triggers on an auth challenge). `description` is the line an agent
-# reads when deciding whether to load the server. The add_mcp_server tool appends
-# servers here with a host-derived name; that name reaches no agent until you add it above and restart.
+# required; `name` is how the server enters the toolset namespace, so an agent's `available` list must
+# name it (or the agent declares available = "all") for the server to reach anything. `token_env` names an
+# env var holding a bearer token (omit it when unauthenticated, or for OAuth, which triggers on an auth
+# challenge). `description` is the line an agent reads when deciding whether to load the server. The
+# add_mcp_server tool appends servers here with a host-derived name; nothing can use one until a restart,
+# and then only an agent naming it or declaring available = "all".
 # [[mcp.server]]
 # url = "https://api.githubcopilot.com/mcp/"
 # name = "github"

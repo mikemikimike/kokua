@@ -24,7 +24,7 @@ from typing import Any, Callable, Optional, Sequence, Union
 
 from kokua.config import paths as paths
 from kokua.config import table as runtime_settings
-from kokua.config.schema import AgentConfig, MCPServerConfig, ReviewerConfig
+from kokua.config.schema import ALL_TOOLSETS, AgentConfig, AllToolsets, MCPServerConfig, ReviewerConfig
 
 EXAMPLE_FILENAME = "config.example.toml"
 
@@ -322,19 +322,61 @@ _REMOVED_AGENT_KEYS = {"groups", "tool_packs", "mcp_servers"}
 _AGENT_TOOLS_KEYS = ("available", "confirm", "review", "resident")
 
 
-def check_resident_within_available(name: str, resident: Optional[list[str]], available: list[str]) -> None:
-    """Refuse a ``resident`` entry that ``available`` does not hold.
+def check_resident_within_available(
+    name: str, resident: Optional[list[str]], available: Union[list[str], AllToolsets]
+) -> None:
+    """Refuse a ``resident`` entry that ``available`` does not hold, and ``available = "all"`` with no
+    ``resident`` at all.
 
-    Shared by the file parser and ``update_config``'s dry run, which builds its candidate without going
-    through the parser, so both orderings (a bad resident write, and an available write that strands an
-    existing resident) get the same refusal instead of a file the next startup rejects.
+    Shared by the file parser, ``update_config``'s dry run, and ``core.agents.validate_agents``, since the
+    last two see configs built without the parser, so both orderings (a bad resident write, and an
+    available write that strands an existing resident) get the same refusal instead of a file the next
+    startup rejects. Which names an ``available = "all"`` declaration holds is not checked here: config
+    cannot see the registry that says what "all" holds, so that check happens where the expansion does.
     """
+    if available is ALL_TOOLSETS:
+        if resident is None:
+            raise ConfigError(
+                f'[agents.{name}.tools].available = "all" needs a resident list: with every installed toolset '
+                "available, resident says which ones are in the agent's tools from its first turn."
+            )
+        return
     for entry in resident or []:
         if entry not in available:
             raise ConfigError(
                 f"[agents.{name}.tools].resident names {entry!r}, which is not in available. A resident "
                 "toolset is one this agent already holds; add it to available or drop it here."
             )
+
+
+def _available_shape_error(section: str) -> ConfigError:
+    return ConfigError(
+        f'[{section}].available must be a list of toolset names, or the string "all" (lowercase, '
+        "not in a list) for every installed toolset."
+    )
+
+
+def _lists_all(names: list) -> bool:
+    """Whether a list of names holds ``"all"`` in any casing, which only the bare string may mean.
+
+    Case-insensitive because a near miss deserves the sentence naming the fix: ``["All"]`` would otherwise
+    pass this check and fail later as an unknown toolset, which says nothing about the spelling that works.
+    """
+    return any(isinstance(name, str) and name.lower() == "all" for name in names)
+
+
+def _available_value(section: str, key: str, value: list) -> Union[list[str], str]:
+    """An ``update_config`` write to ``available``: a list of names, or the string ``"all"``.
+
+    The tool hands every value over as a string and a list key splits it on commas, so ``"all"`` arrives
+    as ``["all"]`` and is read back as the string it was written as. Anything else naming ``"all"``, in
+    another casing (``"ALL"``) or beside other names, is refused in the parser's words.
+    """
+    if value == ["all"]:
+        return "all"
+    if _lists_all(value):
+        raise _available_shape_error(section)
+    return _str_list(section, key, value)
 
 
 def _parse_agent_tools(name: str, value: Any) -> dict:
@@ -358,8 +400,13 @@ def _parse_agent_tools(name: str, value: Any) -> dict:
         raise ConfigError(f"[agents.{name}.tools] needs available = [...]: the toolsets this agent can use.")
     section = f"agents.{name}.tools"
     fields: dict = {}
+    declared_available = value["available"]
+    if declared_available != "all" and (not isinstance(declared_available, list) or _lists_all(declared_available)):
+        raise _available_shape_error(section)
     for key in _AGENT_TOOLS_KEYS:
-        if key in value:
+        if key == "available" and declared_available == "all":
+            fields[key] = ALL_TOOLSETS
+        elif key in value:
             if not isinstance(value[key], list):
                 raise ConfigError(f"[{section}].{key} must be a list of strings")
             fields[key] = _str_list(section, key, value[key])
@@ -692,7 +739,12 @@ AGENT_SCHEMA: dict[tuple[str, str], tuple] = {
     ("agents.*", "thinking"): ("thinking", (bool, str), "true, false, or low/medium/high", _thinking),
     ("agents.*", "delegates_to"): ("delegates_to", (list,), "a list of strings", _str_list),
     ("agents.*", "max_iterations"): ("max_iterations", (int,), "an integer >= 1", _positive_int),
-    **{("agents.*.tools", key): (key, (list,), "a list of strings", _str_list) for key in _AGENT_TOOLS_KEYS},
+    **{
+        ("agents.*.tools", key): (key, (list,), "a list of strings", _str_list)
+        for key in _AGENT_TOOLS_KEYS
+        if key != "available"
+    },
+    ("agents.*.tools", "available"): ("available", (list,), 'a list of strings, or "all"', _available_value),
     **{
         ("agents.*.generation", key): ("generation", types, label, _generation_value)
         for key, (types, label, _) in _GENERATION_KEYS.items()

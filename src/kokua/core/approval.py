@@ -13,6 +13,13 @@ approval hook sees a name and the agent making the call, and asks the resolved p
 Resolution is a startup check as much as a lookup. An entry matching no tool, naming a toolset the
 agent cannot reach, or landing a tool in both halves fails startup, because a gate that holds nothing
 back is the one mistake whose symptom is the absence of a symptom.
+
+Startup is not the last time an entry resolves. Every build of a toolset, whoever triggers it, reports
+the tools it built (``LiveState.toolset_built``), and every entry naming that toolset is matched again
+against them, the resolved ones as well as the ones still waiting. A toolset's tools can grow after
+startup: a skill gains a script mid-session, and ``review = ["weekly-digest"]`` means every script that
+skill has, not the ones it had when Kokua started. So each policy keeps the entries it was written with
+beside the names they resolved to, and a build only ever adds names, before any of its tools is returned.
 """
 
 from __future__ import annotations
@@ -25,11 +32,13 @@ from typing import TYPE_CHECKING
 from kokua.config import ConfigError
 from kokua.config.schema import DEFAULT_POLICY_SOURCE
 from kokua.core.agents import (
-    _resolve_gate_entry,
+    available_for,
     built_toolsets,
     certain_overlap,
+    deferred_for,
     gateable_tools,
     pending_gate_entries,
+    resolve_built_entries,
     resolve_gate_entries,
 )
 from kokua.registry.registry import RESERVED_GATE_NAMESPACE
@@ -64,6 +73,9 @@ class ApprovalPolicy:
     # tool is never callable while its entry is still waiting.
     pending_confirm: frozenset[str] = frozenset()
     pending_review: frozenset[str] = frozenset()
+    # Every entry as written, resolved or pending, so a later build of a toolset can match them again.
+    confirm_entries: frozenset[str] = frozenset()
+    review_entries: frozenset[str] = frozenset()
 
     @property
     def gated(self) -> frozenset[str]:
@@ -89,41 +101,36 @@ class ApprovalPolicies:
         return dataclasses.replace(self.default, agent=name)
 
     def with_built(self, toolset: str, tool_names: frozenset[str]) -> ApprovalPolicies:
-        """These policies with every pending entry naming ``toolset`` resolved against what it built.
+        """These policies with every entry naming ``toolset`` matched against what it built, added to the
+        names each already holds.
 
         Approval has to hold for a toolset however late, and by whomever, it is built: an agent loading
-        it, or a worker composed for one task. So the build itself calls this (through
-        ``LiveState.toolset_built``) before it returns a single tool, and an entry that matches nothing
-        raises there, refusing the build, because a gate naming a tool that does not exist holds nothing
-        back. Pure: returns a new object, so a reader holding the old one never sees a half-updated pair.
+        it, a worker composed for one task, or a skill refresh after a new script. So the build itself
+        calls this (through ``LiveState.toolset_built``) before it returns a single tool, and a pending
+        entry that matches nothing raises there, refusing the build, because a gate naming a tool that
+        does not exist holds nothing back. Pure: returns a new object, so a reader holding the old one
+        never sees a half-updated pair.
         """
-        vocabulary = {toolset: set(tool_names)}
-        policies = {name: _with_built(policy, toolset, vocabulary) for name, policy in self.by_agent.items()}
-        return ApprovalPolicies(by_agent=policies, default=_with_built(self.default, toolset, vocabulary))
+        policies = {name: _with_built(policy, toolset, tool_names) for name, policy in self.by_agent.items()}
+        return ApprovalPolicies(by_agent=policies, default=_with_built(self.default, toolset, tool_names))
 
 
-def _with_built(policy: ApprovalPolicy, toolset: str, vocabulary: dict[str, set[str]]) -> ApprovalPolicy:
-    resolved = {"confirm": set(policy.confirm), "review": set(policy.review)}
-    waiting = {"confirm": set(policy.pending_confirm), "review": set(policy.pending_review)}
-    for key in ("confirm", "review"):
-        for entry in sorted(waiting[key]):
-            if entry.split(".")[0] != toolset:
-                continue
-            names, fault = _resolve_gate_entry(entry, vocabulary, {})
-            if fault:
-                raise ConfigError(
-                    f"{policy.source}.{key} names {entry!r}, but the {toolset!r} toolset, now built, "
-                    f"provides no such tool. Fix the entry; until then {toolset!r} cannot be loaded. {fault}."
-                )
-            resolved[key] |= names
-            waiting[key].discard(entry)
-    _refuse_overlap(policy.source, resolved["confirm"] & resolved["review"])
+def _with_built(policy: ApprovalPolicy, toolset: str, tool_names: frozenset[str]) -> ApprovalPolicy:
+    confirm, pending_confirm = resolve_built_entries(
+        policy.confirm_entries, policy.pending_confirm, toolset, tool_names, setting=f"{policy.source}.confirm"
+    )
+    review, pending_review = resolve_built_entries(
+        policy.review_entries, policy.pending_review, toolset, tool_names, setting=f"{policy.source}.review"
+    )
+    confirm |= policy.confirm
+    review |= policy.review
+    _refuse_overlap(policy.source, confirm & review)
     return dataclasses.replace(
         policy,
-        confirm=frozenset(resolved["confirm"]),
-        review=frozenset(resolved["review"]),
-        pending_confirm=frozenset(waiting["confirm"]),
-        pending_review=frozenset(waiting["review"]),
+        confirm=frozenset(confirm),
+        review=frozenset(review),
+        pending_confirm=frozenset(pending_confirm),
+        pending_review=frozenset(pending_review),
     )
 
 
@@ -145,7 +152,7 @@ def _vocabulary_for(
     The entry agent also reaches every skill's toolset, because its ``SkillAgent`` holds every skill
     whether or not it declares one.
     """
-    reachable = set(config.agents[name].available) | {RESERVED_GATE_NAMESPACE}
+    reachable = set(available_for(config, state.registry, name)) | {RESERVED_GATE_NAMESPACE}
     if name == config.entry_agent:
         reachable |= {skill.name for skill in state.skill_manager.skills.values()}
     return {toolset: tools for toolset, tools in full.items() if toolset in reachable}
@@ -199,6 +206,8 @@ def _resolve_pair(
         review=resolved["review"],
         pending_confirm=pending["confirm"],
         pending_review=pending["review"],
+        confirm_entries=frozenset(confirm),
+        review_entries=frozenset(review),
     )
 
 
@@ -210,7 +219,7 @@ def resolve_approval_policies(config: AssistantConfig, state: LiveState, entry_a
     the agent does not hold.
     """
     full = gateable_tools(state, entry_agent)
-    any_deferred = {toolset for name in config.agents for toolset in config.deferred_for(name)}
+    any_deferred = {toolset for name in config.agents for toolset in deferred_for(config, state.registry, name)}
     default = _resolve_pair(
         DEFAULT_POLICY, DEFAULT_POLICY, config.default_confirm, config.default_review, full, full, state, any_deferred
     )
@@ -221,6 +230,6 @@ def resolve_approval_policies(config: AssistantConfig, state: LiveState, entry_a
         confirm, review, source = config.approval_entries_for(name)
         vocabulary = _vocabulary_for(name, config, state, full)
         by_agent[name] = _resolve_pair(
-            name, source, confirm, review, vocabulary, full, state, set(config.deferred_for(name))
+            name, source, confirm, review, vocabulary, full, state, set(deferred_for(config, state.registry, name))
         )
     return ApprovalPolicies(by_agent=by_agent, default=default)

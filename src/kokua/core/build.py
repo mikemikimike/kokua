@@ -122,13 +122,13 @@ def entry_agent_system_message(config: AssistantConfig, state: LiveState) -> str
     drifting apart.
     """
     name = config.entry_agent
-    from kokua.core.agents import split_by_residency, without_skill_names
+    from kokua.core.agents import available_for, split_by_residency, without_skill_names
 
     # Skills are held back exactly as `wire_agent` holds them back: the entry agent is a SkillAgent, which
     # already advertises them, so naming them here would offer to load what is not a toolset to load.
-    resolvable = without_skill_names(config.agents[name].available, state.registry)
+    resolvable = without_skill_names(available_for(config, state.registry, name), state.registry)
     toolsets = select(resolvable, state.registry, agent=name, entry_point=name)
-    resident, deferred = split_by_residency(config, name, toolsets)
+    resident, deferred = split_by_residency(config, state.registry, name, toolsets)
     return resolve_system_message(config, name, resident, deferred)
 
 
@@ -185,11 +185,11 @@ def wire_agent(
     """
     # Imported here, not at module level: see the comment in resolve_system_message -- the same cycle
     # runs through kokua.core.agents.
-    from kokua.core.agents import split_by_residency, without_skill_names
+    from kokua.core.agents import available_for, split_by_residency, without_skill_names
 
-    resolvable = without_skill_names(config.agents[agent_name].available, state.registry)
+    resolvable = without_skill_names(available_for(config, state.registry, agent_name), state.registry)
     toolsets = select(resolvable, state.registry, agent=agent_name, entry_point=config.entry_agent)
-    resident, deferred = split_by_residency(config, agent_name, toolsets)
+    resident, deferred = split_by_residency(config, state.registry, agent_name, toolsets)
     resolved_client = client
     if resolved_client is None:
         resolved_client = build_model_client(
@@ -415,6 +415,7 @@ def make_agent_builder(
     # toolsets.agents, so that import would be circular), and every agent this builder produces must
     # share the one callback.
     state.refresh_workers = lambda agent: rebuild_delegation_tool(agent, state)
+    state.refresh_skills = lambda *, tools_changed: refresh_skills(state, tools_changed=tools_changed)
 
     def build(conversation_id: str) -> aio.SkillAgent:
         session = store.get(conversation_id)
@@ -433,13 +434,58 @@ def rebuild_delegation_tool(agent: aio.SkillAgent, state: LiveState) -> None:
     """Replace an agent's delegate with one built from the CURRENT connections.
 
     A worker's toolset is snapshotted when the delegate is built, so a runtime MCP add or remove has to
-    rebuild it for the change to reach that worker.
+    rebuild it for the change to reach that worker. The new delegate is built before the old one is
+    removed, so a build that raises leaves the agent delegating as it did rather than not at all.
     """
     # Imported here, not at module level: see the comment in resolve_system_message -- the same cycle
     # runs through kokua.core.agents.
     from kokua.core.agents import make_delegation_tool
 
-    agent.tools[:] = [t for t in agent.tools if getattr(t, "__name__", None) != SPAWN_SUBAGENT_TOOL_NAME]
     tool = make_delegation_tool(agent, state.config, state)
+    agent.tools[:] = [t for t in agent.tools if getattr(t, "__name__", None) != SPAWN_SUBAGENT_TOOL_NAME]
     if tool is not None:
         agent.tools.append(tool)
+
+
+def refresh_skills(state: LiveState, *, tools_changed: bool) -> None:
+    """Bring the skills on disk into the registry, so a skill written mid-session reaches its next readers.
+
+    Who that reaches follows from who reads the registry when. An ``"all"`` worker's spec is resolved when
+    its delegator's ``spawn_subagent`` is built, so every live agent's delegate is rebuilt here and the new
+    skill arrives on that worker's next spawn. ``compose_subagent`` and ``list_capabilities`` read the
+    registry on every call, so they see it on their next call with nothing rebuilt. A worker declaring a
+    list is unchanged, since a list names its skills; the one thing it does pick up is new scripts on a
+    skill it already names, because ``skill_tools`` is rebuilt for everyone. A conversation whose agent
+    is not built yet reads the new registry when it is.
+
+    ``tools_changed`` says whether the write could change which tools a skill offers (a new skill, a new
+    script). Only then is ``skill_tools`` rebuilt, since each rebuild retires a skills server that stays
+    open until the process ends; a prose edit changes descriptions and guidance, which live in the registry.
+    Only then, too, is each skill's tool list reported to ``state.toolset_built`` as a build, so approval
+    entries naming a skill grow to its new scripts before a single delegate is rebuilt.
+
+    A collision (a skill on disk claiming another toolset's name) raises ``ToolsetError`` before anything
+    is swapped, so the previous registry stays in force. An approval hook refusing a skill's new tools
+    raises ``ConfigError`` before any delegate is rebuilt, so no worker spec is handed them.
+    """
+    # Imported here, not at module level: see the comment in resolve_system_message -- the same cycle
+    # runs through kokua.core.agents.
+    from kokua.core.agents import skill_toolsets, with_skill_toolsets
+
+    registry = with_skill_toolsets(state.registry, skill_toolsets(state.config))
+    # A plain assignment, with no lock, and safe beside readers already running. The only builds off the
+    # event loop thread are deferred groups loading in a worker thread, and each holds the `Toolset` it
+    # was wired with rather than looking its name up again. Everything that does look names up (a spec
+    # build, a compose, a catalogue listing) is synchronous on the event loop, as this function is, so it
+    # runs wholly before or wholly after this line and sees one registry, old or new, never a mixture.
+    state.registry = registry
+    if tools_changed:
+        state.refresh_skill_tools()
+        # Reported as builds before any delegate is rebuilt, because a rebuilt delegate hands workers the
+        # new scripts and the entry agent's SkillAgent already holds them: a gate naming a skill has to
+        # cover a new script before anything can call it (see kokua.core.approval).
+        if state.toolset_built is not None:
+            for skill in state.all_skills.skills.values():
+                state.toolset_built(skill.name, frozenset(skill.script_tool_names()))
+    if state.for_each_agent is not None and state.refresh_workers is not None:
+        state.for_each_agent(state.refresh_workers)

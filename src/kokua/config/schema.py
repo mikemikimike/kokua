@@ -41,6 +41,37 @@ DEFAULT_LOCKED_CONFIG_KEYS: tuple[str, ...] = (
 )
 
 
+class AllToolsets:
+    """The declaration ``available = "all"``: every installed toolset, which config cannot enumerate.
+
+    ``config/`` is the bottom layer and cannot see the toolset registry, so it keeps the declaration
+    as this sentinel and leaves expansion to a caller that can. Iterating it raises rather than
+    yielding, so a reader that forgot to expand it fails loudly instead of walking the letters of
+    ``"all"`` or silently treating the agent as holding nothing. There is one instance,
+    ``ALL_TOOLSETS``, compared by identity.
+    """
+
+    def __iter__(self):
+        raise TypeError('available = "all" must be expanded with core.agents.available_for')
+
+    def __repr__(self) -> str:
+        return "all"
+
+    # Copying or pickling a config must hand back this same instance, since every reader asks
+    # `is ALL_TOOLSETS`.
+    def __copy__(self) -> AllToolsets:
+        return self
+
+    def __deepcopy__(self, memo: dict) -> AllToolsets:
+        return self
+
+    def __reduce__(self) -> str:
+        return "ALL_TOOLSETS"
+
+
+ALL_TOOLSETS = AllToolsets()
+
+
 @dataclass
 class AgentConfig:
     """One agent, declared whole in ``config.toml``.
@@ -73,11 +104,12 @@ class AgentConfig:
     model: Optional[str] = None
     thinking: Optional[Union[bool, str]] = None
     generation: dict = field(default_factory=dict)
-    available: list[str] = field(default_factory=list)
+    available: Union[list[str], AllToolsets] = field(default_factory=list)
     confirm: Optional[list[str]] = None
     review: Optional[list[str]] = None
     # The subset of `available` whose tool schemas are sent from the first turn. None means every
-    # available toolset is resident; the parser guarantees a declared list is within `available`.
+    # available toolset is resident. The parser checks a declared list against a declared `available`
+    # list; against "all", which only the registry can expand, `core.agents.validate_agents` checks it.
     resident: Optional[list[str]] = None
     delegates_to: list[str] = field(default_factory=list)
     # This agent's tool-loop cap, overriding [assistant].max_iterations for it alone (see
@@ -139,7 +171,8 @@ class MCPServerConfig:
     """A remote MCP server to connect at startup.
 
     ``name`` is how the server enters the toolset namespace, so an agent declares it exactly as it
-    declares any other capability. It is required: a server no agent can name reaches no agent.
+    declares any other capability. It is required: a server no agent can name reaches no agent, not even
+    one declaring ``available = "all"``, which holds every server registered by name at startup.
 
     ``token_env`` names an environment variable holding a bearer token, resolved at connect time so
     the secret stays out of the config file. It is unset for an unauthenticated server, or one using
@@ -385,28 +418,6 @@ class AssistantConfig:
         if agent is not None and agent.confirm is not None and agent.review is not None:
             return agent.confirm, agent.review, f"[agents.{agent_name}.tools]"
         return self.default_confirm, self.default_review, DEFAULT_POLICY_SOURCE
-
-    def resident_for(self, agent_name: str) -> list[str]:
-        """The toolsets ``agent_name`` holds from its first turn: its declared ``resident`` list, else all
-        of ``available``.
-
-        Always in ``available`` order, by filtering ``available`` rather than returning the declared list,
-        so the order a user wrote ``resident`` in never changes the order tools are presented in.
-        """
-        agent = self.agents.get(agent_name)
-        if agent is None:
-            return []
-        if agent.resident is None:
-            return list(agent.available)
-        return [entry for entry in agent.available if entry in agent.resident]
-
-    def deferred_for(self, agent_name: str) -> list[str]:
-        """The toolsets ``agent_name`` can load but does not hold yet: ``available`` minus resident, in order."""
-        agent = self.agents.get(agent_name)
-        if agent is None:
-            return []
-        resident = set(self.resident_for(agent_name))
-        return [entry for entry in agent.available if entry not in resident]
 
     def generation_for(self, agent_name: str) -> dict:
         """The generation parameters ``agent_name`` runs with: ``[assistant.generation]``, per-key

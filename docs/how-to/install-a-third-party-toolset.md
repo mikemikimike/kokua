@@ -9,7 +9,8 @@ four steps apply to any third-party toolset, and jobme is simply carried through
 example.
 
 > A toolset that is installed, even one that is connected or running, does nothing until an
-> `[agents.<name>.tools].available` list names it. Installing it is never the last step.
+> `[agents.<name>.tools].available` list names it, or an agent declares `available = "all"` (from the
+> next start). Installing it is never the last step.
 
 ## What Kokua sees when you install one
 

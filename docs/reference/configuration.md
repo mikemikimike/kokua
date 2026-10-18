@@ -8,8 +8,8 @@ from its name.
 Two rules run through the whole file and explain most of what follows:
 
 - **A capability is declared, never defaulted.** An agent holds exactly the toolsets its
-  `[agents.<name>.tools].available` list names. No code path adds one it did not name, and no flag can
-  disagree with the declaration. See [set up a toolset](../how-to/set-up-toolsets.md).
+  `[agents.<name>.tools].available` list names, or every installed toolset when it declares `"all"`. No
+  code path adds one it did not declare, and no flag can disagree with the declaration. See [set up a toolset](../how-to/set-up-toolsets.md).
 - **`config.toml` is the single source of settings, and the app writes it too.** There is no second
   store, no dotfile, no database. The assistant's own `update_config` tool and the runtime
   `add_mcp_server` tool write back to this file, preserving your comments, which is why
@@ -741,7 +741,6 @@ longer leash, declare it on that worker.
 
 ```toml
 [agents.researcher]
-tools = ["web", "misc", "time"]
 max_iterations = 25    # a search-heavy worker: every round spends a tool call
 ```
 
@@ -766,8 +765,8 @@ resident = ["memory", "config", "conversations", "planning", "capabilities", "ti
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `available` | list of strings | yes | **this agent's capability**, named from the one toolset namespace |
-| `resident` | list of strings | no | the part of `available` in the agent's context from its first turn; the rest loads on demand. Unset: all of it |
+| `available` | list of strings, or `"all"` | yes | **this agent's capability**, named from the one toolset namespace |
+| `resident` | list of strings | no (yes with `"all"`) | the part of `available` in the agent's context from its first turn; the rest loads on demand. Unset: all of it |
 | `confirm` | list of strings | no | calls that ask you; see [`[assistant.tools]`](#assistanttools) for the vocabulary |
 | `review` | list of strings | no | calls that ask a reviewer first, then you |
 
@@ -776,14 +775,16 @@ resident = ["memory", "config", "conversations", "planning", "capabilities", "ti
 An agent's `available` list *is* its capability. Nothing is added in code, so a toolset you delete from a
 list is gone, and one you add is there on the next start. Whether a toolset's tools are in the agent's
 context from its first turn or loaded when the model asks for them is [`resident`](#resident), a separate
-key; either way the toolset is the agent's to call. `available = "all"` is not built yet, so the list is
-always written out.
+key; either way the toolset is the agent's to call. The one alternative to writing the list out is
+[`"all"`](#available-all), below.
 
 There is one namespace for every capability, so a name may be an AIMU built-in tool group (`web`, `fs`,
 `fs_write`, `compute`, `time`, `misc`, `audio`, `speech`, `transcription`), one of Kokua's own (`memory`,
 `documents`, `skills`, `capabilities`, `config`, `conversations`, `mcp`, `messaging`, `planning`,
 `scheduling`),
-an installed plugin toolset (`aimu_agents`, `benchmark`, `github_backup`, `image`), a skill in your skills folder
+one of Kokua's optional toolsets (`aimu_agents`, `benchmark`, `github_backup`, `image`, which
+`--list-toolsets` groups with the rest of Kokua's as built-in toolsets), a third-party plugin toolset, a
+skill in your skills folder
 named by its own name, or an MCP server configured under `[[mcp.server]]`, named by its `name`. The list
 does not say which kind a name is. Run `kokua --list-toolsets` for every name this install accepts,
 grouped by what provides it, and `kokua agents` for what each declared agent holds.
@@ -791,12 +792,47 @@ grouped by what provides it, and `kokua agents` for what each declared agent hol
 An unknown name is a startup error listing the valid ones, so a typo can never quietly leave an agent
 with a smaller toolset than you wrote. Nothing is implicit, including the clock: `time` is added to no
 agent in code, which is why every shipped agent lists it. An installed plugin toolset and a configured
-MCP server likewise do nothing until some agent names them, and nothing warns about one that nothing
-names. The one warning is narrower: a toolset whose own `[<name>]` section you wrote, with no agent
-declaring the toolset, gets a line in the log at startup, since those settings are read by nobody.
+MCP server likewise do nothing until some agent names them (or declares `"all"`), and nothing warns
+about one that nothing names. The one warning is narrower: a toolset whose own `[<name>]` section you
+wrote, with no agent declaring the toolset (an `"all"` agent declares every one), gets a line in the log
+at startup, since those settings are read by nobody.
 
 The full inventory of what each toolset contains is in [set up a
 toolset](../how-to/set-up-toolsets.md#one-namespace).
+
+### `available = "all"`
+
+The string `"all"` in place of the list: every toolset this install registers. Why it is still a
+declaration, and what it costs, is [Tool
+access](../explanation/tool-access.md#available-all-every-installed-toolset-still-declared).
+
+```toml
+[agents.researcher.tools]
+available = "all"
+resident = ["web", "misc", "time", "messaging"]
+```
+
+- **It expands in trust order:** Kokua's own toolsets, then third-party plugins, then skills, then MCP
+  servers, each kind in the order it registered. Where two resident toolsets offer one tool name, the
+  earlier one's is kept, and for an agent startup builds (the entry agent and every worker it reaches by
+  `delegates_to`) startup raises an alert naming both. A deferred toolset loaded later keeps whichever
+  tool the agent already holds, and the load result names the one it skipped and its holder: a group's
+  name when the holder was itself loaded, `a tool given to this agent directly` when it is resident.
+- **It leaves out `skills` on any agent but the entry agent,** since a spawned worker cannot host it,
+  and it never covers the `core` tools: `spawn_subagent` is still earned by `delegates_to`.
+- **`resident` is required,** and each entry must be within the expansion: an entry nothing installs, or
+  `skills` on a worker, is a startup error saying which.
+- **Write it exactly.** `["all"]`, `"All"`, and `"all"` in any casing inside a list fail startup with the fix, and
+  `all` is a reserved toolset name, so no toolset can take it. `update_config` writes the same string
+  when `[agents.*]` is unlocked, and refuses the same near misses.
+- **Skills written mid-session reach it; servers wait for a restart.** A skill written with
+  `author_skill`, `add_skill_script`, or `update_skill` reaches an `"all"` worker on its next spawn. An
+  MCP server added with `add_mcp_server` reaches it after the next restart if the server was written to
+  this file, and never if it was added with a bearer token.
+
+`kokua agents` prints the expansion with its count (`available: all (22): aimu_agents, audio, ...`), and
+the startup summary reads `researcher: all (22) available, 4 resident, ...`. The shipped config keeps
+every agent on a list and carries `# available = "all"` as a commented line in `[agents.assistant.tools]`.
 
 ### `resident`
 
@@ -809,7 +845,7 @@ every available toolset is resident. Why the axis exists, and what a load costs 
 
 - **Every entry must be in `available`.** One that is not is a startup error, and `update_config` refuses
   the same write (and an `available` write that would strand a resident entry) when `[agents.*]` is
-  unlocked. Order does not matter: tools are presented in `available` order.
+  unlocked. Order does not matter: tools are presented in `available` order (trust order, for `"all"`).
 - **An empty list is legal** and defers everything `available` names.
 - **A skill name on the entry agent is unaffected.** The entry agent is a `SkillAgent`, which advertises
   every skill in its catalogue whatever this list says, so a skill there is never deferred. A skill
@@ -955,7 +991,8 @@ Remote MCP servers to connect at startup. An array of tables: one `[[mcp.server]
 | `token_env` | no | environment variable holding a bearer token, read at startup |
 | `description` | no | one line saying what the server's tools do |
 
-`name` is what an agent lists in its `available`, so a server no agent can name reaches no agent. Omit
+`name` is what an agent lists in its `available`, so a server no agent names (and no agent declaring
+`"all"` holds) reaches no agent. Omit
 `token_env` for an unauthenticated server, or one using the OAuth flow, which triggers automatically on
 an auth challenge. The token stays in the environment, never in this file.
 
@@ -978,10 +1015,12 @@ description = "Stock quotes and fundamentals, and placing trades."
 ```
 
 Servers added at runtime with the `add_mcp_server` tool are appended here automatically, with a `name`
-derived from the host and a numeric suffix if that name is taken, so the file always loads. That name
-reaches no agent until you add it to an `available` list **and restart**, since the toolset namespace and the
-agent tables are both read only at startup. See [add an MCP
-service](../how-to/add-mcp-services.md).
+derived from the host and a numeric suffix if that name is taken, so the file always loads. Nothing can
+use that server in the session that added it, since the toolset namespace and the agent tables are both
+read only at startup. **After a restart** it reaches every agent declaring `available = "all"`, and any
+other agent once you add its name to that agent's `available` list. A server added with a bearer token is
+not appended (its token is never written to disk), so it lasts the session and nothing can name it. See
+[add an MCP service](../how-to/add-mcp-services.md).
 
 ### The OAuth callback
 

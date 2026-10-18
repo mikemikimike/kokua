@@ -709,7 +709,8 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer
   `skills`, `mcp`, `scheduling`, and `benchmark` on demand. Measured as the JSON of every tool spec it is
   sent, its tool block falls from 30,560 bytes (all 37 tools) to 16,244 bytes (nineteen: seventeen
   resident plus the two loaders), 46.8% smaller on every round that loads nothing; a turn that needs a
-  deferred toolset pays one round to load it. `available = "all"` is not built yet. See
+  deferred toolset pays one round to load it. `available = "all"` (below) is the one declaration that
+  requires a `resident` list. See
   [Tool access](https://saxman.info/kokua/explanation/tool-access/#residency-what-is-in-context-and-what-loads-on-demand).
 - **A load pays for the build, and checks approval, when it happens.** A deferred toolset is built when
   it is loaded, through the same `build_tools` call a resident one gets, so a failure surfaces at load:
@@ -763,6 +764,57 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer
 - **The AIMU floor is 0.37.0**, for the spawn spec's `"tool_approval"` key and for `ToolGroup`, which
   residency rides. See the floor history under
   "Diagnostics and error reporting" below.
+- **`available = "all"`: every installed toolset, still a declaration.** An agent's
+  `[agents.<name>.tools].available` takes the string `"all"` in place of a list. It expands, wherever
+  availability is read (`core/agents.py`'s `available_for`), to every registered toolset in trust order:
+  Kokua's own, then third-party plugins, then skills, then MCP servers, registration order kept within
+  each, so where toolsets built together offer one tool name a remote server's never shadows one Kokua
+  ships. It leaves out `entry_point_only` toolsets (`skills`) on any agent but the entry agent, never
+  covers the `core` tools (`spawn_subagent` is still earned by `delegates_to`), and requires a `resident`
+  list, each entry within the expansion; an entry nothing installs, or `skills` on a worker, fails startup
+  saying which. `["all"]`, `"All"`, and `"all"` in any casing inside a list fail startup with the fix, `all`
+  is a reserved toolset name, and `update_config` writes the string (with `[agents.*]` unlocked) and refuses
+  the same near misses. **Upgrading:** an existing skill, plugin, or MCP server named `all` now fails
+  startup, since the name is reserved; rename it. `kokua agents` prints `available: all (N): ...` and the startup summary
+  `name: all (N) available, ...`. The shipped config keeps every agent on a list, with a commented
+  `# available = "all"` line in `[agents.assistant.tools]`. See
+  [Tool access](https://saxman.info/kokua/explanation/tool-access/#available-all-every-installed-toolset-still-declared).
+- **A shadowed resident tool raises an alert at startup.** `build_tools` keeps the first of two
+  same-named tools among toolsets built together and used to say nothing of the other. Once every startup
+  build is done, each declared agent's resident toolsets are checked, and each hidden tool raises
+  `{agent}: {tool} from {shadowed!r} is shadowed by {kept!r} (the earlier resident toolset keeps the
+  name).` "Earlier" is the agent's declared order for a list and trust order for `"all"`. The shared
+  `activate_skill` every skill carries is not counted, since a second skill offering it hides nothing.
+  Startup builds the entry agent and every worker reachable from it by `delegates_to`, so an agent is skipped,
+  and logged at INFO rather than reported as clean, when any of its resident toolsets was built by no
+  agent. A deferred toolset loaded later keeps whichever tool arrived first, and AIMU's load result names
+  the skipped tool and its holder (a group only when the holder was loaded; a resident holder reads
+  `a tool given to this agent directly`).
+- **A skill written mid-session reaches workers.** After each `author_skill`, `add_skill_script`, or
+  `update_skill`, the registry's skill toolsets are rescanned from disk (every other entry kept as startup
+  registered it) and every live agent's `spawn_subagent` is rebuilt, so the skill reaches an
+  `available = "all"` worker on its next spawn and `compose_subagent` on its next call. The entry agent
+  still gets it immediately through its `SkillAgent`. A worker declaring a list gains no new skill, but a
+  skill it already names reaches its next spawn as now written, new scripts included. A gate naming the
+  skill covers those new scripts: every build re-matches each `confirm`, `review`, and
+  `[security].never_auto_approve` entry naming its toolset, adding names and never removing one, and a
+  script write reports each skill's tools as a build before any delegate is rebuilt, so
+  `review = ["weekly-digest"]` holds back a script added mid-session for every agent, the entry agent
+  included. A refresh that fails for any reason is reported in the tool's result, after the write,
+  rather than raised. MCP servers added at
+  runtime still wait for a restart: a new server is a new trust path, a remote host's tools arriving after
+  a person approved only its URL, where a skill's prose and its approved scripts are not. `author_skill`
+  and `add_skill_script` both rebuild the skill tools workers use, retiring the previous skills MCP server
+  rather than closing it, since a worker spawned before may still be calling it; `update_skill` changes no
+  tools and so retires nothing.
+- **`author_skill` refuses a name already taken, before writing anything.** A toolset's name, an MCP
+  server's `name` on file in `config.toml` (including one `add_mcp_server` wrote this session, which the
+  running registry has not seen), `core`, and `all` are refused with a sentence the model can act on.
+  Before, a skill named `web` was written and then stopped the next start as a registry collision. A
+  collision the check cannot see (a skill directory made by hand) comes back with the tool's result.
+- **Composition guidance gives two reasons to compose.** `CAPABILITIES_GUIDANCE` and `list_capabilities`
+  now say to compose a sub-agent when a task needs a capability you do not hold, or when its tool output
+  would flood your context. On an `available = "all"` agent only the second applies.
 
 - **An individual skill is a name in the same namespace as everything else.** A `[agents.*]` table lists
   `"citation-check"` beside `"web"` and `"stocks"` without saying which kind each is, and `--list-toolsets`
@@ -1778,9 +1830,12 @@ alone. The case that does cost something is a configured MCP server, which conne
   runtime `add_mcp_server`, and the startup `--mcp <url>` flag, both derive a name from the server's host
   and disambiguate it (shared logic) against every other name already claimed -- on file for
   `add_mcp_server`, across the flag's own URLs for `--mcp` -- so neither can produce a config, or a set of
-  servers in one run, the registry's collision check would reject. That derived name still reaches no
-  agent until a human puts it in an `[agents.*]` table, since that section is locked by default: neither
-  can grant itself the capability.
+  servers in one run, the registry's collision check would reject. That derived name reaches no agent in
+  the session that added it, since servers are not re-read mid-session; after a restart it reaches an
+  agent declaring `available = "all"`, and any other only once a human puts it in an `[agents.*]` table,
+  which is locked by default: neither can grant itself the capability. A bearer-token server added at
+  runtime is not written to the file, so `add_mcp_server`'s result now says nothing can use it and its
+  token is not saved, and names the `[[mcp.server]]` entry with `token_env` that would keep it.
 - **Per-server bearer tokens via environment variables.** Each `[[mcp.server]]` takes a required `url`, a
   required `name`, and an optional `token_env` naming the variable holding that server's token, read
   at startup so the secret stays out of `config.toml`. A `token_env` whose variable is unset logs a

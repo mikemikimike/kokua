@@ -181,6 +181,11 @@ def test_register_refuses_a_toolset_claiming_the_reserved_gate_namespace():
     assert "core" in str(error.value)
 
 
+def test_a_toolset_named_all_is_refused_at_registration():
+    with pytest.raises(ToolsetError, match="'all'.*reserved"):
+        register([("plugin", [Toolset(name="all", description="x", build=lambda ctx: [])])])
+
+
 def test_plugins_module_reexports_the_public_contract():
     from kokua import plugins
 

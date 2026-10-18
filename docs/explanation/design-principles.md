@@ -93,11 +93,21 @@ toolset contributes tools and settings rather than a fork in the gate every tool
 
 ### Corollary: a capability is declared, never defaulted
 
-**Availability is declared, never defaulted.** An agent's capability is exactly what its
-`[agents.<name>.tools].available` list declares. **No code path adds a tool an agent did not name, and no
-flag can disagree with a declaration.** Availability is one of three questions Kokua keeps apart (see
-[Tool access](tool-access.md)), and it is the only one with this rule: what an agent *may call* is never
-inferred, while what asks first is an inherited default an agent may override whole.
+**Availability is declared, never defaulted; `"all"` is one value a declaration can take.** An agent's
+capability is exactly what its `[agents.<name>.tools].available` key declares: a list of toolset names,
+or the string `"all"` for every installed toolset. **No code path adds a tool an agent did not declare,
+and no flag can disagree with a declaration.** Availability is one of three questions Kokua keeps apart
+(see [Tool access](tool-access.md)), and it is the only one with this rule: what an agent *may call* is
+never inferred, while what asks first is an inherited default an agent may override whole.
+
+`"all"` is not an exception to the rule, and the difference is worth stating. A default is what an agent
+gets because nobody wrote anything; `"all"` is written, by a person, in the agent's own table, which is
+locked against the assistant's `update_config` by default. What it changes is how that one agent fails
+on growth: a plugin you install or a skill the assistant writes reaches it, because you said so, while
+every agent with a list still grows only by an edit. It also cannot reach past what a declaration
+reaches anyway: not the `core` tools, not `skills` on a worker, and not an MCP server added at runtime
+until a restart (see [Tool
+access](tool-access.md#available-all-every-installed-toolset-still-declared)).
 
 *How this cashes out:* `[assistant].memory` and the `--memory` / `--tools` flags were removed rather
 than kept alongside the `memory` and `documents` toolsets, because a second switch for one capability

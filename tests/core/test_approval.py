@@ -837,6 +837,37 @@ async def test_a_worker_deferring_a_skill_the_entry_agent_holds_does_not_park_it
         assistant._state.close()
 
 
+async def test_approval_entries_resolve_against_the_expansion(tmp_path):
+    """An "all" worker reaches every toolset it could load, so its own entry on a deferred one is
+    pending rather than refused as out of reach, and resolves when the worker builds it."""
+    from kokua.config.schema import ALL_TOOLSETS
+    from kokua.registry.context import ToolsetContext
+    from kokua.registry.registry import build_tools
+
+    agents = {
+        "assistant": AgentConfig(available=["time"], delegates_to=["explorer"]),
+        "explorer": AgentConfig(
+            description="Explores.",
+            available=ALL_TOOLSETS,
+            resident=["time"],
+            confirm=["compute.run_command"],
+            review=[],
+        ),
+    }
+    config = _config(tmp_path, agents=agents, default_confirm=[], default_review=[])
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        await assistant.start()
+        state = assistant._state
+        assert assistant._human.policies.by_agent["explorer"].pending_confirm == {"compute.run_command"}
+        build_tools([state.registry["compute"]], ToolsetContext(state=state, agent=None, agent_name="explorer"))
+        explorer = assistant._human.policies.by_agent["explorer"]
+        assert explorer.pending_confirm == frozenset()
+        assert explorer.confirm == {"run_command"}
+    finally:
+        assistant._state.close()
+
+
 async def test_a_workers_own_pair_on_a_skill_it_defers_waits_for_its_build(tmp_path):
     """Nothing holds the skill at startup here (the entry agent neither names it nor authors skills), so
     the worker's own entry waits, and resolves when the worker's build of the skill reports its tools."""
@@ -1179,6 +1210,99 @@ def test_a_refused_build_names_the_resolvers_reason(tmp_path):
         policies.with_built("mcp", frozenset({"add_mcp_server"}))
 
 
+# A build re-resolves every entry naming its toolset, not only the pending ones: a toolset can offer more
+# tools than it did when an entry first resolved (a skill gains a script mid-session), and an entry naming
+# the whole toolset has to cover what it offers now.
+
+
+def test_a_later_build_grows_a_resolved_whole_toolset_entry(tmp_path):
+    _, _, policies = _deferred_setup(tmp_path, default_review=["memory"])
+    assert policies.default.review == frozenset({"remember"})
+    updated = policies.with_built("memory", frozenset({"remember", "recall"}))
+    assert updated.default.review == frozenset({"remember", "recall"})
+
+
+def test_a_resolved_tool_entry_missing_from_a_later_build_neither_refuses_nor_shrinks(tmp_path):
+    """Its earlier build already proved it names a real tool, and a gate never loses a name it holds."""
+    _, _, policies = _deferred_setup(tmp_path, default_confirm=["memory.remember"])
+    updated = policies.with_built("memory", frozenset({"recall"}))
+    assert updated.default.confirm == frozenset({"remember"})
+
+
+def test_a_build_never_gates_activate_skill_through_a_toolset_entry(tmp_path):
+    """``activate_skill`` arrives in every skill's build, and gating one skill must not gate them all."""
+    _, _, policies = _deferred_setup(tmp_path, default_review=["memory"])
+    updated = policies.with_built("memory", frozenset({"activate_skill", "remember"}))
+    assert "activate_skill" not in updated.default.review
+
+
+def _second_script_agents(available, resident=None, **pair) -> dict:
+    return {
+        "assistant": AgentConfig(available=["skills", "time"], delegates_to=["explorer"]),
+        "explorer": AgentConfig(description="Explores.", available=available, resident=resident, **pair),
+    }
+
+
+async def _add_second_script(assistant) -> None:
+    add_skill_script = next(fn for fn in assistant._agent.tools if fn.__name__ == "add_skill_script")
+    result = await add_skill_script(skill_name="weekly-digest", filename="second.py", content="print('b')\n")
+    assert "is now callable" in result
+
+
+async def _gated_unattended(assistant, agent: str, tool: str) -> bool:
+    """Whether ``agent`` calling ``tool`` is gated: an unattended turn denies a gated call and runs any other."""
+    from kokua.channels.web import proactive_turn
+
+    token = proactive_turn.set(True)
+    try:
+        return await assistant._human.approve(agent, tool, {}) is False
+    finally:
+        proactive_turn.reset(token)
+
+
+@pytest.mark.parametrize("declaration", ["list", "all"])
+async def test_a_bare_skill_entry_gates_a_script_added_mid_session_for_a_worker(tmp_path, declaration):
+    """The worker receives the new script on its next spawn, so the gate on the skill has to cover it by
+    then. The list worker inherits the default tier; the "all" worker declares its own pair."""
+    from kokua.config.schema import ALL_TOOLSETS
+
+    if declaration == "list":
+        agents = _second_script_agents(["time", "weekly-digest"])
+    else:
+        agents = _second_script_agents(ALL_TOOLSETS, ["time", "weekly-digest"], confirm=[], review=["weekly-digest"])
+    config = _config(
+        tmp_path, agents=agents, default_confirm=["skills.add_skill_script"], default_review=["weekly-digest"]
+    )
+    _write_skill(config)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        await assistant.start()
+        await _add_second_script(assistant)
+        review = assistant._human.policies.for_agent("explorer").review
+        assert {"weekly_digest__collect_notes", "weekly_digest__second"} <= review
+        assert "activate_skill" not in review
+        assert await _gated_unattended(assistant, "explorer", "weekly_digest__second")
+    finally:
+        assistant._state.close()
+
+
+async def test_a_bare_skill_entry_gates_a_script_the_entry_agent_adds_to_itself(tmp_path):
+    """No worker builds the skill here, so only the refresh itself can grow the policy, and the entry
+    agent's ``SkillAgent`` can call the new script in its very next round."""
+    agents = {"assistant": AgentConfig(available=["skills", "time"])}
+    config = _config(
+        tmp_path, agents=agents, default_confirm=["skills.add_skill_script"], default_review=["weekly-digest"]
+    )
+    _write_skill(config)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        await assistant.start()
+        await _add_second_script(assistant)
+        assert await _gated_unattended(assistant, "assistant", "weekly_digest__second")
+    finally:
+        assistant._state.close()
+
+
 def test_core_namespace_gains_the_group_tools_when_something_is_deferred(tmp_path):
     from types import SimpleNamespace
 
@@ -1246,3 +1370,110 @@ async def test_a_worker_composed_with_a_deferred_toolset_is_gated_by_the_pending
     await compose("registrar", "Add a server.", ["mcp"], "Manage servers.")
 
     assert "add_mcp_server" in assistant._human.policies.for_agent(label).confirm
+
+
+async def test_a_real_mcp_tool_shadowed_by_fs_is_reported_at_startup(tmp_path, monkeypatch):
+    """No stubs between the config and the alert: a connected server's tool names reach
+    ``tools_by_toolset`` through the startup builds, and trust order puts Kokua's own ``fs`` first."""
+    import kokua.core.agents as agents_mod
+    from aimu import aio
+    from kokua.config.schema import ALL_TOOLSETS, MCPServerConfig
+    from tests.fakes import _FakeMCP, _fake_mcp_tool
+
+    async def fake_connect(*, url=None, auth=None, **kw):
+        return _FakeMCP([_fake_mcp_tool("read_file")])
+
+    monkeypatch.setattr(aio.MCPClient, "connect", fake_connect)
+    captured: list = []
+
+    def fake_make(model, *, agent_types, tool_approval, **kwargs):
+        captured.append(agent_types)
+
+        async def spawn_subagent(agent_type: str, task: str) -> str:
+            """menu"""
+            return "ok"
+
+        spawn_subagent.__tool_is_async__ = True
+        spawn_subagent.__tool_is_streaming__ = False
+        spawn_subagent.__tool_spec__ = {"function": {"name": "spawn_subagent"}}
+        return spawn_subagent
+
+    monkeypatch.setattr(agents_mod, "make_async_subagent_tool", fake_make)
+    agents = {
+        "assistant": AgentConfig(available=["time"], delegates_to=["explorer"]),
+        "explorer": AgentConfig(description="Explores.", available=ALL_TOOLSETS, resident=["fs", "files"]),
+    }
+    config = _config(
+        tmp_path,
+        agents=agents,
+        mcp_servers=[MCPServerConfig(url="https://files.example/mcp", name="files")],
+        default_confirm=[],
+        default_review=[],
+    )
+    channel = AlertCapturingChannel()
+    assistant = await Assistant.create(config, channel, client=MockAsyncModelClient([]))
+    await assistant.start()
+
+    assert [text for text, *_ in channel.alerts] == [
+        "explorer: read_file from 'files' is shadowed by 'fs' (the earlier resident toolset keeps the name)."
+    ]
+    kept = [fn for fn in captured[-1]["explorer"]["tools"] if fn.__name__ == "read_file"]
+    assert len(kept) == 1 and kept[0].__module__ != "tests.fakes"
+    assistant._state.close()
+
+
+async def test_an_agent_whose_toolsets_were_never_built_is_skipped_not_reported(tmp_path, caplog):
+    """An agent nothing delegates to is never built at startup, so its toolsets' names are unknown and
+    "no shadows" would be a claim nobody checked."""
+    import logging
+
+    from kokua.config.schema import ALL_TOOLSETS
+
+    agents = {
+        "assistant": AgentConfig(available=["time"]),
+        "orphan": AgentConfig(description="Unreached.", available=ALL_TOOLSETS, resident=["fs", "time"]),
+    }
+    config = _config(tmp_path, agents=agents, default_confirm=[], default_review=[])
+    assistant = await Assistant.create(config, AlertCapturingChannel(), client=MockAsyncModelClient([]))
+    with caplog.at_level(logging.INFO, logger="kokua.core.agents"):
+        await assistant.start()
+    assert any("orphan" in record.getMessage() for record in caplog.records)
+    assistant._state.close()
+
+
+async def test_a_failing_shadow_alert_does_not_stop_startup(tmp_path, monkeypatch):
+    from kokua.core import agents
+    from kokua.core.agents import ShadowedTool
+
+    monkeypatch.setattr(
+        agents, "shadowed_tools", lambda config, registry, tools: [ShadowedTool("explorer", "read_file", "fs", "files")]
+    )
+    assistant = await Assistant.create(_config(tmp_path), AlertCapturingChannel(), client=MockAsyncModelClient([]))
+
+    async def broken_alert(text, **kwargs):
+        raise RuntimeError("channel went away")
+
+    armed: list[bool] = []
+    monkeypatch.setattr(assistant._ui, "alert", broken_alert)
+    monkeypatch.setattr(type(assistant._state.tasks), "arm_all", lambda self: armed.append(True))
+    await assistant.start()
+
+    assert armed == [True]
+    assistant._state.close()
+
+
+async def test_startup_notices_each_shadowed_resident_tool(tmp_path, monkeypatch):
+    from kokua.core import agents
+    from kokua.core.agents import ShadowedTool
+
+    shadow = ShadowedTool("explorer", "read_file", "fs", "files")
+    monkeypatch.setattr(agents, "shadowed_tools", lambda config, registry, tools: [shadow])
+    channel = AlertCapturingChannel()
+    assistant = await Assistant.create(_config(tmp_path), channel, client=MockAsyncModelClient([]))
+    await assistant.start()
+    await assistant.start()  # idempotent: the notice is raised once
+
+    assert [text for text, *_ in channel.alerts] == [
+        "explorer: read_file from 'files' is shadowed by 'fs' (the earlier resident toolset keeps the name)."
+    ]
+    assistant._state.close()

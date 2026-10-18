@@ -328,7 +328,7 @@ class Assistant:
         self._started = True
         self._loop = asyncio.get_running_loop()
         # Imported here, not at module level, for the cycle `create` documents above.
-        from kokua.core.agents import configured_but_undeclared
+        from kokua.core.agents import configured_but_undeclared, shadowed_tools
         from kokua.core.approval import resolve_approval_policies
 
         config, state = self._config, self._state
@@ -339,7 +339,7 @@ class Assistant:
         await reconnect_mcp_servers(
             state.for_each_agent, state.connections, config, notify=state.notify, oauth=state.oauth
         )
-        for name in configured_but_undeclared(config):
+        for name in configured_but_undeclared(config, state.registry):
             logger.warning(
                 "config.toml has a [%s] section, but no agent declares the %r toolset, so its settings are "
                 "read only if a composed worker builds it, and any command it offers does not exist. "
@@ -363,6 +363,19 @@ class Assistant:
             # never sees one assigned without the other.
             self._human.auto_approval = resolve_auto_approval(config, state, entry_agent, policies)
             self._human.policies = policies
+
+        # After every startup build, since only then does `tools_by_toolset` hold what each resident
+        # toolset offered. Once, here, because a shadow is a fact about the declaration, not about a turn.
+        # Guarded per notice, because `_started` is already set: a channel that raises here must not leave
+        # scheduled tasks unarmed with a retry of `start` a no-op. A notice is never worth that.
+        for shadow in shadowed_tools(config, state.registry, state.tools_by_toolset):
+            try:
+                await self._ui.alert(
+                    f"{shadow.agent}: {shadow.tool} from {shadow.shadowed!r} is shadowed by {shadow.kept!r} "
+                    "(the earlier resident toolset keeps the name)."
+                )
+            except Exception:
+                logger.warning("Could not raise the shadowed-tool notice for %s.", shadow, exc_info=True)
 
         state.tasks.arm_all()
 

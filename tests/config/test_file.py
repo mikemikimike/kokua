@@ -10,7 +10,7 @@ import pytest
 from kokua.config import paths
 from kokua.config import file as settings
 from kokua.config import schema
-from kokua.config.schema import AssistantConfig
+from kokua.config.schema import ALL_TOOLSETS, AssistantConfig
 from kokua.config.settings_sources import build_settings_table, startup_schema
 from kokua.cli import _init_config, build_arg_parser, resolve_config
 from tests.helpers import core_table
@@ -1250,6 +1250,27 @@ def test_resident_parses_and_must_be_within_available():
         match=r"\[agents\.assistant\.tools\]\.resident names 'compute', which is not in available",
     ):
         _load_text('[agents.assistant.tools]\navailable = ["memory"]\nresident = ["memory", "compute"]\n')
+
+
+def test_available_all_parses_to_the_sentinel():
+    agent = settings._parse_agent("explorer", {"tools": {"available": "all", "resident": ["time"]}})
+    assert agent.available is ALL_TOOLSETS and agent.resident == ["time"]
+
+
+def test_available_all_accepts_an_empty_resident_list():
+    agent = settings._parse_agent("explorer", {"tools": {"available": "all", "resident": []}})
+    assert agent.available is ALL_TOOLSETS and agent.resident == []
+
+
+def test_available_all_without_resident_is_refused():
+    with pytest.raises(settings.ConfigError, match=r'available = "all" needs a resident list'):
+        settings._parse_agent("explorer", {"tools": {"available": "all"}})
+
+
+@pytest.mark.parametrize("value", [["all"], "All", "everything", ["web", "all"], ["All"], ["web", "ALL"]])
+def test_available_near_misses_name_the_fix(value):
+    with pytest.raises(settings.ConfigError, match=r'or the string "all" \(lowercase'):
+        settings._parse_agent("explorer", {"tools": {"available": value, "resident": []}})
 
 
 def test_mcp_server_description_parses_and_must_be_a_string(tmp_path):
