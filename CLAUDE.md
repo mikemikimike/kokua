@@ -388,8 +388,12 @@ Consequences for working in this repo:
   on the 0.28.0 reasoning: that key set is closed, so an AIMU predating the key raises `ValueError` naming
   it when the factory is called, which is loud and arrives while a conversation's agent is built, where
   `run_id`'s absence is silent. One probe slot goes to the capability that fails silently. `ToolGroup`
-  also shipped in 0.37.0 and nothing calls it yet, so it is the floor's job until something uses it.
-  `tests/test_aimu_compat.py` pins both. `RunEvent.run_id` is the floor's job now, in its turn.
+  also shipped in 0.37.0, and nothing called it when the floor moved; residency now rides it
+  (`core/build.py`'s `tool_groups_for` hands every agent its toolsets as AIMU tool groups, and AIMU adds
+  `available_tools` / `load_tools` for the deferred ones). It still does not get the probe, on that same
+  0.28.0 reasoning: `core/build.py` imports `ToolGroup` at module scope, so a checkout without it raises
+  `ImportError` the moment a front end or `kokua agents` imports the core, after the preflight and before
+  any conversation exists. Loud, so the floor covers it. `tests/test_aimu_compat.py` pins both. `RunEvent.run_id` is the floor's job now, in its turn.
 - **Without `../aimu`** (CI, a fresh clone, or just running Kokua), `uv sync --no-sources` resolves AIMU
   from PyPI. Nothing in `pyproject.toml` needs editing for that any more.
 - **Both console scripts route through `kokua.cli`** so they share that preflight. `kokua-web` is
@@ -475,8 +479,13 @@ change. Full rationale, with the code that backs each claim, is in
    prompt that never comes. You may loosen as well as tighten; only the key holding the lock list is
    unconditional. **A `confirm` or `review` entry speaks the same vocabulary an agent's `available` list does:**
    `<toolset>` (or `<toolset>.*`) for a whole capability, `<toolset>.<tool>` for one of its tools, with
-   `core` reserved for the two tools no toolset provides (`spawn_subagent`, `activate_skill`) and
-   refused as a toolset name at registration so nothing can shadow it. `core/approval.py`'s
+   `core` reserved for the tools no toolset provides (`spawn_subagent`, `activate_skill`, and AIMU's
+   `available_tools` / `load_tools` once any agent defers a toolset, so a bare `core` covers all four)
+   and refused as a toolset name at registration so nothing can shadow it. An entry naming a toolset an
+   agent defers cannot resolve at startup, since its tools do not exist yet: startup checks its shape,
+   and the build hook (`LiveState.toolset_built`, called by `build_tools` before it returns any tool)
+   resolves it on whichever build comes first, refusing every build of that toolset while the entry
+   matches nothing, so a misnamed gate fails closed. `core/approval.py`'s
    `resolve_approval_policies` turns those entries into one policy per agent, and the gate is bound
    to each agent's own name (a delegated worker's through the spawn spec's `"tool_approval"` key, a
    composed worker as `composed:<label>` on the default tier), so `HumanGate.approve` matches the calling
@@ -615,10 +624,12 @@ and does so inside the function that needs it rather than at module scope, becau
 imports `settings_sources` at module level to build its cold-key schema -- hoisting the upward import
 would close that loop and break `import kokua.toolsets.core` on a partially-initialized module.
 
-Note the convention is only part of the answer: fourteen of the 37 tools the shipped entry agent holds
-come from AIMU and are not in this repo at all, which is why
+Note the convention is only part of the answer: fourteen of the 37 tools the shipped entry agent can
+reach come from AIMU and are not in this repo at all, and so do the `available_tools` / `load_tools` pair
+it holds because its `resident` list defers five of its toolsets. That is why
 [docs/explanation/architecture.md](docs/explanation/architecture.md#how-an-agents-tools-resolve) carries
-the full inventory and `tests/core/test_build.py` pins it as an exact set. That inventory is what
+the full inventory, marked resident or deferred, and `tests/core/test_build.py` pins it as exact sets:
+the resident half plus the loaders at wiring, and the whole once every deferred toolset is loaded. That inventory is what
 `config.example.toml`'s `[agents.assistant]` declares, not a fixed list in code; add a tool to any
 toolset that table names and the test fails until the table in the doc is updated in the same commit.
 

@@ -115,7 +115,8 @@ available = ["markdown-to-pdf", "email-report", "fs", "time"]
 ```
 
 - **`[agents.<name>.tools].available`** is the whole capability declaration, in one flat list over the one
-  namespace. (The same subtable can also carry the agent's own `confirm` and `review`; see
+  namespace. (The same subtable can also carry a `resident` subset, the toolsets in the agent's context
+  from its first turn with the rest loaded on demand, and the agent's own `confirm` and `review`; see
   [Tool access](../explanation/tool-access.md).) A built-in
   group, a core capability, a plugin toolset, and an MCP server are all named the same way.
 - **`delegates_to`** is itself the switch: a non-empty list gives that agent a

@@ -755,19 +755,27 @@ available = ["web", "misc", "time", "messaging"]
 [agents.coder.tools]
 available = ["compute", "fs_write", "time"]
 confirm = ["fs_write"]
+
+[agents.assistant.tools]
+available = ["memory", "documents", "skills", "config", "mcp", "scheduling", "conversations", "planning",
+             "capabilities", "time", "benchmark", "messaging"]
+resident = ["memory", "config", "conversations", "planning", "capabilities", "time", "messaging"]
 ```
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `available` | list of strings | yes | **this agent's capability**, named from the one toolset namespace |
+| `resident` | list of strings | no | the part of `available` in the agent's context from its first turn; the rest loads on demand. Unset: all of it |
 | `confirm` | list of strings | no | calls that ask you; see [`[assistant.tools]`](#assistanttools) for the vocabulary |
 | `review` | list of strings | no | calls that ask a reviewer first, then you |
 
 ### `available`
 
 An agent's `available` list *is* its capability. Nothing is added in code, so a toolset you delete from a
-list is gone, and one you add is there on the next start. Every available toolset is also resident today:
-in the agent's context on every call.
+list is gone, and one you add is there on the next start. Whether a toolset's tools are in the agent's
+context from its first turn or loaded when the model asks for them is [`resident`](#resident), a separate
+key; either way the toolset is the agent's to call. `available = "all"` is not built yet, so the list is
+always written out.
 
 There is one namespace for every capability, so a name may be an AIMU built-in tool group (`web`, `fs`,
 `fs_write`, `compute`, `time`, `misc`, `audio`, `speech`, `transcription`), one of Kokua's own (`memory`,
@@ -786,6 +794,32 @@ names.
 
 The full inventory of what each toolset contains is in [set up a
 toolset](../how-to/set-up-toolsets.md#one-namespace).
+
+### `resident`
+
+The toolsets from `available` whose tool schemas are sent from the agent's first turn. The rest of
+`available` is *deferred*: the agent gets AIMU's `available_tools` and `load_tools` tools, its prompt names
+the deferred toolsets in one line (`Also available, load before use: ...`), and a toolset's tools and
+guidance join the agent when the model loads it, for the rest of the conversation. Leave the key out and
+every available toolset is resident. Why the axis exists, and what a load costs and checks, is
+[Tool access](../explanation/tool-access.md#residency-what-is-in-context-and-what-loads-on-demand).
+
+- **Every entry must be in `available`.** One that is not is a startup error, and `update_config` refuses
+  the same write (and an `available` write that would strand a resident entry) when `[agents.*]` is
+  unlocked. Order does not matter: tools are presented in `available` order.
+- **An empty list is legal** and defers everything `available` names.
+- **A skill name on the entry agent is unaffected.** The entry agent is a `SkillAgent`, which advertises
+  every skill in its catalogue whatever this list says, so a skill there is neither resident nor
+  loadable. A skill named by a worker defers like any other toolset.
+- **An approval entry naming a deferred toolset is checked when the toolset is built,** not at startup,
+  since its tool names do not exist until then. An entry that matches nothing then refuses the build, so
+  the toolset will not load until you fix the entry.
+- **A deferred MCP server that is not connected refuses to load**, and stays loadable for a retry once it
+  is, where a resident one builds empty.
+
+The shipped `[agents.assistant]` keeps `memory`, `config`, `conversations`, `planning`, `capabilities`,
+`time`, and `messaging` resident and defers `documents`, `skills`, `mcp`, `scheduling`, and `benchmark`;
+the shipped workers declare no `resident`, so every toolset they name is resident.
 
 ### `confirm` and `review`
 
@@ -914,10 +948,17 @@ Remote MCP servers to connect at startup. An array of tables: one `[[mcp.server]
 | `url` | yes | the server's endpoint |
 | `name` | yes | how the server enters the toolset namespace |
 | `token_env` | no | environment variable holding a bearer token, read at startup |
+| `description` | no | one line saying what the server's tools do |
 
 `name` is what an agent lists in its `available`, so a server no agent can name reaches no agent. Omit
 `token_env` for an unauthenticated server, or one using the OAuth flow, which triggers automatically on
 an auth challenge. The token stays in the environment, never in this file.
+
+`description` is the server's line in the catalogue: what an agent deferring the server reads in
+`available_tools` when deciding whether to load it (see [`resident`](#resident)), and what
+`list_capabilities` and `kokua --list-toolsets` print. Unset, it reads `Tools from the MCP server at
+<url>.`, which says where the server is and nothing about what it does, so it is worth writing for any
+server an agent defers. It must be a string.
 
 ```toml
 [[mcp.server]]
@@ -928,6 +969,7 @@ token_env = "GITHUB_MCP_TOKEN"
 [[mcp.server]]
 url = "https://broker.example.com/mcp"
 name = "stocks"
+description = "Stock quotes and fundamentals, and placing trades."
 ```
 
 Servers added at runtime with the `add_mcp_server` tool are appended here automatically, with a `name`
@@ -1289,7 +1331,7 @@ Introspection, which exits without running the assistant:
 ```bash
 kokua --list-frontends    # installed front ends
 kokua --list-toolsets     # every name an available list may use, grouped by provider
-kokua agents              # each declared agent's availability and approval lists, from the config alone
+kokua agents              # each declared agent's availability, residency, and approval lists, from the config alone
 ```
 
 ## See also

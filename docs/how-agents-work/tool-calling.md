@@ -179,7 +179,7 @@ model filled in, lives in `aimu.tools.builtin`:
     """
 ```
 
-That is the general case, not an exception. Fourteen of the 37 tools the shipped assistant holds are
+That is the general case, not an exception. Fourteen of the 37 tools the shipped assistant can reach are
 AIMU's rather than Kokua's, more than a third, and more once skills are installed, since AIMU injects a
 tool per skill script on top of that set. [How an agent's tools
 resolve](../explanation/architecture.md#how-an-agents-tools-resolve) carries the full inventory, and a
@@ -205,7 +205,10 @@ turn, whether or not any tool gets used. Granting an agent a toolset it will nev
 it also makes the choice harder for the model. This is the practical argument for
 [principle 2's
 corollary](../explanation/design-principles.md#corollary-a-capability-is-declared-never-defaulted), that
-an agent holds exactly the capabilities its table declares.
+an agent holds exactly the capabilities its table declares. For a capability an agent needs only
+sometimes, the lever is its `resident` list: a toolset left out of it is named in one line of the prompt,
+and its schemas join the request only once the model loads it with `load_tools`, at the price of one
+round ([Tool access](../explanation/tool-access.md#residency-what-is-in-context-and-what-loads-on-demand)).
 
 **A returned error costs a round.** Handing the model `Tool 'X' raised an error: ...` buys recovery, and
 it pays for it with a full extra round trip carrying the entire conversation. Under a cap of ten model

@@ -247,7 +247,7 @@ over the whole namespace, and a line printed on every start is a line people lea
 diagnosis is a command rather than a warning. `kokua --list-toolsets` prints every name an
 `[agents.<name>.tools].available` list may use, grouped by provider, after reading your config, so it includes
 your MCP servers and your skills. What it does not tell you is which agent holds what: `kokua agents` does, printing each
-agent's availability and approval lists as the config declares them.
+agent's availability, residency, and approval lists as the config declares them.
 
 **Declaration is per agent, and workers are the easy thing to get wrong.** The shipped `researcher`
 declares `["web", "misc", "time"]`. It cannot read a file, and delegating a file-reading task to it
@@ -261,10 +261,12 @@ is about: an entry is `<toolset>` for a whole capability or `<toolset>.<tool>` f
 a gate naming a toolset no agent declares is refused for the same reason a tool nothing provides is.
 The quiet failure is confined to exactly one case: installed, and never named.
 
-**The tax you keep paying.** The declared list is not free either. The shipped entry agent's eleven
-toolsets resolve to thirty tools, plus the `spawn_subagent` its `delegates_to` earns, and all 31
-descriptions are re-sent on every round of every turn. Declaring a capability you never use costs context on each call, which is the argument
-[Context and memory](context-and-memory.md) picks up.
+**The tax you keep paying.** The declared list is not free either. The shipped entry agent's twelve
+toolsets reach thirty-six tools, plus the `spawn_subagent` its `delegates_to` earns. Its `resident` list
+keeps seven of those toolsets in context, so the descriptions re-sent on every round of every turn are
+seventeen of them plus the two tools that load the rest; a turn that loads a deferred toolset pays for
+its descriptions from then on. Declaring a capability resident that you rarely use costs context on each
+call, which is the argument [Context and memory](context-and-memory.md) picks up.
 
 ## Go deeper
 

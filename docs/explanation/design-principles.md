@@ -263,6 +263,14 @@ a lock pattern matching no real key locks nothing. You notice a prompt you did n
 notices a prompt that never comes. Both are hard startup errors naming the offending entry, because the
 alternative is a user who believes they are covered and is not.
 
+One gate entry cannot be judged at startup: one naming a toolset an agent loads on demand (see
+[residency](tool-access.md#residency-what-is-in-context-and-what-loads-on-demand)), whose tool names do
+not exist until it is built. Startup checks its shape, and the build checks the rest before it returns a
+single tool, whoever triggered it. An entry that still matches nothing, typically a misnamed tool,
+refuses that build and every later one, so the toolset cannot load until the entry is fixed. That is the same rule applied at
+the first moment it can be, and it fails closed: a misspelled gate holds the capability back rather than
+letting it arrive ungated.
+
 **A capability the config cannot describe is a capability you do not control.** That sounds abstract
 until a dependency makes it concrete, which AIMU 0.31.0 did: it added `write_file` and `edit_file` into
 the `fs` tool group Kokua had been handing out whole, so an upgrade alone would have given every agent
@@ -304,7 +312,8 @@ buys a gate that can name a whole capability and an error that can point at the 
 discriminator at the moment of the call.
 [`core/approval.py`](https://github.com/saxman/kokua/blob/main/src/kokua/core/approval.py)'s `resolve_approval_policies` and
 [`config/file.py`](https://github.com/saxman/kokua/blob/main/src/kokua/config/file.py)'s lock-pattern checks are the two startup errors
-above. [`SECURITY.md`](https://github.com/saxman/kokua/blob/main/SECURITY.md) names which barrier a vulnerability report is about, and which
+above, and `ApprovalPolicies.with_built`, called from the hook every `build_tools` call runs before it
+returns a tool, is the same check for a toolset built later. [`SECURITY.md`](https://github.com/saxman/kokua/blob/main/SECURITY.md) names which barrier a vulnerability report is about, and which
 behavior is the program working as documented.
 
 ## What follows from these principles
