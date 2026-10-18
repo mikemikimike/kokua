@@ -693,3 +693,13 @@ async def test_compose_subagent_sees_a_skill_written_mid_session(tmp_path, monke
     assert result == "digester ran: Digest this week."
     assert "weekly-digest" in spawn.calls[-1]["agent_types"]["digester"]["system_message"]
     assistant._state.close()
+
+
+def test_the_guidance_gives_both_reasons_to_compose():
+    assert TOOLSET.guidance == (
+        " You can see every capability installed on this machine, not only the ones you hold. Compose a sub-agent "
+        "for either of two reasons: the task needs a capability you do not hold, or its tool output would flood "
+        "your context (many pages, long files, verbose command output). First check whether one of your "
+        "`spawn_subagent` roles already covers it. If none does, call `list_capabilities` to find the capability "
+        "names, then `compose_subagent` to build a sub-agent holding exactly those and give it the task."
+    )

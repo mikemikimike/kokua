@@ -85,7 +85,7 @@ def _claimed_by(name: str, state: "LiveState") -> Optional[str]:
         return state.registry.providers[name]
     try:
         persisted = config_store.mcp_server_names(state.config.config_path)
-    except (ConfigError, OSError) as error:
+    except (ConfigError, OSError, ValueError) as error:
         # The next start will refuse a file that cannot be read anyway, and refusing every skill name
         # until it is fixed would take authoring away for no protection, so the registry check stands alone.
         logger.warning("Could not read MCP server names from %s: %s", state.config.config_path, error)

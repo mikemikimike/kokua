@@ -180,6 +180,7 @@ system_message = "You are a personal assistant running on the user's own machine
 delegates_to = ["researcher", "coder", "introspector"]
 [agents.assistant.tools]
 available = ["memory", "documents", "skills", "config", "mcp", "scheduling", "conversations", "planning", "capabilities", "time", "benchmark", "messaging"]
+# available = "all"   # every installed toolset; requires resident
 # In its tools from the first turn; the rest of `available` it loads on demand with load_tools.
 resident = ["memory", "config", "conversations", "planning", "capabilities", "time", "messaging"]
 

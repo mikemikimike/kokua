@@ -130,6 +130,18 @@ async def test_an_unreadable_config_file_does_not_stop_author_skill(tmp_path, ca
     assert any(record.levelno == logging.WARNING for record in caplog.records)
 
 
+async def test_a_config_file_with_invalid_utf8_does_not_stop_author_skill(tmp_path, caplog):
+    config = _skills_config(tmp_path)
+    config.config_path.write_bytes(b"[mcp]\n\xff\xfe not utf-8")
+    author_skill = _tools(config)["author_skill"]
+
+    with caplog.at_level(logging.WARNING, logger="kokua.toolsets.skills"):
+        result = await author_skill(name="weekly-digest", description="Digest the week.", body="Do it.")
+
+    assert result.startswith("Created skill 'weekly-digest'")
+    assert any(record.levelno == logging.WARNING for record in caplog.records)
+
+
 async def test_a_refused_author_skill_does_not_refresh(tmp_path):
     calls: list = []
     author_skill = _tools(_skills_config(tmp_path), refresh_skills=_recording_refresh(calls))["author_skill"]

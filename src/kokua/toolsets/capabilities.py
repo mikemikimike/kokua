@@ -197,7 +197,8 @@ def _make_list_tool(state: "LiveState") -> Callable:
 
         Each line is a capability name, the kind of provider it came from, and what it does. Use this
         when a task needs something none of your own tools and none of your named sub-agent roles
-        cover, then pass the names you need to compose_subagent.
+        cover, or when its output would flood your context, then pass the names you need to
+        compose_subagent.
 
         Args:
             filter: Optional. Show only capabilities whose name or description contains this text.
@@ -333,10 +334,11 @@ def make_capability_tools(ctx: "ToolsetContext") -> list:
 # default because its instructions were written for its job, where a composed sub-agent's are written
 # in the moment.
 CAPABILITIES_GUIDANCE = (
-    " You can see every capability installed on this machine, not only the ones you hold. When a task "
-    "needs something you lack, first check whether one of your `spawn_subagent` roles already covers "
-    "it. If none does, call `list_capabilities` to find the capability names, then `compose_subagent` to "
-    "build a sub-agent holding exactly those and give it the task."
+    " You can see every capability installed on this machine, not only the ones you hold. Compose a sub-agent "
+    "for either of two reasons: the task needs a capability you do not hold, or its tool output would flood "
+    "your context (many pages, long files, verbose command output). First check whether one of your "
+    "`spawn_subagent` roles already covers it. If none does, call `list_capabilities` to find the capability "
+    "names, then `compose_subagent` to build a sub-agent holding exactly those and give it the task."
 )
 
 TOOLSET = Toolset(

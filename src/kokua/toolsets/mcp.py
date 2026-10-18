@@ -14,7 +14,9 @@ is reachable in-process:
   because ``refresh_workers`` rebuilds that agent's ``spawn_subagent`` and the specs re-resolve against
   the live connections. It does not reach a live agent's *own* tool list, which ``wire_agent`` built
   once; that waits for the agent to be rebuilt (a new conversation, an LRU eviction, a restart).
-* **A genuinely new server reaches nothing at all until a restart.** ``build_registry`` runs once, in
+* **A genuinely new server reaches nothing at all until a restart,** and then only an agent that
+  declares ``available = "all"`` holds it without being told its name; a list agent needs a human to name
+  it too. ``build_registry`` runs once, in
   ``Assistant.create``, over ``config.mcp_servers`` as loaded at startup, and nothing mutates the
   registry afterwards, so a new server's name is not a key in it. An ``[agents.*]`` edit *may* name the
   server, because ``update_config``'s dry run rereads the file and so sees the ``[[mcp.server]]`` entry
@@ -47,8 +49,9 @@ logger = logging.getLogger(__name__)
 # Only a restart makes a new server referable.
 _REACH = (
     "You cannot call these yourself. A sub-agent you spawn can, but only if config.toml already "
-    "declared this server at startup and names it in that agent's tools; otherwise the user must "
-    "add both and restart Kokua, and nothing you do in this session will make them usable."
+    "declared this server at startup and names it in that agent's tools, or that agent declares "
+    'available = "all" and Kokua restarts; otherwise the user must name the server in that agent\'s '
+    "available list and restart Kokua. Nothing you do in this session will make them usable."
 )
 
 
@@ -71,8 +74,9 @@ def make_mcp_tools(
         starts; a bearer-token one lasts only this session, since its secret is never written to disk.
         Returns the tool names the server exposes and the rule for which agent can call them. You cannot
         call them yourself. A sub-agent can, but only if this server was already declared in config.toml
-        at startup and named in that agent's tools; a server new to this session is usable only after the
-        user edits config.toml and restarts, so do not promise to use it in this conversation.
+        at startup and named in that agent's tools; a server new to this session is usable only after a
+        restart, by an agent declaring available = "all" or one the user edits config.toml to name, so
+        do not promise to use it in this conversation.
 
         Authentication is handled for you: just pass the URL. If the server is unprotected it
         connects directly. If it requires OAuth, you post an authorization link into the chat and
@@ -85,10 +89,11 @@ def make_mcp_tools(
         happens this returns a message asking for a bearer token: relay it, ask the user for a
         token, then call this tool again with that bearer_token.
 
-        When a server is recorded, its name is derived from the URL, but that name reaches no agent
-        until a human adds it to that agent's available list in config.toml's [agents.*.tools] table AND
-        restarts Kokua: that section is locked by default and is read only at startup, so this tool
-        cannot grant itself (or any agent) the capability it just connected.
+        When a server is recorded, its name is derived from the URL, but that name reaches
+        an agent declaring available = "all" at the next restart, and any other agent only once a human adds
+        it to that agent's available list in config.toml's [agents.*.tools] table AND restarts Kokua: that
+        section is locked by default and is read only at startup, so this tool cannot grant a named
+        agent the capability it just connected.
         """
         try:
             result = await servers.add_server(
