@@ -360,12 +360,13 @@ def _available_value(section: str, key: str, value: list) -> Union[list[str], st
     """An ``update_config`` write to ``available``: a list of names, or the string ``"all"``.
 
     The tool hands every value over as a string and a list key splits it on commas, so ``"all"`` arrives
-    as ``["all"]`` and is read back as the string it was written as. ``"all"`` beside other names is the
-    near-miss the file parser refuses, and it is refused here in the same words.
+    as ``["all"]`` and is read back as the string it was written as. A lone value is the TOML string the
+    parser would see, so any other casing of it (``"ALL"``) is refused in the parser's words, and so is
+    ``"all"`` beside other names.
     """
     if value == ["all"]:
         return "all"
-    if "all" in value:
+    if "all" in value or (len(value) == 1 and value[0].lower() == "all"):
         raise _available_shape_error(section)
     return _str_list(section, key, value)
 

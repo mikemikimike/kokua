@@ -5,7 +5,7 @@ import pytest
 from kokua.config.file import ConfigError
 from kokua.config.schema import ALL_TOOLSETS, AgentConfig, AssistantConfig
 from kokua.core.agents import build_registry, validate_agents
-from kokua.registry.registry import ToolsetError
+from kokua.registry.registry import ToolsetError, register
 
 
 def test_registry_contains_every_provider():
@@ -373,6 +373,22 @@ def test_all_expands_in_trust_order(monkeypatch):
     # Within a rank, registration order is kept rather than re-sorted.
     own = [name for name in registry if registry.providers[name] == "built-in toolset" and name != "skills"]
     assert [name for name in expanded if registry.providers[name] == "built-in toolset"] == own
+
+
+def test_every_provider_label_build_registry_registers_has_a_trust_rank(monkeypatch):
+    """A new provider label must be ranked on purpose; without this it would silently sort last."""
+    from kokua.core import agents as core_agents
+    from kokua.core.agents import TRUST_ORDER
+
+    labels: list[str] = []
+
+    def recording_register(sources):
+        labels.extend(label for label, _ in sources)
+        return register(sources)
+
+    monkeypatch.setattr(core_agents, "register", recording_register)
+    build_registry(AssistantConfig())
+    assert set(labels) == set(TRUST_ORDER)
 
 
 def test_all_skips_skills_on_a_worker_and_keeps_it_on_the_entry_agent(monkeypatch):

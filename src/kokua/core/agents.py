@@ -47,11 +47,15 @@ _PLUGIN_PROVIDER = "plugin"
 _MCP_PROVIDER = "MCP server"
 _SKILL_PROVIDER = "skill"
 
-#: The order ``available = "all"`` lists toolsets in, most trusted first. It matters because
-#: ``build_tools`` keeps the first of two same-named tools: registration order would put MCP servers
-#: first and let a remote server's ``read_file`` shadow the ``fs`` toolset's. Kokua's own code comes
-#: first, then a third party's installed code, then skills (prose and scripts a person approved), then
-#: MCP servers, whose tools and descriptions are whatever a remote host sends.
+#: The order ``available = "all"`` lists toolsets in, most trusted first: Kokua's own code, then a third
+#: party's installed code, then skills (prose and scripts a person approved), then MCP servers, whose tools
+#: and descriptions are whatever a remote host sends. The order decides which of two same-named tools wins
+#: only among toolsets built together, because ``build_tools`` keeps the first: the resident build, and a
+#: worker spec's resident tools. Registration order would have put MCP servers first there, letting a
+#: remote server's ``read_file`` shadow the ``fs`` toolset's. It also orders the agent's tool groups. A
+#: deferred toolset is settled by load order instead: AIMU keeps whichever tool the agent already holds,
+#: skips the incoming one, and the load result names the skipped tool and the group holding it, so a later
+#: load never replaces a held tool.
 TRUST_ORDER: tuple[str, ...] = (_BUILTIN_PLUGIN_PROVIDER, _PLUGIN_PROVIDER, _SKILL_PROVIDER, _MCP_PROVIDER)
 
 
@@ -123,8 +127,9 @@ def available_for(config: AssistantConfig, registry: ToolsetRegistry, agent_name
     """The toolset names ``agent_name`` may use: its declared list as written, or ``"all"`` expanded.
 
     ``"all"`` is every registered toolset in :data:`TRUST_ORDER`, registration order kept within one
-    provider, so where two toolsets offer one tool name the more trusted one's tool is the one an agent
-    gets. An ``entry_point_only`` toolset is left out on any agent but the entry agent, rather than listed
+    provider. Where two toolsets built together offer one tool name, the more trusted one's tool is kept;
+    a toolset loaded later keeps whichever tool arrived first, and the load result names the skipped tool
+    and its holder (see :data:`TRUST_ORDER`). An ``entry_point_only`` toolset is left out on any agent but the entry agent, rather than listed
     and then refused by validation for a name the declaration never wrote. A provider label outside
     ``TRUST_ORDER`` ranks last; only a registry assembled by hand, as a test does, can carry one.
 
@@ -203,8 +208,8 @@ def build_registry(config: AssistantConfig) -> ToolsetRegistry:
     directions.
 
     The two entry-point labels split Kokua's own from a third party's, by which distribution registered
-    the entry point. That is presentation only, for ``--list-toolsets``: nothing branches on it. Every
-    toolset keeps the ``build`` its author wrote, whichever route it came by, because a build failure is
+    the entry point. ``--list-toolsets`` groups by that split, and :data:`TRUST_ORDER` ranks on it, so an
+    ``available = "all"`` agent lists Kokua's own toolsets ahead of a third party's. Every toolset keeps the ``build`` its author wrote, whichever route it came by, because a build failure is
     a bug in whoever wrote the toolset and a warning in a log file is not how a person finds out an agent
     lost a capability.
     """
