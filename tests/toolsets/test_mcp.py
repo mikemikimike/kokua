@@ -80,6 +80,35 @@ async def test_add_says_a_new_server_reaches_nothing_until_a_restart(monkeypatch
     assert "restart" in message.lower()
 
 
+async def _added(monkeypatch, tmp_path, auth_mode):
+    class FakeClient:
+        async def as_tools(self):
+            return [_named("search_docs")]
+
+    async def fake_connect(url, **kw):
+        return FakeClient(), auth_mode
+
+    monkeypatch.setattr("kokua.mcp.servers.connect_mcp", fake_connect)
+    add_mcp_server, _ = _tools(tmp_path)
+    return await add_mcp_server(url="https://svc/mcp")
+
+
+async def test_a_persisted_result_says_an_all_agent_gets_it_after_a_restart(monkeypatch, tmp_path):
+    message = await _added(monkeypatch, tmp_path, "none")
+
+    assert 'available = "all"' in message
+    assert "restart" in message.lower()
+
+
+async def test_a_bearer_result_promises_no_reach_and_says_no_restart_brings_it_back(monkeypatch, tmp_path):
+    message = await _added(monkeypatch, tmp_path, "bearer")
+
+    assert 'available = "all"' not in message
+    assert "no restart brings it back" in message
+    assert "[[mcp.server]]" in message and "token_env" in message
+    assert "[mcp]" not in message
+
+
 async def test_remove_reports_an_unconnected_server(tmp_path):
     _, remove_mcp_server = _tools(tmp_path)
 

@@ -46,12 +46,23 @@ logger = logging.getLogger(__name__)
 # Assistant.create from the config as loaded then, so a server that was not already a [[mcp.server]]
 # entry at startup has no name in it. An [agents.*] edit may declare the new server, since
 # update_config's dry run rereads the file, but nothing in this process resolves that declaration.
-# Only a restart makes a new server referable.
+# Only a restart makes a new server referable, and only a persisted one comes back at all.
 _REACH = (
     "You cannot call these yourself. A sub-agent you spawn can, but only if config.toml already "
     "declared this server at startup and names it in that agent's tools, or that agent declares "
     'available = "all" and Kokua restarts; otherwise the user must name the server in that agent\'s '
     "available list and restart Kokua. Nothing you do in this session will make them usable."
+)
+# A bearer-token server is in no registry and never written to config.toml, so nothing can name it
+# this session unless config.toml already declared its URL at startup, and a restart drops it.
+_REACH_SESSION_ONLY = (
+    "You cannot call these yourself. A sub-agent you spawn can, but only if config.toml already "
+    "declared this server at startup and names it in that agent's tools; otherwise no agent can use "
+    "it in this session (session only). Its token is not saved, so no restart brings it back."
+)
+_KEEP_BEARER = (
+    " To keep it, the user adds an [[mcp.server]] entry with token_env naming an environment variable "
+    'that holds the token, then names the server in an agent\'s available list (or uses an "all" agent).'
 )
 
 
@@ -75,8 +86,8 @@ def make_mcp_tools(
         Returns the tool names the server exposes and the rule for which agent can call them. You cannot
         call them yourself. A sub-agent can, but only if this server was already declared in config.toml
         at startup and named in that agent's tools; a server new to this session is usable only after a
-        restart, by an agent declaring available = "all" or one the user edits config.toml to name, so
-        do not promise to use it in this conversation.
+        restart, and only if it was remembered (see above): by an agent declaring available = "all" or one
+        the user edits config.toml to name. Do not promise to use it in this conversation.
 
         Authentication is handled for you: just pass the URL. If the server is unprotected it
         connects directly. If it requires OAuth, you post an authorization link into the chat and
@@ -90,7 +101,8 @@ def make_mcp_tools(
         token, then call this tool again with that bearer_token.
 
         When a server is recorded, its name is derived from the URL, but that name reaches
-        an agent declaring available = "all" at the next restart, and any other agent only once a human adds
+        an agent declaring available = "all" at the next restart, if the server was remembered, and any
+        other agent only once a human adds
         it to that agent's available list in config.toml's [agents.*.tools] table AND restarts Kokua: that
         section is locked by default and is read only at startup, so this tool cannot grant a named
         agent the capability it just connected.
@@ -112,14 +124,10 @@ def make_mcp_tools(
             return str(exc)
         except ConnectFailed as exc:
             return f"Failed to connect to MCP server {url!r}: {exc}"
-        note = (
-            ""
-            if result.persisted
-            else " (session only; add it to config.toml [mcp] to keep a bearer-token server across restarts)"
-        )
         names = ", ".join(result.tool_names) if result.tool_names else "(no new tools)"
         # A tool result, so it says what the model can do next, not why.
-        return f"Connected to {url}. Its tools: {names}. {_REACH}{note}"
+        reach = _REACH if result.persisted else _REACH_SESSION_ONLY + _KEEP_BEARER
+        return f"Connected to {url}. Its tools: {names}. {reach}"
 
     @tool
     async def remove_mcp_server(url: str) -> str:
