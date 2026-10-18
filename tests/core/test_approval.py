@@ -844,3 +844,138 @@ async def test_an_unattended_turn_runs_a_tool_the_workers_own_pair_does_not_gate
     finally:
         proactive_turn.reset(token)
     assistant._state.close()
+
+
+# Residency: an approval entry naming a toolset nobody has built yet waits, and resolves the moment a
+# build produces its tools. These tests hand-build the state, because nothing defers at wiring yet.
+
+
+def _deferred_setup(tmp_path, **config_overrides):
+    from types import SimpleNamespace
+
+    from kokua.config.schema import AgentConfig
+    from kokua.core.approval import resolve_approval_policies
+    from kokua.registry.context import LiveState
+
+    agents = {"assistant": AgentConfig(available=["memory", "mcp", "compute"], resident=["memory"])}
+    config_overrides = {"default_confirm": [], "default_review": [], **config_overrides}
+    config = AssistantConfig(data_dir=tmp_path, agents=agents, entry_agent="assistant", **config_overrides)
+    state = LiveState(config=config)
+    state.tools_by_toolset = {"memory": {"remember"}}
+    policies = resolve_approval_policies(config, state, SimpleNamespace(tools=[]))
+    return config, state, policies
+
+
+def test_an_entry_for_a_deferred_toolset_is_pending_at_startup(tmp_path):
+    _, _, policies = _deferred_setup(tmp_path, default_confirm=["mcp.add_mcp_server"])
+    assert "mcp.add_mcp_server" in policies.default.pending_confirm
+    assert "add_mcp_server" not in policies.default.gated
+
+
+def test_building_the_toolset_resolves_its_pending_entries(tmp_path):
+    _, _, policies = _deferred_setup(tmp_path, default_confirm=["mcp.add_mcp_server"])
+    updated = policies.with_built("mcp", frozenset({"add_mcp_server", "remove_mcp_server"}))
+    assert "add_mcp_server" in updated.default.confirm
+    assert "remove_mcp_server" not in updated.default.confirm
+    assert updated.default.pending_confirm == frozenset()
+    assert policies.default.pending_confirm  # the original object is unchanged
+    assert "add_mcp_server" not in policies.default.confirm
+
+
+def test_a_bare_toolset_entry_resolves_to_every_built_tool(tmp_path):
+    _, _, policies = _deferred_setup(tmp_path, default_review=["compute"])
+    updated = policies.with_built("compute", frozenset({"calculate", "run_command"}))
+    assert updated.default.review >= {"calculate", "run_command"}
+    assert updated.default.pending_review == frozenset()
+
+
+def test_building_one_toolset_leaves_another_toolsets_entries_pending(tmp_path):
+    _, _, policies = _deferred_setup(tmp_path, default_confirm=["mcp.add_mcp_server", "compute.run_command"])
+    updated = policies.with_built("mcp", frozenset({"add_mcp_server"}))
+    assert updated.default.pending_confirm == frozenset({"compute.run_command"})
+
+
+def test_a_declared_pair_waits_on_its_own_agents_deferred_toolsets(tmp_path):
+    from types import SimpleNamespace
+
+    from kokua.config.schema import AgentConfig
+    from kokua.core.approval import resolve_approval_policies
+    from kokua.registry.context import LiveState
+
+    agents = {
+        "assistant": AgentConfig(
+            available=["memory", "mcp"], resident=["memory"], confirm=["mcp.add_mcp_server"], review=[]
+        )
+    }
+    config = AssistantConfig(
+        data_dir=tmp_path, agents=agents, entry_agent="assistant", default_confirm=[], default_review=[]
+    )
+    state = LiveState(config=config)
+    state.tools_by_toolset = {"memory": {"remember"}}
+    policies = resolve_approval_policies(config, state, SimpleNamespace(tools=[]))
+    assert policies.by_agent["assistant"].pending_confirm == frozenset({"mcp.add_mcp_server"})
+    updated = policies.with_built("mcp", frozenset({"add_mcp_server"}))
+    assert updated.by_agent["assistant"].confirm == frozenset({"add_mcp_server"})
+
+
+def test_a_misnamed_tool_entry_refuses_the_build(tmp_path):
+    _, _, policies = _deferred_setup(tmp_path, default_confirm=["mcp.add_mcp_servr"])
+    with pytest.raises(
+        ConfigError,
+        match=r"\[assistant\.tools\]\.confirm names 'mcp\.add_mcp_servr', but the 'mcp' toolset, now built, "
+        r"provides no such tool",
+    ):
+        policies.with_built("mcp", frozenset({"add_mcp_server"}))
+
+
+def test_a_built_tool_in_both_halves_is_refused(tmp_path):
+    _, _, policies = _deferred_setup(tmp_path, default_confirm=["mcp.add_mcp_server"], default_review=["mcp"])
+    with pytest.raises(ConfigError, match="in both confirm and review"):
+        policies.with_built("mcp", frozenset({"add_mcp_server"}))
+
+
+def test_a_build_through_build_tools_resolves_a_pending_entry(tmp_path):
+    """The mechanism a composed worker's late build relies on: the hook set on the state reaches a
+    policies holder, so the tool is gated from the moment the build returns."""
+    from kokua.registry.context import ToolsetContext
+    from kokua.registry.registry import Toolset, build_tools
+
+    _, state, policies = _deferred_setup(tmp_path, default_confirm=["mcp.add_mcp_server"])
+    holder = [policies]
+    state.toolset_built = lambda name, names: holder.__setitem__(0, holder[0].with_built(name, names))
+
+    def add_mcp_server():
+        pass
+
+    toolset = Toolset(name="mcp", description="mcp", build=lambda ctx: [add_mcp_server])
+    build_tools([toolset], ToolsetContext(state=state, agent=None, agent_name="composed:x"))
+    assert "add_mcp_server" in holder[0].for_agent("composed:x").confirm
+
+
+def test_core_namespace_gains_the_group_tools_when_something_is_deferred(tmp_path):
+    from types import SimpleNamespace
+
+    from kokua.config.schema import AgentConfig
+    from kokua.core.agents import gateable_tools
+    from kokua.registry.context import LiveState
+
+    def core_tools(resident):
+        agents = {"assistant": AgentConfig(available=["memory", "mcp"], resident=resident)}
+        config = AssistantConfig(data_dir=tmp_path, agents=agents, entry_agent="assistant")
+        return gateable_tools(LiveState(config=config), SimpleNamespace(tools=[]))["core"]
+
+    assert core_tools(["memory"]) >= {"available_tools", "load_tools"}
+    assert not core_tools(["memory", "mcp"]) & {"available_tools", "load_tools"}
+
+
+async def test_assistant_hook_is_a_no_op_before_policies_exist_and_replaces_them_after(tmp_path):
+    assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
+    assistant._human.policies = None
+    assistant._on_toolset_built("mcp", frozenset({"add_mcp_server"}))
+    assert assistant._human.policies is None
+
+    await assistant.start()
+    before = assistant._human.policies
+    assistant._on_toolset_built("mcp", frozenset({"add_mcp_server"}))
+    assert assistant._human.policies is not before  # replaced, never mutated
+    assistant._state.close()

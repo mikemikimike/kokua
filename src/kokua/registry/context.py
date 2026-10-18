@@ -97,6 +97,11 @@ class LiveState:
     # key against the same declarations the applier uses. Assigned by the composition root,
     # which builds one table and shares it with the applier.
     settings_table: Optional[SettingsTable] = None
+    # Called by `registry.build_tools` with each toolset's name and tool names once they are recorded,
+    # before any of those tools is returned to the builder. Approval entries for a toolset built later
+    # resolve here, so a gate holds however late or by whomever the toolset is built. It may raise,
+    # which refuses the build.
+    toolset_built: Optional[Callable[[str, frozenset[str]], None]] = None
 
     @cached_property
     def memory_store(self) -> SemanticMemoryStore:

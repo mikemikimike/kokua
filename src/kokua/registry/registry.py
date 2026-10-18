@@ -217,6 +217,10 @@ def build_tools(toolsets: Sequence[Toolset], ctx: "ToolsetContext") -> list:
             if name not in seen:
                 seen.add(name)
                 tools.append(fn)
+        # After recording and before the tools go back to the caller: approval has to cover a toolset
+        # however late, and by whomever, it is built, and a raising hook refuses the whole build.
+        if ctx.state.toolset_built is not None:
+            ctx.state.toolset_built(toolset.name, frozenset(provided))
     return tools
 
 

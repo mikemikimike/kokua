@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import threading
 import time
 from dataclasses import replace
 from typing import Callable, Optional
@@ -142,6 +143,7 @@ class Assistant:
         # Tool approval and a workflow's own decision: each a single-slot request the serve loop
         # resolves with the user's next message. Both are lock-guarded, so concurrent tool calls (or
         # concurrent workflow turns) can never clobber the slot the serve loop is about to resolve.
+        self._policies_lock = threading.Lock()
         self._human = HumanGate(
             self._ui,
             active_id=lambda: self._book.active_id,
@@ -278,6 +280,7 @@ class Assistant:
         )
         # Assigned after construction because it closes over assistant._registry, which is built below it.
         state.for_each_agent = for_each_agent
+        state.toolset_built = assistant._on_toolset_built
         assistant._state = state
         assistant._tasks = state.tasks
         # The workflow context needs the shared toolset state, which does not exist until here.
@@ -346,7 +349,8 @@ class Assistant:
         # exists: the entry agent's own, and each worker's, built when the delegation tool above was.
         # It both validates and resolves: a policy entry names a toolset, and the gate matches a tool
         # name, so no gate can answer at all until this has run (see `HumanGate.policies`).
-        self._human.policies = resolve_approval_policies(config, state, entry_agent)
+        with self._policies_lock:
+            self._human.policies = resolve_approval_policies(config, state, entry_agent)
         # Resolved from the same policies, because a review entry is itself a gate: the reviewer can only
         # be asked about tools a policy already stops.
         self._human.auto_approval = resolve_auto_approval(config, state, entry_agent, self._human.policies)
@@ -972,6 +976,21 @@ class Assistant:
         whose policy it is judged by.
         """
         return functools.partial(self._human.approve, agent_name)
+
+    def _on_toolset_built(self, toolset: str, tool_names: frozenset[str]) -> None:
+        """Resolve the approval entries waiting on ``toolset``, now that it has built its tools.
+
+        Called from ``build_tools`` before the tools reach any agent, so a gate holds from the first
+        moment a tool can be called, whoever built it. A no-op until ``start`` has resolved the policies:
+        every build before that is a startup build, and the startup resolution covers it. A deferred
+        build runs in a worker thread, so the swap is under a lock that also covers the read: two
+        builds finishing together each resolve against the other's result instead of overwriting it.
+        """
+        with self._policies_lock:
+            current = self._human.policies
+            if current is None:
+                return
+            self._human.policies = current.with_built(toolset, tool_names)
 
     async def _handle(
         self, msg: ChannelMessage, *, conversation_id: str, workflow=None, tid: Optional[int] = None

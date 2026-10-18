@@ -131,6 +131,27 @@ def test_build_tools_records_a_toolset_that_built_nothing():
     assert state.tools_by_toolset == {"empty": set()}
 
 
+def test_build_tools_calls_the_hook_and_a_raising_hook_refuses_the_build():
+    from kokua.config import ConfigError
+
+    def first():
+        pass
+
+    calls = []
+    state = LiveState(config=AssistantConfig())
+    state.toolset_built = lambda name, names: calls.append((name, names))
+    ctx = ToolsetContext(state=state, agent=None, agent_name="assistant")
+    assert build_tools([_toolset("a", tools=[first])], ctx=ctx) == [first]
+    assert calls == [("a", frozenset({"first"}))]
+
+    def refuse(name, names):
+        raise ConfigError("refused")
+
+    state.toolset_built = refuse
+    with pytest.raises(ConfigError, match="refused"):
+        build_tools([_toolset("b", tools=[first])], ctx=ctx)
+
+
 def test_register_refuses_a_toolset_claiming_the_reserved_gate_namespace():
     """`core` is the [assistant.tools].confirm prefix for the tools no toolset builds (spawn_subagent,
     activate_skill). A toolset of that name would make those gates unwritable, so it fails at

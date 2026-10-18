@@ -11,6 +11,7 @@ from typing import Callable, Mapping, Optional, Sequence
 
 from aimu import trim_messages
 from aimu.aio.tools.builtin import SubagentObserver, make_async_subagent_tool
+from aimu.tools.groups import CORE_TOOL_NAMES
 
 from kokua.config.file import ConfigError
 from kokua.config.schema import DEFAULT_SYSTEM_MESSAGE, AssistantConfig
@@ -729,6 +730,10 @@ def gateable_tools(state: LiveState, entry_agent) -> dict[str, set[str]]:
         name = getattr(fn, "__name__", None)
         if name and name not in owned:
             reserved.add(name)
+    # An agent that can defer a toolset holds AIMU's loader tools, which no toolset provides, so a gate
+    # on them is writable only under the reserved prefix.
+    if any(state.config.deferred_for(name) for name in state.config.agents):
+        reserved |= set(CORE_TOOL_NAMES)
     by_toolset[RESERVED_GATE_NAMESPACE] = reserved
     return by_toolset
 
