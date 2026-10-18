@@ -5,6 +5,7 @@ The policy and the apply-then-persist ordering underneath are covered in ``tests
 
 from __future__ import annotations
 
+import re
 import tomllib
 
 import pytest
@@ -564,3 +565,33 @@ async def test_an_agent_resident_write_round_trips_through_the_loader(tmp_path):
     await update_config("agents.coder.tools", "resident", "time")
     loaded = settings.load(str(path), table=core_table())
     assert loaded["agents"]["coder"].resident == ["time"]
+
+
+_MEMBERSHIP = r"resident names '(web|memory)', which is not in available"
+
+
+async def test_a_resident_write_outside_available_is_refused_and_the_file_is_unchanged(tmp_path):
+    config = _unlocked(tmp_path, agents={"coder": AgentConfig(available=["time", "memory"])}, entry_agent="coder")
+    path, _, update_config = _tools(
+        tmp_path, config=config, registry={"time": _stub_toolset("time"), "memory": _stub_toolset("memory")}
+    )
+    await update_config("agents.coder.tools", "available", "time,memory")
+    before = path.read_text(encoding="utf-8")
+    result = await update_config("agents.coder.tools", "resident", "web")
+    assert result.startswith("Rejected:")
+    assert re.search(_MEMBERSHIP, result)
+    assert path.read_text(encoding="utf-8") == before
+
+
+async def test_an_available_write_that_strands_resident_is_refused_and_the_file_is_unchanged(tmp_path):
+    config = _unlocked(tmp_path, agents={"coder": AgentConfig(available=["time", "memory"])}, entry_agent="coder")
+    path, _, update_config = _tools(
+        tmp_path, config=config, registry={"time": _stub_toolset("time"), "memory": _stub_toolset("memory")}
+    )
+    await update_config("agents.coder.tools", "available", "time,memory")
+    await update_config("agents.coder.tools", "resident", "memory")
+    before = path.read_text(encoding="utf-8")
+    result = await update_config("agents.coder.tools", "available", "time")
+    assert result.startswith("Rejected:")
+    assert re.search(_MEMBERSHIP, result)
+    assert path.read_text(encoding="utf-8") == before

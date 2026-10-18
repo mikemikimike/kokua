@@ -322,6 +322,21 @@ _REMOVED_AGENT_KEYS = {"groups", "tool_packs", "mcp_servers"}
 _AGENT_TOOLS_KEYS = ("available", "confirm", "review", "resident")
 
 
+def check_resident_within_available(name: str, resident: Optional[list[str]], available: list[str]) -> None:
+    """Refuse a ``resident`` entry that ``available`` does not hold.
+
+    Shared by the file parser and ``update_config``'s dry run, which builds its candidate without going
+    through the parser, so both orderings (a bad resident write, and an available write that strands an
+    existing resident) get the same refusal instead of a file the next startup rejects.
+    """
+    for entry in resident or []:
+        if entry not in available:
+            raise ConfigError(
+                f"[agents.{name}.tools].resident names {entry!r}, which is not in available. A resident "
+                "toolset is one this agent already holds; add it to available or drop it here."
+            )
+
+
 def _parse_agent_tools(name: str, value: Any) -> dict:
     """Validate an agent's ``tools`` table into ``AgentConfig`` field values.
 
@@ -348,12 +363,7 @@ def _parse_agent_tools(name: str, value: Any) -> dict:
             if not isinstance(value[key], list):
                 raise ConfigError(f"[{section}].{key} must be a list of strings")
             fields[key] = _str_list(section, key, value[key])
-    for entry in fields.get("resident", []):
-        if entry not in fields["available"]:
-            raise ConfigError(
-                f"[agents.{name}.tools].resident names {entry!r}, which is not in available. A resident "
-                "toolset is one this agent already holds; add it to available or drop it here."
-            )
+    check_resident_within_available(name, fields.get("resident"), fields["available"])
     if "confirm" in fields or "review" in fields:
         fields.setdefault("confirm", [])
         fields.setdefault("review", [])

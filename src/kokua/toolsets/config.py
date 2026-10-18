@@ -187,7 +187,9 @@ def _validated_agent_write(config, registry, table) -> Callable[[str, str, Any],
         for pair_key in ("confirm", "review"):
             if key in ("confirm", "review") and getattr(agent, pair_key) is None:
                 changes.setdefault(pair_key, [])
-        candidate.agents = {**baseline, name: replace(agent, **changes)}
+        written = replace(agent, **changes)
+        settings.check_resident_within_available(name, written.resident, written.available)
+        candidate.agents = {**baseline, name: written}
         candidate.entry_agent = entry_agent
         try:
             if persisted is None:
