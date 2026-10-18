@@ -163,9 +163,16 @@ defers, and both resolve the first time their toolset is built.
 A conversation's agent is rebuilt from the stored transcript more often than you might expect: on
 restart, when switching among more than eight conversations evicts the least recently used one, and when
 a conversation is truncated. The new agent preloads the toolsets the transcript's `load_tools` calls
-named, in the order they were first named, instead of replaying the calls. The reason is mechanical: the
+loaded, in the order they were first loaded, instead of replaying the calls. The reason is mechanical: the
 agent builder is synchronous and AIMU's load is async. The end state is the same tools, with the
 restored toolsets' guidance in the prompt and the names line listing only what is still loadable.
+
+Only a load that succeeded comes back, judged by the result stored beside the call. The call alone is
+not evidence, because it is stored whether or not it ran: if you gate `core.load_tools` and deny a load,
+or a turn nobody is watching has it auto-denied, the transcript still holds the call, and restoring
+from calls would hand you the toolset you refused at the next restart. A denied load has to stay
+denied. A load that failed, or that a cancelled turn left without a result, is left out too, and stays
+loadable.
 
 The cost is that a preloaded toolset is held like a resident one: `available_tools` lists it as
 `resident`, not `loaded`, and its tools sit with the resident ones, ahead of `spawn_subagent`, any

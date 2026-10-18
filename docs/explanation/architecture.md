@@ -596,7 +596,11 @@ both the message and the tools, so the two cannot resolve different toolsets for
 `wire_agent` a `preloaded` list, read by `build.loaded_toolsets_in` from the stored transcript's
 `load_tools` calls in the order each name first appeared, so an agent rebuilt on restart, after LRU
 eviction from `AgentRegistry` (more than eight live conversations), or after a truncation holds what the
-model had loaded. Replaying the calls through the agent is not possible here: AIMU's load is async and
+model had loaded. Only a call whose stored result (joined by `tool_call_id`, as replay joins one) opens
+with AIMU's `Loaded '<name>':` counts. AIMU stores a call whether or not it ran, so reading calls alone
+would give back, on the next rebuild, a load the approval gate refused, and a denied load has to stay
+denied; a failed load, and a call left without a result by a cancelled turn, are left out the same way.
+`tests/test_aimu_compat.py` pins that text against a real load, since Kokua now depends on it. Replaying the calls through the agent is not possible here: AIMU's load is async and
 the builder is not. So `wire_agent` builds each still-deferred name through `build_deferred`, which is
 the same connected-server check and the same approval hook a load gets, appends the tools to the
 agent's own list, and constructs the agent with those toolsets' groups marked resident; the prompt is
@@ -1999,12 +2003,12 @@ switch; if that becomes a problem the fix is a server-side cap in `replay_items`
 
 Replay reaches the same card by a different route. A stored transcript splits a call from its result
 across an assistant message's `tool_calls` and a later `role: "tool"` message, joined by
-`tool_call_id`; `_tool_results_by_call_id` builds that map so each replayed call carries its own output.
+`tool_call_id`; `tool_results_by_call_id` builds that map so each replayed call carries its own output.
 The join has to be by id rather than by position, since concurrent dispatch appends results in completion
 order. A call with no matching result -- a transcript stored before results were replayed, a turn cut
 short mid-dispatch -- gets `response: None` and renders the card exactly as it always did.
 
-The flattener behind all of this, `replay_items` (with its `_tool_results_by_call_id` and
+The flattener behind all of this, `replay_items` (with its `tool_results_by_call_id` and
 `image_refs_of` helpers), lives in `core/transcripts.py` rather than in this channel: `send_history`
 below is one caller, and a Markdown export of a conversation is the other, so the module both share is
 where it has to sit. `WebChannel` imports it back (locally, inside `send_history`, to avoid a cycle

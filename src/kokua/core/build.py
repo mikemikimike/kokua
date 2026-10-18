@@ -18,7 +18,7 @@ from aimu.tools import ToolGroup
 from aimu.tools.groups import CORE_TOOL_NAMES
 
 from kokua.config.schema import AssistantConfig
-from kokua.core.transcripts import SPAWN_SUBAGENT_TOOL_NAME
+from kokua.core.transcripts import SPAWN_SUBAGENT_TOOL_NAME, tool_results_by_call_id
 from kokua.registry.context import LiveState, ToolsetContext
 from kokua.registry.registry import Toolset, build_tools, select
 
@@ -339,15 +339,22 @@ def build_deferred(
 
 
 def loaded_toolsets_in(messages: list[dict]) -> list[str]:
-    """The toolsets a conversation's model asked to load, by name, in the order it first asked for each.
+    """The toolsets a conversation's model loaded, by name, in the order each first loaded.
 
-    A request that failed or named nothing real is harmless to replay: restoring skips what is not
-    deferred and logs what will not build.
+    Only a load that succeeded counts, judged by the result stored for its call, which AIMU opens with
+    ``Loaded '<name>':`` and nothing else does. The call alone is not evidence: AIMU stores it whether or
+    not it ran, so a load the approval gate refused (by the user, or auto-denied in a turn nobody was
+    watching) would otherwise come back at the next restart, eviction, or truncation, and a denied load
+    has to stay denied. A load that failed, named nothing loadable, or has no result (a turn cancelled
+    mid-call) is left out as well, so the model can load it again and read whatever happens then. A repeat
+    answered "already loaded" or "resident" is left out too, and loses nothing: the load that made it so
+    sits earlier in the same transcript, since truncation only ever removes a conversation's tail.
 
-    Read from the stored assistant tool calls rather than kept separately, so there is no second record to
-    drift from the transcript. A call's arguments are a dict or a JSON string depending on the provider;
-    one that decodes to anything else, or has no string ``name``, is skipped.
+    Read from the stored transcript rather than kept separately, so there is no second record to drift
+    from it. A call's arguments are a dict or a JSON string depending on the provider; one that decodes to
+    anything else, or has no string ``name``, is skipped.
     """
+    results = tool_results_by_call_id(messages)
     names: list[str] = []
     for message in messages:
         if message.get("role") != "assistant":
@@ -364,7 +371,9 @@ def loaded_toolsets_in(messages: list[dict]) -> list[str]:
                     continue
             name = arguments.get("name") if isinstance(arguments, dict) else None
             name = name.strip() if isinstance(name, str) else None
-            if name and name not in names:
+            if not name or name in names:
+                continue
+            if results.get(call.get("id"), "").startswith(f"Loaded {name!r}:"):
                 names.append(name)
     return names
 

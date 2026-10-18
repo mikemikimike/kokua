@@ -535,6 +535,40 @@ def test_the_floor_covers_the_tool_group_residency_rides():
     assert ToolGroup is not None
 
 
+def test_aimu_still_opens_a_successful_load_result_the_way_restoring_reads_it():
+    """A rebuilt agent restores only the loads whose stored result says they succeeded
+    (``core/build.py``'s ``loaded_toolsets_in``), and the only record of success is AIMU's result text. If
+    that text changed, every restore would quietly stop and each conversation would come back with its
+    loads gone; this pins the text against a real load on AIMU's own ``Agent``."""
+    import asyncio
+
+    from aimu import aio
+    from aimu.tools import ToolGroup
+
+    from kokua.core.build import loaded_toolsets_in
+    from tests.helpers import MockAsyncModelClient
+
+    def tiny_tool() -> str:
+        """Do nothing."""
+        return ""
+
+    group = ToolGroup("tiny", "a tiny group", build=lambda: [tiny_tool])
+    agent = aio.Agent(MockAsyncModelClient([]), tools=[], tool_groups=[group])
+
+    async def load_twice() -> tuple[str, str]:
+        return await agent.load_tool_group("tiny"), await agent.load_tool_group("tiny")
+
+    loaded, again = asyncio.run(load_twice())
+
+    def stored(content: str) -> list[dict]:
+        call = {"id": "a", "type": "function", "function": {"name": "load_tools", "arguments": {"name": "tiny"}}}
+        return [{"role": "assistant", "tool_calls": [call]}, {"role": "tool", "tool_call_id": "a", "content": content}]
+
+    assert loaded.startswith("Loaded 'tiny':")
+    assert loaded_toolsets_in(stored(loaded)) == ["tiny"]
+    assert loaded_toolsets_in(stored(again)) == []
+
+
 def test_the_floor_covers_the_inbox_protocol_the_probe_no_longer_grips():
     """0.34.0's probe surface is the floor's job now that ``RunEvent.run_id`` holds the one probe slot."""
     from aimu.agents import Inbox

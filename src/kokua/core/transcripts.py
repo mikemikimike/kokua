@@ -316,7 +316,7 @@ def image_refs_of(content: Any) -> list[str]:
     return list(dict.fromkeys(refs))  # de-dupe, preserving order
 
 
-def _tool_results_by_call_id(messages: list[dict]) -> dict[str, str]:
+def tool_results_by_call_id(messages: list[dict]) -> dict[str, str]:
     """Map each tool result in ``messages`` to the id of the call it answers.
 
     A live ``tool`` frame carries the call and its result together (AIMU emits ``TOOL_CALLING`` only once
@@ -349,7 +349,7 @@ def replay_items(
     below the cards. The system message is omitted (live chat shows none).
 
     A ``role: "tool"`` message is not replayed as an item of its own, but its content is rejoined to the
-    call it answers (see :func:`_tool_results_by_call_id`) and rides that call's item as ``response``, so
+    call it answers (see :func:`tool_results_by_call_id`) and rides that call's item as ``response``, so
     a replayed tool card carries the output a live one showed. ``response`` is ``None`` where no result
     message exists -- a transcript stored before results were replayed, or a turn cut short mid-dispatch
     -- and the page then renders the card exactly as it always did.
@@ -440,7 +440,7 @@ def replay_items(
     # message belongs to at most one turn, so which turn recorded it adds nothing here.
     mid_turn_set = {index for indices in (mid_turn or {}).values() for index in indices}
     items: list[dict] = []
-    results = _tool_results_by_call_id(messages)
+    results = tool_results_by_call_id(messages)
     pending_failure: Optional[tuple[str, object]] = None  # (reason, the turn's timestamp)
     pending_undelivered: Optional[tuple[list[dict], object]] = None  # (the turn's reports, its timestamp)
     # The turn's spawn cards not yet placed, each a lineage from `_spawn_lineages` with its turn's

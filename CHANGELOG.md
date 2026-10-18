@@ -726,8 +726,10 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer
   loads.
 - **A rebuilt agent preloads what its conversation loaded.** On restart, when switching among more than
   eight conversations evicts an agent, and after a truncation, the rebuilt agent builds the toolsets its
-  transcript's `load_tools` calls named, in order, rather than replaying the calls (the builder is
-  synchronous and AIMU's load is async). `available_tools` then lists those as resident rather than
+  transcript's `load_tools` calls loaded, in order, rather than replaying the calls (the builder is
+  synchronous and AIMU's load is async). Only a load whose stored result says it succeeded comes back: a
+  load the approval gate refused stays refused, rather than returning at the next restart, and a failed
+  or cancelled one stays loadable. `available_tools` then lists those as resident rather than
   loaded. A preload that fails is logged at WARNING, not alerted, and the toolset stays deferred and
   loadable; a preloaded tool whose name the agent already holds is skipped and logged.
 - **`core.available_tools` and `core.load_tools` are gate names.** Wherever some agent defers a toolset,

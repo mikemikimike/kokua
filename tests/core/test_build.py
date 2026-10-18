@@ -1347,22 +1347,81 @@ def _load_call(arguments, call_id="a") -> dict:
     }
 
 
+def _load_result(call_id, content) -> dict:
+    return {"role": "tool", "name": "load_tools", "content": content, "tool_call_id": call_id}
+
+
+def _load_exchange(name, call_id="a", *, result=None, arguments=None) -> list[dict]:
+    """A stored ``load_tools`` call and the result it got, a successful load unless ``result`` says otherwise."""
+    arguments = {"name": name} if arguments is None else arguments
+    result = f"Loaded {name.strip()!r}: some_tool." if result is None else result
+    return [_load_call(arguments, call_id), _load_result(call_id, result)]
+
+
 def test_loaded_toolsets_in_reads_load_tools_calls_in_order():
     from kokua.core.build import loaded_toolsets_in
 
     messages = [
-        _load_call({"name": "web"}, "a"),
-        _load_call('{"name": "documents"}', "b"),
-        _load_call({"name": "web"}, "c"),
-        _load_call("not json", "d"),
-        _load_call("[1, 2]", "e"),
-        _load_call({"name": 7}, "f"),
-        _load_call({}, "g"),
+        *_load_exchange("web", "a"),
+        *_load_exchange("documents", "b", arguments='{"name": "documents"}'),
+        *_load_exchange("web", "c"),
+        *_load_exchange("audio", "d", arguments="not json"),
+        *_load_exchange("audio", "e", arguments="[1, 2]"),
+        *_load_exchange("audio", "f", arguments={"name": 7}),
+        *_load_exchange("audio", "g", arguments={}),
         {"role": "tool", "tool_calls": [{"function": {"name": "load_tools", "arguments": {"name": "audio"}}}]},
         {"role": "assistant", "tool_calls": [{"function": {"name": "get_time", "arguments": {"name": "time"}}}]},
         {"role": "assistant", "content": "no calls"},
     ]
     assert loaded_toolsets_in(messages) == ["web", "documents"]
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        "Tool 'load_tools' was not approved.",
+        "Tool 'load_tools' was not approved: the user declined",
+        "Could not load 'web': the MCP server 'web' (https://x/mcp) is not connected",
+        "Tool 'load_tools' raised an error: boom",
+        "No tool group named 'web'. Loadable: documents.",
+        "Loaded 'documents': read_document.",
+    ],
+)
+def test_a_load_that_did_not_succeed_is_not_restored(result):
+    from kokua.core.build import loaded_toolsets_in
+
+    assert loaded_toolsets_in(_load_exchange("web", result=result)) == []
+
+
+def test_a_load_call_with_no_result_is_not_restored():
+    """A turn cancelled mid-call stores the call and never its result."""
+    from kokua.core.build import loaded_toolsets_in
+
+    assert loaded_toolsets_in([_load_call({"name": "web"}, "a")]) == []
+
+
+def test_a_repeat_load_answered_already_loaded_adds_nothing_the_first_load_did_not():
+    from kokua.core.build import loaded_toolsets_in
+
+    already = _load_exchange("web", "b", result="'web' is already loaded.")
+    assert loaded_toolsets_in(already) == []
+    assert loaded_toolsets_in([*_load_exchange("web", "a"), *already]) == ["web"]
+
+
+def test_a_denied_load_after_a_successful_one_keeps_the_toolset():
+    from kokua.core.build import loaded_toolsets_in
+
+    denied = _load_exchange("web", "b", result="Tool 'load_tools' was not approved.")
+    assert loaded_toolsets_in([*_load_exchange("web", "a"), *denied]) == ["web"]
+
+
+async def test_a_real_load_result_is_what_restoring_reads(tmp_path):
+    from kokua.core.build import loaded_toolsets_in
+
+    agent, _ = _wired(_residency_config(tmp_path))
+    result = await agent.load_tool_group("web")
+
+    assert loaded_toolsets_in([_load_call({"name": "web"}, "a"), _load_result("a", result)]) == ["web"]
 
 
 def _preload_config(tmp_path, **overrides):
@@ -1485,8 +1544,8 @@ def test_the_agent_builder_restores_what_the_stored_conversation_loaded(tmp_path
             metadata={},
             messages=[
                 {"role": "user", "content": "hi"},
-                _load_call({"name": "documents"}, "a"),
-                _load_call('{"name": "web"}', "b"),
+                *_load_exchange("documents", "a"),
+                *_load_exchange("web", "b", arguments='{"name": "web"}'),
             ],
         )
     )
@@ -1505,6 +1564,54 @@ def test_the_agent_builder_restores_what_the_stored_conversation_loaded(tmp_path
     assert "get_web_content" not in _tool_names(build("a-conversation-with-no-session"))
 
 
+def _rebuilt_from(config, messages, registry=None):
+    from aimu.sessions import Session, TinyDBSessionStore
+    from kokua.core.agents import build_registry
+    from kokua.core.build import make_agent_builder
+
+    store = TinyDBSessionStore(str(config.sessions_path))
+    store.save(Session(key="c1", metadata={}, messages=[{"role": "user", "content": "hi"}, *messages]))
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=registry or build_registry(config))
+    build = make_agent_builder(
+        config,
+        state,
+        client_factory=lambda cid: MockAsyncModelClient([]),
+        store=store,
+        images_path=config.images_path,
+    )
+    return build("c1")
+
+
+def test_a_denied_load_stays_denied_when_the_agent_is_rebuilt(tmp_path):
+    """The gate refusing ``load_tools`` stores the call anyway, so restoring from calls alone would hand
+    over, at the next restart or eviction, the toolset the user said no to."""
+    agent = _rebuilt_from(
+        _preload_config(tmp_path),
+        [
+            *_load_exchange("web", "a", result="Tool 'load_tools' was not approved."),
+            *_load_exchange("documents", "b"),
+        ],
+    )
+
+    names = _tool_names(agent)
+    assert "get_web_content" not in names and "read_document" in names
+    assert "web [loadable]" in agent._groups.listing()
+
+
+def test_a_failed_load_is_not_retried_when_the_agent_is_rebuilt(tmp_path):
+    config = _residency_config(tmp_path, available=("time", "broken"), resident=("time",))
+    builds: list = []
+
+    agent = _rebuilt_from(
+        config,
+        _load_exchange("broken", result="Could not load 'broken': store locked"),
+        registry=_registry_with_broken_toolset(config, builds),
+    )
+
+    assert builds == []
+    assert "broken [loadable]" in agent._groups.listing()
+
+
 def test_the_restored_prompt_through_the_production_client_path_names_what_is_still_loadable(tmp_path, monkeypatch):
     from aimu.sessions import Session, TinyDBSessionStore
     from kokua.core.agents import build_registry
@@ -1517,9 +1624,7 @@ def test_the_restored_prompt_through_the_production_client_path_names_what_is_st
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text("---\nname: weekly-review\ndescription: Review the week.\n---\nDo it.\n")
     store = TinyDBSessionStore(str(config.sessions_path))
-    store.save(
-        Session(key="c1", metadata={}, messages=[{"role": "user", "content": "hi"}, _load_call({"name": "web"})])
-    )
+    store.save(Session(key="c1", metadata={}, messages=[{"role": "user", "content": "hi"}, *_load_exchange("web")]))
     state = LiveState(gate_for=allow_all_gates, config=config, registry=build_registry(config))
     build = make_agent_builder(
         config,
@@ -1607,4 +1712,4 @@ def test_preloads_keep_the_order_they_were_loaded_in_not_the_declared_order(tmp_
 def test_loaded_toolsets_in_strips_the_name_as_the_load_does():
     from kokua.core.build import loaded_toolsets_in
 
-    assert loaded_toolsets_in([_load_call({"name": " web "})]) == ["web"]
+    assert loaded_toolsets_in(_load_exchange(" web ")) == ["web"]
