@@ -18,8 +18,8 @@ and writing a toolset of your own to put something new in the namespace.
 
 ## The rule that decides everything
 
-> **A capability is declared, never defaulted. Nothing reaches an agent until an `[agents.<name>]` table
-> names it in `tools`.**
+> **A capability is declared, never defaulted. Nothing reaches an agent until its
+> `[agents.<name>.tools]` table names it in `available`, or declares `available = "all"`.**
 
 There is no code path that adds a tool an agent did not name, and no flag that can disagree with a
 declaration. An installed plugin toolset does nothing on its own. A connected MCP server does nothing.
@@ -118,7 +118,9 @@ available = ["markdown-to-pdf", "email-report", "fs", "time"]
   namespace. (The same subtable can also carry a `resident` subset, the toolsets in the agent's context
   from its first turn with the rest loaded on demand, and the agent's own `confirm` and `review`; see
   [Tool access](../explanation/tool-access.md).) A built-in
-  group, a core capability, a plugin toolset, and an MCP server are all named the same way.
+  group, a core capability, a plugin toolset, and an MCP server are all named the same way. Instead of a
+  list, an agent can declare `available = "all"`, every installed toolset, which then requires a
+  `resident` list; see [the reference](../reference/configuration.md#available-all).
 - **`delegates_to`** is itself the switch: a non-empty list gives that agent a
   `spawn_subagent(agent_type, task)` tool offering **exactly** the agents it names, each built from its
   own table. There is no separate "enable sub-agents" setting to disagree with it. The nesting is
@@ -132,8 +134,12 @@ available = ["markdown-to-pdf", "email-report", "fs", "time"]
   declared opener.
 
 Two agents declaring the same toolset share the state behind it: one memory store, one set of live MCP
-connections, one skill directory. If two toolsets an agent declares contribute the same tool name, the
-one declared **first** wins, so declared order is meaningful.
+connections, one skill directory. If two resident toolsets an agent declares contribute the same tool
+name, the one declared **first** wins, so declared order is meaningful, and startup raises an alert naming
+the tool and both toolsets. An agent declaring `available = "all"` has no written order, so it uses trust
+order instead (Kokua's own toolsets, then plugins, then skills, then MCP servers), which keeps a remote
+server's tool from shadowing one Kokua ships. See [Tool
+access](../explanation/tool-access.md#which-of-two-same-named-tools-wins).
 
 Restart Kokua after editing. Agents are read at startup and the new declaration takes effect there.
 
@@ -188,7 +194,9 @@ session store or connects to anything, so a bad config fails with nothing writte
 | Two providers claiming one toolset name | **Startup fails**, naming both providers and their descriptions. |
 | A third-party plugin toolset or MCP server no agent names | Starts fine. One warning line in the log: it reaches no agent. Kokua's own built-in toolsets and your installed skills are exempt: they ship, or sit on disk, regardless of what any agent declares. |
 | A toolset that fails to import, or whose `build` raises | **Startup fails**, naming the module. No source is exempt: a build failure is a bug in whoever wrote the toolset, and a log line nobody reads is not how you should find out an agent lost a capability. |
-| Two declared toolsets sharing a tool name | The one declared first wins. |
+| Two resident toolsets sharing a tool name | The one declared first (for `"all"`, first in trust order) wins, and startup raises an alert naming both. A deferred toolset loaded later keeps the tool the agent already holds, and the load result says so. |
+| `available = "all"` without `resident`, or written as `["all"]` or `"All"` | **Startup fails**, saying how to write it. |
+| An `"all"` agent's `resident` naming a toolset outside the expansion | **Startup fails**, saying whether nothing installs it or it is `skills` on a worker. |
 
 One of those is quiet by design, and it lands in `$KOKUA_HOME/data/logs/kokua.log`. There is no
 console log handler, so it does not appear in your terminal.

@@ -54,9 +54,11 @@ the same idea with a name. (Those descriptions are as each project documented it
 treat them as pointers, not as their current state.)
 
 **Why it fails closed.** An agent holds exactly the toolsets named, so a toolset added later reaches
-nobody until a person writes its name in a list. The alternative, "everything is available unless
-excluded", fails open on growth: a new plugin, a new Kokua toolset, or a skill the assistant wrote would
-reach every agent, the researcher included, with nothing to notice the omission. The worked example is
+no agent with a list until a person writes its name there. The alternative, "everything is available
+unless excluded", fails open on growth: a new plugin, a new Kokua toolset, or a skill the assistant wrote
+would reach every agent, the researcher included, with nothing to notice the omission. (One agent can
+choose that growth on purpose, by declaring [`available = "all"`](#available-all-every-installed-toolset-still-declared);
+the point is that it is chosen per agent, in the agent's own table, and never the default.) The worked example is
 AIMU 0.31.0, when the `fs` group gained `write_file` and `edit_file`. Had availability been "whatever
 `fs` holds", an upgrade alone would have given every agent declaring `fs` a capability nothing
 declared. Kokua instead split the group by reach into two toolsets, `fs` (reads) and `fs_write`
@@ -83,7 +85,7 @@ is *deferred*: the agent can reach it, but none of its tool schemas are in the r
 asks for them. Leave `resident` out and every available toolset is resident, which is how the shipped
 workers are declared. A `resident` entry that `available` does not hold is a startup error, because a
 resident toolset is one the agent already holds. The order you write `resident` in changes nothing:
-tools are presented in `available` order either way. `kokua agents` prints each agent's resident list,
+tools are presented in `available` order either way (for `available = "all"`, in trust order). `kokua agents` prints each agent's resident list,
 or "every available toolset" when it declares none.
 
 Note what residency cannot do: widen anything. A deferred toolset is one the agent's own `available`
@@ -209,8 +211,153 @@ approval gate covers the same seven tools it did. What it costs is a round: a tu
 toolset spends one model call on `load_tools` before it can use it. Each model call in the web UI still
 shows its `N tools` count, which is residency as the model experienced it.
 
-`available = "all"`, every installed toolset available to load, is designed and not built yet; today
-`available` is always a list.
+## `available = "all"`: every installed toolset, still declared
+
+`available` takes one other value besides a list: the string `"all"`, meaning every toolset this install
+registers. It needs a `resident` list, for a reason the section below gives.
+
+```toml
+[agents.researcher.tools]
+available = "all"
+resident = ["web", "misc", "time", "messaging"]   # the rest load on demand
+```
+
+The shipped config does not use it. The entry agent keeps its list, with a commented
+`# available = "all"` line beside it, because an entry agent holding everything would undo the lean
+supervisor it is designed as, and would pull untrusted web content into the context of the agent you
+talk to.
+
+### What it expands to, and in what order
+
+`"all"` is expanded wherever an agent's availability is read (`core/agents.py`'s `available_for`), so
+`kokua agents`, the startup summary, the prompt, the build, and the approval checks all see the same
+list. It is every registered toolset, in **trust order**, most trusted first:
+
+1. Kokua's own toolsets: everything Kokua's distribution registers, wrappers over AIMU's groups included,
+   and so also `aimu_agents`, `benchmark`, `github_backup`, and `image`, which the configuration reference
+   lists as plugins because each is optional;
+2. third-party plugin toolsets;
+3. skills, one toolset per skill on disk;
+4. MCP servers, one toolset per `[[mcp.server]]`.
+
+Within each kind, toolsets keep the order they registered in. Three things are never in it:
+
+- **An `entry_point_only` toolset, on any agent but the entry agent.** That is `skills` (the authoring
+  tools), which a spawned worker cannot host. `"all"` leaves it out on a worker rather than listing it
+  and then refusing the config for a name nobody wrote. Individual skills stay in, since a worker holds a
+  skill through the registry rather than through `SkillAgent`.
+- **The `core` tools.** They belong to no toolset, so a set of toolsets cannot name them.
+  `spawn_subagent` is still earned only by a non-empty `delegates_to`.
+- **A toolset named `all`.** The name is reserved, refused at registration as `core` is, because no
+  agent could declare it on its own.
+
+`kokua agents` prints the expansion with its count, `available: all (22): aimu_agents, audio, ...`, and
+the startup summary line reads `researcher: all (22) available, 4 resident, ...`. The value is exactly
+the lowercase string: `["all"]`, `"All"`, or `"all"` beside other names fails startup with a message
+saying how to write it. `update_config` can write it too, once you unlock `[agents.*]`, and its dry run
+applies the same checks the next startup would.
+
+### Why it is still a declaration
+
+`"all"` is one value a declaration can take, not a default. A person writes it, in the agent's own table,
+which is locked against `update_config` by default, so the rule that the model cannot grant itself a
+capability holds unchanged. What changes is the failure mode the [fails-closed
+argument](#availability-fixed-by-the-host-never-by-the-model) is about: an `"all"` agent *does* grow
+when you install a plugin or write a skill, and that is the thing you asked for. Every other agent's
+list still grows only by an edit.
+
+It does not widen what the other two axes control. Approval entries still gate whatever the agent can
+reach, now that it can reach more, and residency still decides what costs context.
+
+### Why it requires `resident`
+
+Without a `resident` list, everything available is resident, and for `"all"` that is every tool schema
+the install offers, re-sent on every round. That is the opposite of what an agent holding everything
+needs, so the combination is a startup error. Every `resident` name has to be within the expansion,
+which config parsing cannot check (it cannot see the registry that says what `"all"` holds), so
+validation does, and says which of two reasons a name fails for: nothing installs it, or it is `skills`
+on a worker, which `"all"` leaves out there.
+
+### Which of two same-named tools wins
+
+Toolsets never share a name (`register` refuses two providers claiming one), but tools can: two MCP
+servers both offering `search`, or a remote server offering a `read_file` beside `fs`'s. Where toolsets
+are built together, `build_tools` keeps the first tool of a name, and for `"all"` "first" is trust order.
+Registration order would have put MCP servers first, letting a remote host's `read_file` shadow Kokua's.
+
+Built together means the resident build and a delegated worker's resident tools. A deferred toolset is
+settled by load order instead: AIMU keeps whichever tool the agent already holds, and the load result
+names what it skipped, `Not loaded, because the name is already taken: read_file (by 'fs').`, so a
+later load never replaces a held tool.
+
+A resident tool that loses is reported, never dropped in silence. After every startup build, Kokua checks
+each agent's resident toolsets and raises one alert per hidden tool:
+
+```text
+researcher: read_file from 'files' is shadowed by 'fs' (trust order keeps the first).
+```
+
+The check runs on every declared agent, with a list or with `"all"`; on a list agent the order it
+reports against is the list's own. It needs what each toolset built, so an agent nothing delegates to,
+which startup never builds, is skipped and logged at INFO rather than reported as clean.
+
+### What arrives mid-session
+
+`"all"` means every toolset registered at startup, plus every skill written since. Skills arrive at the
+next spawn; MCP servers arrive at the next restart:
+
+| | Skill written (`author_skill`, `add_skill_script`, `update_skill`) | MCP server added, persisted (unauthenticated or OAuth) | MCP server added, bearer token |
+| --- | --- | --- | --- |
+| Entry agent | Immediately, through its `SkillAgent` | As its `available` says (rows below) | Never |
+| Agent with a list | No new skill. A skill it already names reaches its next spawn as now written, new scripts included | Once named in `available`, after a restart | Never |
+| Agent with `"all"` | Its next spawn | Next restart | Never |
+| Composed worker | Its next compose | Next restart | Never |
+
+The mechanism is one refresh. After each skill write, `LiveState.refresh_skills` rescans the skills
+folder into the registry, keeping every other entry as startup registered it, then rebuilds every live
+agent's `spawn_subagent`, the same path `add_mcp_server` already uses. A worker is built fresh per spawn
+from its spec, and `compose_subagent` reads the registry on every call, so neither needs any running
+agent's prompt touched. A conversation whose agent has not been built reads the new registry when it is.
+(A revised description reaches the entry agent's own catalogue only in a fresh conversation, since its
+prompt is not rewritten mid-run; a revised body applies the next time any agent activates the skill.)
+
+The rule behind the two columns is whether the new capability opens a new trust path. **A skill does
+not.** Its prose adds nothing the entry agent could not already write into a delegated task, and its
+scripts are code a person read while approving `add_skill_script`: the code is that call's `content`
+argument, the shipped config gates the tool, and `[security].never_auto_approve` keeps a reviewer from
+answering for you. **A new MCP server does.** Its tools and their descriptions arrive from a remote host
+after a person approved only its URL. Keeping servers at restart preserves `add_mcp_server`'s guarantee
+that it cannot grant a capability in the session that added it, which is what blocks the attack where
+injected text persuades you to approve a malicious server and the agent calls its tools the same turn.
+A bearer-token server's token is never written to disk, so no restart brings it back, and nothing can
+name it this session.
+
+Prior art agrees on both halves. Live skills are the norm: Claude Code hot-reloads skill directories and
+has `/reload-skills`, OpenClaw refreshes when a `SKILL.md` changes, and Hermes treats a dropped-in skill
+as live. And in every surveyed system a new MCP server becomes usable only through a human or host
+action outside the model's loop (Claude Code's `/mcp`, Hermes' `/reload-mcp`, Managed Agents' host-side
+`sessions.update()` while idle), never through the model's own tool call. No surveyed system documents
+whether sub-agents see capabilities created at runtime, so that part is Kokua's own decision.
+
+Refreshing at write time also moves a name collision to the call that causes it. `author_skill` refuses
+a name already taken before writing anything: a toolset's, an MCP server's on file in `config.toml`
+(including one added this session, which the registry has not seen yet), `core`, or `all`. Without
+that, a skill named `web` would be written to disk and stop the next start. A collision the check cannot
+see, such as a skill directory made by hand, comes back with the tool's result, so the model can act on
+it.
+
+### Exploring with `"all"`
+
+An agent holding everything still pays context only for what it loads, and each load is a decision the
+model makes. If you want to watch those decisions while you find out what an `"all"` agent reaches for,
+put `core.load_tools` in its `confirm` list: that is the control for "ask me before you expand your
+context". Every load then stops for your answer and names the toolset, and the `N tools` count on each
+model call in the web UI shows what the agent's context holds as the turn goes on.
+
+`compose_subagent` changes meaning on an `"all"` agent too. Its guidance gives two reasons to compose: a
+capability you do not hold, or tool output that would flood your context. An agent holding everything
+has only the second, which is the clearest demonstration of what delegation is for once availability is
+not the question.
 
 ## Approval: a per-call layer
 
@@ -313,3 +460,5 @@ table is in the [configuration reference](../reference/configuration.md#removed-
 - [Architecture](architecture.md#how-an-agents-tools-resolve): where each axis is resolved in code.
 - [`core/approval.py`](https://github.com/saxman/kokua/blob/main/src/kokua/core/approval.py): the module
   that resolves each agent's policy.
+- [`core/agents.py`](https://github.com/saxman/kokua/blob/main/src/kokua/core/agents.py): `TRUST_ORDER`,
+  `available_for`, and the shadow check.

@@ -429,7 +429,14 @@ change. Full rationale, with the code that backs each claim, is in
    defaulted*: availability is one of three axes (what an agent may call, what is in its context, what
    asks first), each its own key, and only the approval pair may be inherited. An agent holds exactly
    the toolsets its `[agents.<name>.tools].available` names, plus the delegate a non-empty `delegates_to` earns it; no code path
-   grants a capability the table did not declare, and no flag can disagree with one. `compose_subagent` is
+   grants a capability the table did not declare, and no flag can disagree with one. **`available = "all"`
+   is one value a declaration can take,** not a default: every installed toolset, expanded by
+   `agents.available_for` in `TRUST_ORDER` (Kokua's own, plugins, skills, MCP servers) so a remote tool
+   never shadows a shipped one, minus `entry_point_only` toolsets on a worker, never the `core` tools, and
+   always with a `resident` list. Skills written mid-session reach an `"all"` worker on its next spawn
+   (`build.refresh_skills`); MCP servers added at runtime wait for a restart, because a new server is a new
+   trust path and a skill is not. The config holds it as the sentinel `ALL_TOOLSETS`, which raises if
+   iterated, so every reader goes through `available_for`. `compose_subagent` is
    the one code path that draws from the whole registry instead of a table, and it is still entered by
    declaration: only an agent whose own table names `capabilities` holds it at all. What the rule protects
    is a *persistent* agent's reach, and a sub-agent composed for one task is not an agent the config
@@ -481,7 +488,8 @@ change. Full rationale, with the code that backs each claim, is in
    `<toolset>` (or `<toolset>.*`) for a whole capability, `<toolset>.<tool>` for one of its tools, with
    `core` reserved for the tools no toolset provides (`spawn_subagent`, `activate_skill`, and AIMU's
    `available_tools` / `load_tools` once any agent defers a toolset, so a bare `core` covers all four)
-   and refused as a toolset name at registration so nothing can shadow it. An entry naming a toolset an
+   and refused as a toolset name at registration so nothing can shadow it (as `all` is, which
+   `available = "all"` has spent). An entry naming a toolset an
    agent defers, and that is not built yet, cannot resolve at startup, since its tools do not exist
    yet. "Built" is `agents.built_toolsets`, the one answer the default tier, declared pairs, and the
    floor share: every toolset a build recorded, plus every skill the entry agent's `SkillAgent` holds

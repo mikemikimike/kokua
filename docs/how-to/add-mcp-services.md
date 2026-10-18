@@ -6,7 +6,7 @@ startup, or the assistant's own `add_mcp_server` tool, called mid-conversation. 
 place, and it is the step people miss:
 
 > A configured server is a **toolset**, named by its `name`. It reaches an agent only when that agent's
-> `available` list in `[agents.<name>.tools]` names it.
+> `available` list in `[agents.<name>.tools]` names it, or the agent declares `available = "all"`.
 
 Connect a server without naming it in an agent and you get a working connection nothing can use.
 
@@ -47,7 +47,7 @@ description = "Looks up quotes and places trades."
 available = ["stocks", "compute", "time"]     # "stocks" is the [[mcp.server]].name above
 ```
 
-A name in `tools` that matches no toolset is a **startup error** listing the available names, so a typo
+A name in `available` that matches no toolset is a **startup error** listing the available names, so a typo
 here cannot quietly produce an agent with fewer tools than you wrote. Unknown keys and wrong types in
 `[[mcp.server]]` are hard startup errors that name the offending server, as they always were.
 
@@ -133,14 +133,15 @@ startup, and the difference is the whole story of this section:**
 
 - **A server already declared in `[[mcp.server]]`** (even one that was unreachable at startup, or that
   you disconnected earlier in the session) already has a name in the toolset namespace, so an agent's
-  `tools` may already reference it. Connecting it reaches the next **worker** spawned by such an agent, in
+  `available` may already reference it (and an `"all"` agent already holds it). Connecting it reaches the next **worker** spawned by such an agent, in
   the same turn. The agent you are talking to is the exception even here: it resolved its own tools when
   it was built, so if *it* declares the server, it picks them up only the next time it is built (a new
   conversation, or a restart).
 - **A server new to this session reaches nothing at all until you restart.** The toolset namespace is
-  built once, at startup, from the `[[mcp.server]]` tables as they were then. So a newly connected
-  server's name is not in that namespace, and nothing naming it resolves to anything before the next
-  start. You can write the `[agents.*]` table now, and so can the assistant if you have unlocked
+  built once, at startup, from the `[[mcp.server]]` tables as they were then (skills are the one source
+  re-read mid-session; servers never are). So a newly connected server's name is not in that namespace,
+  and nothing naming it resolves to anything before the next start, not even an agent declaring
+  `available = "all"`, which picks the server up at that restart without being told its name. You can write the `[agents.*]` table now, and so can the assistant if you have unlocked
   `agents.*` (`update_config` rereads the file, so it sees the entry `add_mcp_server` just wrote and
   accepts the name), but editing that file while Kokua runs changes nothing until it restarts.
   `add_mcp_server` has recorded the server for you; the remaining two steps are yours.
@@ -157,20 +158,24 @@ What persists differs by auth mode, and this is the one asymmetry to remember:
 | OAuth | yes, URL + a derived name | yes (the saved token is reused) |
 | Bearer token | **no** | **no**: the secret is not written to disk |
 
-So a bearer-token server added at runtime is session-only by design. To keep it, add a `[[mcp.server]]`
-table with `token_env` by hand.
+So a bearer-token server added at runtime is session-only by design, and since it has no name on file,
+nothing can name it even this session. To keep it, add a `[[mcp.server]]` table with `url`, `name`, and
+`token_env` by hand, name the server in an agent's `available` list (or use an `"all"` agent), and
+restart.
 
 Two consequences of the runtime path being real:
 
-- **Finishing a runtime add takes an edit and a restart.** Since every server needs a name, the write
-  derives one from the server's host (`broker.example.com` becomes `broker-example-com`, with a numeric
-  suffix if that name is already taken), so the config it leaves behind always loads. Then:
-  1. add that name (or rename it to something friendlier) to an agent's `available` list by hand. `[agents.*]` is
-     locked by default: `update_config` refuses the whole section, precisely so the assistant cannot
-     grant itself the capability it just connected;
+- **Finishing a runtime add takes a restart, and for an agent with a list, an edit too.** Since every
+  server needs a name, the write derives one from the server's host (`broker.example.com` becomes
+  `broker-example-com`, with a numeric suffix if that name is already taken), so the config it leaves
+  behind always loads. Then:
+  1. add that name (or rename it to something friendlier) to an agent's `available` list by hand, unless
+     the agent you want declares `available = "all"`, which holds every configured server already.
+     `[agents.*]` is locked by default: `update_config` refuses the whole section, precisely so the
+     assistant cannot grant itself the capability it just connected;
   2. **restart Kokua**, because the namespace and the agent tables are both read only at startup.
 
-  Until you do, the server connects, reconnects on each start, and startup warns that nothing names it.
+  Until you do, the server connects and reconnects on each start, and no agent can call its tools.
 - `remove_mcp_server` disconnects, drops the entry, and fans the rebuild out to every live agent. A worker
   spawned after it will not have the server's tools.
 

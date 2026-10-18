@@ -117,7 +117,7 @@ the command says where to get one.
 
 One `SkillManager` is shared by every conversation, so a skill authored in one conversation is usable in
 all of them. The flip side is that the manager caches its catalogue and only re-scans the directory when
-something refreshes it, which `author_skill` and `add_skill_script` do and a hand-written directory cannot:
+something refreshes it, which `author_skill`, `update_skill`, and `add_skill_script` do and a hand-written directory cannot:
 **restart Kokua after adding a skill by hand.** Starting a new conversation is not enough, since the new
 agent reads the same cached catalogue.
 
@@ -130,9 +130,16 @@ shortest path is a sentence:
 > "That worked. Save it as a skill called `weekly-digest` so you can do it the same way next Friday."
 
 `author_skill(name, description, body)` writes the `SKILL.md` and refreshes the manager, so the skill is
-usable in the same conversation. It **will not overwrite** an existing skill; to revise one, either edit
-the file by hand or delete the directory first. It is not gated for approval, since it only writes
-markdown.
+usable in the same conversation. It is not gated for approval, since it only writes markdown. Two kinds
+of name are refused before anything is written:
+
+- **An existing skill.** It will not overwrite one; `update_skill(skill_name, description, body)` revises
+  a skill's prose in place, passing only the part that changes.
+- **A name another toolset already holds.** Skills share the one namespace every toolset does, so
+  `author_skill` refuses a toolset's name (`web`, `memory`), an MCP server's `name` in `config.toml`'s
+  `[[mcp.server]]` entries (including one `add_mcp_server` wrote this session, which nothing has
+  registered yet), and the two reserved names, `core` and `all`. Without the check, a skill named `web`
+  would be written to disk and then stop the next start, as a collision the registry refuses.
 
 ### Attach a script
 
@@ -161,8 +168,24 @@ loading the skill's instructions first.
 
 The entry agent is an AIMU `SkillAgent`; every agent it spawns is a plain `Agent`, which is why the
 `skills` *authoring* toolset cannot be declared on one. A worker can still hold an individual skill: its
-script tools and `activate_skill` arrive through the registry rather than from `SkillAgent`. This
-has a practical consequence for how you write a skill:
+script tools and `activate_skill` arrive through the registry rather than from `SkillAgent`.
+
+A skill written mid-session reaches each kind of agent at a different moment, because each reads skills
+from a different place:
+
+| Agent | When a skill written with `author_skill`, `update_skill`, or `add_skill_script` reaches it |
+| --- | --- |
+| The entry agent | Immediately, through its `SkillAgent` |
+| A worker declaring `available = "all"` | Its next spawn |
+| A worker declaring a list | Never as a new skill, since its list names its skills; a skill it already names reaches its next spawn as now written, new scripts included |
+| A composed worker | Its next `compose_subagent` |
+
+After each write, Kokua rescans the skills folder into the registry and rebuilds every live agent's
+`spawn_subagent`, so the next worker spawned is built from the skills now on disk. Why skills arrive live
+while a new MCP server waits for a restart is in [Tool
+access](../explanation/tool-access.md#what-arrives-mid-session).
+
+The entry agent being the one `SkillAgent` has a practical consequence for how you write a skill:
 
 Write the procedure from the entry agent's point of view, as a plan it carries out with the tools it
 declares plus delegation. In the shipped config that agent holds only cross-cutting toolsets, so a skill

@@ -505,20 +505,34 @@ and step 6 its *approval* axis:
    could not do what it claimed: `resolve_config` imports every entry point before the file is parsed
    (see [Configuration](#configuration)), so withholding the names afterwards ran the
    same code and only turned a working `available` declaration into an unknown-toolset error.
-   `registry.register` then rejects a name two providers claim. A `Toolset` is a frozen dataclass:
+   `registry.register` then rejects a name two providers claim, and refuses two names outright, `core`
+   and `all`, which the approval vocabulary and `available = "all"` have already spent. The four labels
+   are mostly presentation, but two questions are answered from them: `agents.is_skill` tells a skill's
+   entry from any other kind, and `agents.TRUST_ORDER` ranks them (built-in toolset, plugin, skill, MCP
+   server) for `available = "all"`. Skills are the one source re-read after startup: each skill write
+   calls `build.refresh_skills`, which swaps in `agents.with_skill_toolsets(registry, ...)`, every skill
+   entry rescanned from disk and every other entry kept as startup registered it, then rebuilds every live
+   agent's `spawn_subagent`. That is why a skill reaches an `"all"` worker on its next spawn while a server
+   `add_mcp_server` connected waits for a restart. A `Toolset` is a frozen dataclass:
    `name`, `description`, `build`, `guidance`, `cross_cutting`, `entry_point_only`, `workflow`,
    `settings`.
 2. **Validate.** `agents.validate_agents` runs before the session store is opened or any server
    connected, so an unknown toolset name, a missing entry agent, an unknown delegation target, a cycle,
-   or `skills` on a worker fails with nothing written and nothing connected.
-3. **Select.** `registry.select(names, registry, agent=, entry_point=)` returns the declared toolsets in
-   declared order, deduplicated, raising on an unknown name (with the available ones listed) or an
+   `skills` on a worker, or an `"all"` agent's `resident` entry outside the expansion fails with nothing
+   written and nothing connected.
+3. **Select.** The names come from `agents.available_for(config, registry, agent)`, the one reader of an
+   agent's availability: its list as written, or for `available = "all"` every registered toolset sorted
+   by `TRUST_ORDER` (registration order kept within a provider), minus `entry_point_only` toolsets on any
+   agent but the entry agent. The config holds `"all"` as the sentinel `ALL_TOOLSETS`, which raises if
+   iterated, so a reader that forgot to expand it fails loudly instead of walking the letters of `"all"`.
+   `registry.select(names, registry, agent=, entry_point=)` returns those toolsets in that
+   order, deduplicated, raising on an unknown name (with the available ones listed) or an
    `entry_point_only` toolset declared elsewhere. It never drops: dropping is what the previous per-role
    lists did, and a typo silently produced a smaller toolset. For the entry agent, skill names are held
    back first (`agents.without_skill_names`), since its `SkillAgent` already advertises every skill.
 4. **Split by residency.** `agents.split_by_residency` divides the selection into what the agent holds
-   from its first turn (`AssistantConfig.resident_for`: its `resident` list, else all of `available`)
-   and what it loads on demand, both in declared order. `build.tool_groups_for` turns the split into
+   from its first turn (`agents.resident_for`: its `resident` list, else all of its availability)
+   and what it loads on demand, both in availability order. `build.tool_groups_for` turns the split into
    AIMU `ToolGroup`s, handed to the agent's constructor: a resident group has no `build` and exists so
    `available_tools` shows the whole picture, and a deferred group's `build` is `build.build_deferred`,
    which is `build_tools` over that one toolset, so a toolset arriving late goes through exactly the call
@@ -529,7 +543,12 @@ and step 6 its *approval* axis:
    exception into the model's `Could not load` result; the group stays loadable. A delegated worker gets
    the same groups through its spawn spec's `"tool_groups"` key.
 5. **Build.** `registry.build_tools(toolsets, ctx)` calls each `Toolset.build(ctx)` and concatenates,
-   deduplicating by `__name__` and keeping the first, so declared order decides a collision. `ctx` is a
+   deduplicating by `__name__` and keeping the first, so availability order (trust order, for `"all"`)
+   decides a collision among toolsets built together. A deferred toolset loaded later is settled by AIMU
+   instead, which keeps the tool the agent already holds and names the one it skipped in the load result.
+   A resident collision is reported: once every startup build is done, `agents.shadowed_tools` reads
+   `LiveState.tools_by_toolset` and `Assistant.start` raises one alert per hidden tool, skipping (and
+   logging at INFO) an agent nothing delegates to, since startup never built it. `ctx` is a
    `ToolsetContext`: the one process-wide `LiveState`, this agent's live object (`None` for a spawned
    worker), and its `agent_name`, which unlike the object is known at every construction site and is how
    a toolset scopes itself to its own holder (`benchmark` asks the config what `agent_name` runs on).
@@ -576,7 +595,7 @@ The prompt is assembled from the same split, in `agents.assemble_system_message`
 agent, a `--system` flag wins outright over its declared opener; a worker's declared opener is never
 touched by the flag. Absent an override, it is the agent's own `system_message` (falling back to
 `[assistant].system_message`, then the built-in default), then each *resident* toolset's `guidance` in
-declared order, then one line naming the deferred toolsets (`Also available, load before use: ...`) if
+availability order, then one line naming the deferred toolsets (`Also available, load before use: ...`) if
 there are any, then `DELEGATION_GUIDANCE` if `delegates_to` is non-empty, then `LEAN_DELEGATION_GUIDANCE`
 if every selected toolset, resident or deferred, is `cross_cutting`. A deferred toolset's guidance is
 not in the prompt: it rides its group and reaches the model as the result of loading it. Guidance travelling with the capability is the point: installing a toolset brings the
@@ -653,7 +672,7 @@ loads it:
 | `send_message`, `list_agents` | `toolsets/messaging.py` | `messaging` | resident |
 | `spawn_subagent` | AIMU `make_async_subagent_tool` | implied by a non-empty `delegates_to` | always held |
 | `save_document`, `read_document`, `edit_document`, `list_documents`, `search_documents` | AIMU `make_document_tools` | `documents` | deferred |
-| `author_skill`, `update_skill`, `add_skill_script` | AIMU `make_skill_authoring_tool` / `make_skill_update_tool` / `make_skill_script_tool` | `skills` (entry agent only) | deferred |
+| `author_skill`, `update_skill`, `add_skill_script` | AIMU `make_skill_authoring_tool` / `make_skill_update_tool` / `make_skill_script_tool`, wrapped by `toolsets/skills.py` to refresh the registry after each write and refuse a taken name | `skills` (entry agent only) | deferred |
 | `add_mcp_server`, `remove_mcp_server` | `toolsets/mcp.py` | `mcp` | deferred |
 | `schedule_task`, `list_scheduled_tasks`, `get_scheduled_task`, `update_scheduled_task`, `cancel_scheduled_task`, `enable_scheduled_task`, `disable_scheduled_task`, `run_scheduled_task`, `stop_scheduled_task` | `toolsets/scheduling.py` | `scheduling` | deferred |
 | `benchmark_model` | `toolsets/benchmark.py` | `benchmark` | deferred |
@@ -1525,9 +1544,14 @@ empty after the server returned (step 4 of [How an agent's tools resolve](#how-a
 The runtime `add_mcp_server` tool appends reconnectable servers there via
 `config/store.py` (no secret on disk), so config.toml stays the one source; it writes a name derived
 from the server's host and disambiguated against the names already on file, so a successful add can
-never leave behind a config the registry's collision check would reject at the next boot. That derived
-name reaches no agent until a human adds it to an `[agents.*]` table, since that section is locked by
-default: the tool can connect a server but cannot grant itself the capability. `mcp/auth.py` handles OAuth
+never leave behind a config the registry's collision check would reject at the next boot. Nothing can
+use the server in the session that added it, since the registry is not rebuilt for servers (only skills
+are re-read mid-session), so the tool can connect a server but cannot grant itself the capability. After a
+restart the derived name reaches an agent declaring `available = "all"`, and any other agent once a human
+adds it to that agent's `[agents.*]` table, which is locked by default. A bearer-token server is not
+written at all, so a restart drops it. `author_skill` reads the server names on file
+(`config/store.py`'s `mcp_server_names`) as well as the registry, so a skill cannot take a name this
+session's `add_mcp_server` wrote and stop the next start on the collision. `mcp/auth.py` handles OAuth
 by posting the authorization link into the chat and persisting tokens to disk. It also carries the one
 piece of that flow a single-machine library gets to assume away: `OAuthSettings` holds where the
 provider's redirect lands, because FastMCP's default (loopback, a random port per process) sends the

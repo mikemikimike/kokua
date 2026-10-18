@@ -255,6 +255,14 @@ agent's availability, residency, and approval lists as the config declares them.
 declares `["web", "misc", "time", "messaging"]`. It cannot read a file, and delegating a file-reading task to it
 returns an apology rather than an error. Widening the entry agent widens nothing for its workers.
 
+**"Everything" is a declaration too.** An agent can write `available = "all"` instead of a list, and
+hold every installed toolset. That looks like the default this page argues against, and it is not: a
+person wrote it, in that agent's table, and every other agent still holds only its list. What it buys is
+an agent that grows when you install something, on purpose. It must also say what is `resident`, so
+holding everything does not mean paying for everything on every round. [Tool
+access](../explanation/tool-access.md#available-all-every-installed-toolset-still-declared) covers what
+it expands to, in what order, and what reaches it mid-session.
+
 **What is loud, so you know what to expect.** An unknown name in an `available` list fails startup. A cycle
 in `delegates_to` fails startup. A `confirm` or `review` entry that would gate nothing fails
 startup, with the near misses suggested, because a gate that matches nothing prompts for nothing and
