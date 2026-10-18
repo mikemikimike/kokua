@@ -792,7 +792,13 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer
   registered it) and every live agent's `spawn_subagent` is rebuilt, so the skill reaches an
   `available = "all"` worker on its next spawn and `compose_subagent` on its next call. The entry agent
   still gets it immediately through its `SkillAgent`. A worker declaring a list gains no new skill, but a
-  skill it already names reaches its next spawn as now written, new scripts included. MCP servers added at
+  skill it already names reaches its next spawn as now written, new scripts included. A gate naming the
+  skill covers those new scripts: every build re-matches each `confirm`, `review`, and
+  `[security].never_auto_approve` entry naming its toolset, adding names and never removing one, and a
+  script write reports each skill's tools as a build before any delegate is rebuilt, so
+  `review = ["weekly-digest"]` holds back a script added mid-session for every agent, the entry agent
+  included. A refresh that fails for any reason is reported in the tool's result, after the write,
+  rather than raised. MCP servers added at
   runtime still wait for a restart: a new server is a new trust path, a remote host's tools arriving after
   a person approved only its URL, where a skill's prose and its approved scripts are not. `author_skill`
   and `add_skill_script` both rebuild the skill tools workers use, retiring the previous skills MCP server

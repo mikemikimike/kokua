@@ -6,7 +6,7 @@ import logging
 
 from aimu.skills import make_skill_authoring_tool, make_skill_script_tool, make_skill_update_tool
 
-from kokua.config import MCPServerConfig
+from kokua.config import ConfigError, MCPServerConfig
 from kokua.config.schema import AgentConfig
 from kokua.core.agents import build_registry
 from kokua.mcp import servers
@@ -175,3 +175,22 @@ async def test_a_refresh_collision_reaches_the_model_instead_of_raising(tmp_path
 
     assert result.startswith("Created skill 'weekly-digest'")
     assert "toolset name 'x' is claimed by two providers." in result
+
+
+async def test_any_failed_refresh_reaches_the_model_after_the_write(tmp_path, caplog):
+    """An approval entry refusing the new script, or anything unexpected: the script is on disk either way,
+    and an exception in place of the result would tell the model it is not."""
+
+    def refused(*, tools_changed: bool) -> None:
+        raise ConfigError("[assistant.tools].review names 'weekly-digest.x', which matches nothing.")
+
+    tools = _tools(_skills_config(tmp_path), agent=_ReloadingAgent(), refresh_skills=refused)
+    await tools["author_skill"](name="weekly-digest", description="Digest the week.", body="Do it.")
+
+    with caplog.at_level(logging.WARNING, logger="kokua.toolsets.skills"):
+        result = await tools["add_skill_script"](skill_name="weekly-digest", filename="run.py", content="print(1)\n")
+
+    assert "is now callable" in result
+    assert "The write happened, but workers were not given the change" in result
+    assert "matches nothing" in result
+    assert any(record.exc_info for record in caplog.records)

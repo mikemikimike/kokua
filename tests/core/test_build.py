@@ -1854,3 +1854,27 @@ async def test_a_server_added_at_runtime_does_not_reach_an_all_worker(tmp_path, 
     assert "weekly-digest" in _group_names(captured[-1]["explorer"])
     assert "broker-example" not in _group_names(captured[-1]["explorer"])
     assistant._state.close()
+
+
+def test_a_skill_refresh_grows_the_approval_policies_before_any_worker_is_rebuilt(tmp_path):
+    """A rebuilt delegate hands its workers the new scripts, so every gate naming a skill must have seen
+    them first. A prose edit changes no tool, so it reports no build."""
+    from kokua.core.build import refresh_skills
+    from tests.core.test_skill_toolsets import write_skill
+
+    config = _authoring_all_worker_config(tmp_path)
+    write_skill(config, "weekly-digest", "Digest the week.", script="print(1)\n")
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=build_registry(config))
+    events: list = []
+    state.toolset_built = lambda toolset, names: events.append((toolset, names))
+    state.refresh_workers = lambda agent: events.append("workers rebuilt")
+    state.for_each_agent = lambda fn: fn(object())
+    try:
+        refresh_skills(state, tools_changed=True)
+        assert events == [("weekly-digest", frozenset({"weekly_digest__run"})), "workers rebuilt"]
+
+        events.clear()
+        refresh_skills(state, tools_changed=False)
+        assert events == ["workers rebuilt"]
+    finally:
+        state.close()

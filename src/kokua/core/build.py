@@ -460,9 +460,12 @@ def refresh_skills(state: LiveState, *, tools_changed: bool) -> None:
     ``tools_changed`` says whether the write could change which tools a skill offers (a new skill, a new
     script). Only then is ``skill_tools`` rebuilt, since each rebuild retires a skills server that stays
     open until the process ends; a prose edit changes descriptions and guidance, which live in the registry.
+    Only then, too, is each skill's tool list reported to ``state.toolset_built`` as a build, so approval
+    entries naming a skill grow to its new scripts before a single delegate is rebuilt.
 
     A collision (a skill on disk claiming another toolset's name) raises ``ToolsetError`` before anything
-    is swapped, so the previous registry stays in force.
+    is swapped, so the previous registry stays in force. An approval hook refusing a skill's new tools
+    raises ``ConfigError`` before any delegate is rebuilt, so no worker spec is handed them.
     """
     # Imported here, not at module level: see the comment in resolve_system_message -- the same cycle
     # runs through kokua.core.agents.
@@ -477,5 +480,11 @@ def refresh_skills(state: LiveState, *, tools_changed: bool) -> None:
     state.registry = registry
     if tools_changed:
         state.refresh_skill_tools()
+        # Reported as builds before any delegate is rebuilt, because a rebuilt delegate hands workers the
+        # new scripts and the entry agent's SkillAgent already holds them: a gate naming a skill has to
+        # cover a new script before anything can call it (see kokua.core.approval).
+        if state.toolset_built is not None:
+            for skill in state.all_skills.skills.values():
+                state.toolset_built(skill.name, frozenset(skill.script_tool_names()))
     if state.for_each_agent is not None and state.refresh_workers is not None:
         state.for_each_agent(state.refresh_workers)

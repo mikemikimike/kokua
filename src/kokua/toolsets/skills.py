@@ -126,9 +126,11 @@ def _refreshing(tool_fn: Callable, state: "LiveState", *, tools_changed: bool) -
     and with them the skills server, as they are.
 
     It refreshes whatever the tool answered, since a refresh after a write that did not happen costs one
-    directory scan and changes nothing. A refresh that fails names a collision the name check could not
-    see (a skill directory made by hand, say), and that goes back to the model with the result rather
-    than raising, because the write it follows has already happened and the model can act on the reason.
+    directory scan and changes nothing. A refresh that fails goes back to the model with the result rather
+    than raising, because the write it follows has already happened and an error in its place would say
+    otherwise. The expected failure is a collision the name check could not see (a skill directory made
+    by hand, say), which the next start will refuse as well; anything else, an approval entry refusing a
+    skill's new tools included, is logged with its traceback and reported the same way.
     ``functools.wraps`` copies the ``__tool_spec__`` AIMU reads, so the model sees AIMU's own schema.
     """
 
@@ -141,6 +143,9 @@ def _refreshing(tool_fn: Callable, state: "LiveState", *, tools_changed: bool) -
             state.refresh_skills(tools_changed=tools_changed)
         except ToolsetError as error:
             return f"{result}\n\nWorkers were not given the change, and the next start will refuse it too: {error}"
+        except Exception as error:
+            logger.warning("Refreshing the skills after %s failed.", tool_fn.__name__, exc_info=True)
+            return f"{result}\n\nThe write happened, but workers were not given the change: {error}"
         return result
 
     return refreshed

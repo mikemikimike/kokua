@@ -573,7 +573,11 @@ and step 6 its *approval* axis:
    or `pending_review`. `build_tools` calls `LiveState.toolset_built` for every toolset it builds, after
    recording the tool names and before returning any tool, and `Assistant._on_toolset_built` resolves the
    waiting entries there (`ApprovalPolicies.with_built`, and, with auto-approval enabled,
-   `AutoApproval.with_built` for `[security].never_auto_approve` entries waiting the same way). Because
+   `AutoApproval.with_built` for `[security].never_auto_approve` entries waiting the same way). Each
+   policy keeps the entries it was written with, and the hook matches every one naming the built
+   toolset, resolved or waiting, adding names and never removing one, because a toolset's tools can grow
+   after startup: `refresh_skills` reports each skill's tools to the same hook after a script is written,
+   before it rebuilds any delegate, so `review = ["weekly-digest"]` covers a script added mid-session. Because
    the hook sits in the one build every path shares, it holds whoever builds the toolset: a model's
    `load_tools`, a composed worker, or a rebuilt agent's preload. An entry that still matches nothing, or
    (with auto-approval enabled) a `review` list that now reaches the floor, raises there and refuses the

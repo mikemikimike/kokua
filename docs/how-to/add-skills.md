@@ -208,6 +208,8 @@ Two things follow:
   approves every future call.
 - Proactive and backgrounded turns auto-deny every gated tool, so the assistant cannot author and run a
   new script while you are not watching. It can still call scripts that already exist.
+- A gate naming a skill bare (`confirm = ["weekly-digest"]`) covers every script it has, including one
+  added after startup: the gate grows before any agent can call the new script.
 
 Review `~/.kokua/data/skills/*/scripts/` the way you would review anything else on your `PATH`.
 

@@ -149,6 +149,12 @@ hook, and the hook resolves the waiting entries before a single tool is returned
 `load_tools`, a [composed worker](architecture.md#agents-and-delegation), or a rebuilt agent restoring
 what its conversation loaded (below).
 
+The hook matches every entry naming the built toolset, not only the waiting ones, and only ever adds
+names. That matters because a toolset's tools can grow after startup: a skill gains a script
+mid-session, and `review = ["weekly-digest"]` means every script the skill has now, not the ones it
+had when Kokua started. Each script write reports every skill's tools to the same hook before any
+worker can be handed the new script (see [what arrives mid-session](#what-arrives-mid-session)).
+
 An entry that still matches nothing once its toolset is built, such as `mcp.add_mcp_servr`, refuses that
 build and every later one, so the toolset cannot be loaded until the entry is fixed and Kokua
 restarted (approval lists are startup-only, and locked by default). That is failing
@@ -329,7 +335,10 @@ not.** Its prose adds nothing the entry agent could not already write into a del
 scripts are code a person read while approving `add_skill_script`: the code is that call's `content`
 argument, the shipped config gates the tool, and `[security].never_auto_approve` keeps a reviewer from
 answering for you. (A script put into the skills folder some other way, such as a `write_file` call,
-arrives under that tool's gate instead, which for `fs_write` in the shipped config is `review`.) **A new MCP server does.** Its tools and their descriptions arrive from a remote host
+arrives under that tool's gate instead, which for `fs_write` in the shipped config is `review`.) A gate
+you wrote on the skill itself also covers the new script: the refresh reports each skill's tools as a
+build before it rebuilds any delegate, so an entry naming the skill bare holds the script back for every
+agent, the entry agent included, before any of them can call it. **A new MCP server does.** Its tools and their descriptions arrive from a remote host
 after a person approved only its URL. Keeping servers at restart preserves `add_mcp_server`'s guarantee
 that it cannot grant a capability in the session that added it, which is what blocks the attack where
 injected text persuades you to approve a malicious server and the agent calls its tools the same turn.

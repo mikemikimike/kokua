@@ -1210,6 +1210,99 @@ def test_a_refused_build_names_the_resolvers_reason(tmp_path):
         policies.with_built("mcp", frozenset({"add_mcp_server"}))
 
 
+# A build re-resolves every entry naming its toolset, not only the pending ones: a toolset can offer more
+# tools than it did when an entry first resolved (a skill gains a script mid-session), and an entry naming
+# the whole toolset has to cover what it offers now.
+
+
+def test_a_later_build_grows_a_resolved_whole_toolset_entry(tmp_path):
+    _, _, policies = _deferred_setup(tmp_path, default_review=["memory"])
+    assert policies.default.review == frozenset({"remember"})
+    updated = policies.with_built("memory", frozenset({"remember", "recall"}))
+    assert updated.default.review == frozenset({"remember", "recall"})
+
+
+def test_a_resolved_tool_entry_missing_from_a_later_build_neither_refuses_nor_shrinks(tmp_path):
+    """Its earlier build already proved it names a real tool, and a gate never loses a name it holds."""
+    _, _, policies = _deferred_setup(tmp_path, default_confirm=["memory.remember"])
+    updated = policies.with_built("memory", frozenset({"recall"}))
+    assert updated.default.confirm == frozenset({"remember"})
+
+
+def test_a_build_never_gates_activate_skill_through_a_toolset_entry(tmp_path):
+    """``activate_skill`` arrives in every skill's build, and gating one skill must not gate them all."""
+    _, _, policies = _deferred_setup(tmp_path, default_review=["memory"])
+    updated = policies.with_built("memory", frozenset({"activate_skill", "remember"}))
+    assert "activate_skill" not in updated.default.review
+
+
+def _second_script_agents(available, resident=None, **pair) -> dict:
+    return {
+        "assistant": AgentConfig(available=["skills", "time"], delegates_to=["explorer"]),
+        "explorer": AgentConfig(description="Explores.", available=available, resident=resident, **pair),
+    }
+
+
+async def _add_second_script(assistant) -> None:
+    add_skill_script = next(fn for fn in assistant._agent.tools if fn.__name__ == "add_skill_script")
+    result = await add_skill_script(skill_name="weekly-digest", filename="second.py", content="print('b')\n")
+    assert "is now callable" in result
+
+
+async def _gated_unattended(assistant, agent: str, tool: str) -> bool:
+    """Whether ``agent`` calling ``tool`` is gated: an unattended turn denies a gated call and runs any other."""
+    from kokua.channels.web import proactive_turn
+
+    token = proactive_turn.set(True)
+    try:
+        return await assistant._human.approve(agent, tool, {}) is False
+    finally:
+        proactive_turn.reset(token)
+
+
+@pytest.mark.parametrize("declaration", ["list", "all"])
+async def test_a_bare_skill_entry_gates_a_script_added_mid_session_for_a_worker(tmp_path, declaration):
+    """The worker receives the new script on its next spawn, so the gate on the skill has to cover it by
+    then. The list worker inherits the default tier; the "all" worker declares its own pair."""
+    from kokua.config.schema import ALL_TOOLSETS
+
+    if declaration == "list":
+        agents = _second_script_agents(["time", "weekly-digest"])
+    else:
+        agents = _second_script_agents(ALL_TOOLSETS, ["time", "weekly-digest"], confirm=[], review=["weekly-digest"])
+    config = _config(
+        tmp_path, agents=agents, default_confirm=["skills.add_skill_script"], default_review=["weekly-digest"]
+    )
+    _write_skill(config)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        await assistant.start()
+        await _add_second_script(assistant)
+        review = assistant._human.policies.for_agent("explorer").review
+        assert {"weekly_digest__collect_notes", "weekly_digest__second"} <= review
+        assert "activate_skill" not in review
+        assert await _gated_unattended(assistant, "explorer", "weekly_digest__second")
+    finally:
+        assistant._state.close()
+
+
+async def test_a_bare_skill_entry_gates_a_script_the_entry_agent_adds_to_itself(tmp_path):
+    """No worker builds the skill here, so only the refresh itself can grow the policy, and the entry
+    agent's ``SkillAgent`` can call the new script in its very next round."""
+    agents = {"assistant": AgentConfig(available=["skills", "time"])}
+    config = _config(
+        tmp_path, agents=agents, default_confirm=["skills.add_skill_script"], default_review=["weekly-digest"]
+    )
+    _write_skill(config)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        await assistant.start()
+        await _add_second_script(assistant)
+        assert await _gated_unattended(assistant, "assistant", "weekly_digest__second")
+    finally:
+        assistant._state.close()
+
+
 def test_core_namespace_gains_the_group_tools_when_something_is_deferred(tmp_path):
     from types import SimpleNamespace
 

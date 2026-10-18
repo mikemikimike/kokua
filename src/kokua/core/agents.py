@@ -1133,3 +1133,40 @@ def resolve_gate_entries(
         noun = "entry" if len(faults) == 1 else "entries"
         raise ConfigError(f"{setting} has {len(faults)} {noun} that would {effect}: {'; '.join(faults)}. {remedy}")
     return frozenset(names)
+
+
+def resolve_built_entries(
+    entries: Collection[str],
+    pending: Collection[str],
+    toolset: str,
+    tool_names: Collection[str],
+    *,
+    setting: str,
+) -> tuple[set[str], set[str]]:
+    """What the entries naming ``toolset`` match in this build of it, and which of ``pending`` still wait.
+
+    Every entry naming the toolset is matched again, not only the pending ones, because a toolset can
+    offer more on a later build than it did when an entry first resolved: a skill gains a script
+    mid-session, and ``"weekly-digest"`` has to hold the new script back before any agent is handed it.
+    The caller adds what this returns to the names it already holds, so a gate never loses one.
+
+    An entry that matches nothing here refuses the build only while it is pending. One that resolved
+    earlier was proven live by that build, so a later build lacking its tool has nothing to report.
+    ``activate_skill`` is left out of the build's tools for the reason :func:`gateable_tools` gives:
+    every skill's build carries it, and a gate on one skill must not hold back the loader for all.
+    """
+    vocabulary = {toolset: set(tool_names) - {_ACTIVATE_SKILL}}
+    names: set[str] = set()
+    waiting = set(pending)
+    for entry in sorted(set(entries) | waiting):
+        if entry.split(_GATE_SEPARATOR)[0] != toolset:
+            continue
+        resolved, fault = _resolve_gate_entry(entry, vocabulary, {})
+        if fault and entry in waiting:
+            raise ConfigError(
+                f"{setting} names {entry!r}, but the {toolset!r} toolset, now built, provides no such tool. "
+                f"Fix the entry; until then {toolset!r} cannot be loaded. {fault}."
+            )
+        names |= resolved
+        waiting.discard(entry)
+    return names, waiting
