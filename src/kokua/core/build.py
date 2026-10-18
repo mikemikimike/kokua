@@ -149,10 +149,11 @@ def wire_agent(
 
     ``client`` lets a caller that already has one (``make_agent_builder``, and tests that inject a mock
     client so the suite runs without a model) skip resolving a second, unused one from ``config``;
-    omitting it resolves the
-    model straight from ``config``. Only that second path assembles and applies a system message: an
-    injected client already carries whatever system its own caller built it with, so computing one here
-    and overwriting it would defeat the injection.
+    omitting it resolves the model straight from ``config``, with the system message assembled here. An
+    injected client keeps the system message its own caller built it with, except when ``preloaded``
+    restores a toolset: then the message is rewritten here, because only this function knows which
+    preloads built, and a restored toolset's guidance has to join the prompt and its name leave the line
+    naming what is still loadable.
 
     ``thinking`` is set from the config even when a ``client`` is injected, unlike the system message:
     reasoning effort is a field on the *agent*, applied to every turn of a run, so there is nothing for
@@ -223,29 +224,7 @@ def wire_agent(
             ),
         )
         agent.tools = build_tools(resident, context())
-        taken = {getattr(fn, "__name__", None) for fn in agent.tools} | set(CORE_TOOL_NAMES)
-        failed = []
-        for toolset in loaded:
-            try:
-                built = build_deferred(config, state, toolset, context)
-            except Exception as error:
-                logger.warning("Could not restore the %r toolset for %s: %s", toolset.name, agent_name, error)
-                failed.append(toolset)
-                continue
-            # A name the agent already holds is skipped, as AIMU does for a model-driven load: providers
-            # reject a request carrying two tools of one name.
-            for fn in built:
-                name = getattr(fn, "__name__", None)
-                if name in taken:
-                    logger.warning(
-                        "Restoring %r for %s skipped %r: the agent already has a tool by that name",
-                        toolset.name,
-                        agent_name,
-                        name,
-                    )
-                    continue
-                taken.add(name)
-                agent.tools.append(fn)
+        failed = _append_preloads(config, state, agent, loaded, context)
         if not failed:
             break
         # A group's residency is fixed when the agent is constructed, so a failure means constructing again
@@ -253,9 +232,8 @@ def wire_agent(
         loaded = [toolset for toolset in loaded if toolset not in failed]
 
     if loaded:
-        # Assigned unconditionally: this function owns the final message, since only it knows which
-        # preloads built. The restored toolsets carry their guidance and leave the line naming what is
-        # still loadable.
+        # Overwrites an injected client's message too (see the docstring): the restored toolsets bring
+        # their guidance and leave the line naming what is still loadable.
         resolved_client.system_message = resolve_system_message(
             config,
             agent_name,
@@ -265,6 +243,45 @@ def wire_agent(
     agent.tool_approval = state.gate_for(agent_name)
     rebuild_delegation_tool(agent, state)
     return agent
+
+
+def _append_preloads(
+    config: AssistantConfig,
+    state: LiveState,
+    agent: aio.SkillAgent,
+    preloads: Sequence[Toolset],
+    context: Callable[[], ToolsetContext],
+) -> list[Toolset]:
+    """Build each of ``preloads`` and append its tools to ``agent.tools``; return the ones that failed.
+
+    A failure is logged rather than alerted (see ``build_deferred``) and is the caller's to act on: the
+    agent was constructed with these toolsets marked resident, so leaving one out means constructing it
+    again.
+    """
+    taken = {getattr(fn, "__name__", None) for fn in agent.tools} | set(CORE_TOOL_NAMES)
+    failed = []
+    for toolset in preloads:
+        try:
+            built = build_deferred(config, state, toolset, context)
+        except Exception as error:
+            logger.warning("Could not restore the %r toolset for %s: %s", toolset.name, agent.name, error)
+            failed.append(toolset)
+            continue
+        # A name the agent already holds is skipped, as AIMU does for a model-driven load: providers
+        # reject a request carrying two tools of one name.
+        for fn in built:
+            name = getattr(fn, "__name__", None)
+            if name in taken:
+                logger.warning(
+                    "Restoring %r for %s skipped %r: the agent already has a tool by that name",
+                    toolset.name,
+                    agent.name,
+                    name,
+                )
+                continue
+            taken.add(name)
+            agent.tools.append(fn)
+    return failed
 
 
 def tool_groups_for(

@@ -163,8 +163,9 @@ def _resolve_pair(
 ) -> ApprovalPolicy:
     """Resolve one pair; entries naming a deferred, unbuilt toolset wait in ``pending_*`` instead.
 
-    ``deferred`` is the toolsets this pair's holder(s) can load later. One that already has a recorded
-    build resolves now like any other, so only a toolset nobody has built waits.
+    ``deferred`` is the toolsets this pair's holder(s) can load later. One already built, in the sense of
+    :func:`~kokua.core.agents.built_toolsets` (a recorded build, or a skill the entry agent's
+    ``SkillAgent`` holds), resolves now like any other, so only a toolset that is not built yet waits.
     """
     resolved = {}
     pending = {}

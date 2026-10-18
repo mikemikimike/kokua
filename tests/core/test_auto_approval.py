@@ -941,6 +941,14 @@ async def test_a_floor_entry_on_a_skill_a_worker_defers_is_checked_at_startup_wh
         assistant._state.close()
 
 
+async def test_a_floor_entry_on_an_entry_agent_skill_resolves_at_startup(tmp_path):
+    """No review reaches it, so nothing refuses; what is checked is that it does not wait for a build
+    that never comes, since the entry agent's SkillAgent holds the skill from the first turn."""
+    policies, auto = await _started_with_skill(tmp_path, never_auto_approve=["weekly-digest"])
+    assert auto.pending_floor == frozenset()
+    assert auto.floor and not auto.floor & policies.default.review
+
+
 async def test_a_floor_entry_on_an_entry_agent_skill_refuses_a_review_reaching_it_at_startup(tmp_path):
     with pytest.raises(ConfigError, match="never_auto_approve holds back"):
         await _started_with_skill(tmp_path, default_review=["weekly-digest"], never_auto_approve=["weekly-digest"])

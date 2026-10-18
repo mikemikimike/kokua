@@ -290,8 +290,8 @@ these fails startup rather than warning:
   in `[security].never_auto_approve`, the floor beneath the reviewer. That second check only runs when
   auto-approval is enabled.
 
-An entry naming a toolset the agent defers, and no agent holds resident, is the one exception to "at
-startup": startup checks its shape, and the build checks the rest, refusing the toolset rather than letting it load ungated (see
+An entry naming a toolset the agent defers that is not built yet (no agent holds it resident, and it
+is not a skill the entry agent already holds) is the one exception to "at startup": startup checks its shape, and the build checks the rest, refusing the toolset rather than letting it load ungated (see
 [What a load checks](#what-a-load-checks-approval-before-any-tool-is-callable)).
 
 With auto-approval off, `review` entries prompt you exactly as `confirm` ones do: turning it off never
