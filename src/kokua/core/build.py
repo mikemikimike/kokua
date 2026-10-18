@@ -434,14 +434,15 @@ def rebuild_delegation_tool(agent: aio.SkillAgent, state: LiveState) -> None:
     """Replace an agent's delegate with one built from the CURRENT connections.
 
     A worker's toolset is snapshotted when the delegate is built, so a runtime MCP add or remove has to
-    rebuild it for the change to reach that worker.
+    rebuild it for the change to reach that worker. The new delegate is built before the old one is
+    removed, so a build that raises leaves the agent delegating as it did rather than not at all.
     """
     # Imported here, not at module level: see the comment in resolve_system_message -- the same cycle
     # runs through kokua.core.agents.
     from kokua.core.agents import make_delegation_tool
 
-    agent.tools[:] = [t for t in agent.tools if getattr(t, "__name__", None) != SPAWN_SUBAGENT_TOOL_NAME]
     tool = make_delegation_tool(agent, state.config, state)
+    agent.tools[:] = [t for t in agent.tools if getattr(t, "__name__", None) != SPAWN_SUBAGENT_TOOL_NAME]
     if tool is not None:
         agent.tools.append(tool)
 

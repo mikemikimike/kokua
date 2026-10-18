@@ -1878,3 +1878,43 @@ def test_a_skill_refresh_grows_the_approval_policies_before_any_worker_is_rebuil
         assert events == ["workers rebuilt"]
     finally:
         state.close()
+
+
+def test_a_delegate_that_fails_to_build_leaves_the_old_one_in_place(monkeypatch):
+    """Removing the old delegate first would leave the agent unable to delegate at all until the next
+    successful rebuild, for a failure that may have nothing to do with delegation."""
+    from types import SimpleNamespace
+
+    import kokua.core.agents as agents_mod
+    from kokua.core.build import rebuild_delegation_tool
+
+    def spawn_subagent():
+        pass
+
+    def broken(agent, config, state):
+        raise RuntimeError("spec build failed")
+
+    monkeypatch.setattr(agents_mod, "make_delegation_tool", broken)
+    agent = SimpleNamespace(tools=[spawn_subagent])
+    with pytest.raises(RuntimeError, match="spec build failed"):
+        rebuild_delegation_tool(agent, SimpleNamespace(config=None))
+    assert agent.tools == [spawn_subagent]
+
+
+async def test_a_worker_rebuild_that_raises_reaches_the_model_after_the_write(tmp_path):
+    config = _authoring_all_worker_config(tmp_path)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    await assistant.start()
+
+    def broken(agent):
+        raise RuntimeError("spec build failed")
+
+    assistant._state.refresh_workers = broken
+    try:
+        result = await _entry_tool(assistant, "author_skill")(
+            name="weekly-digest", description="Digest the week.", body="Do the thing."
+        )
+        assert result.startswith("Created skill 'weekly-digest'")
+        assert "The write happened, but workers were not given the change: spec build failed" in result
+    finally:
+        assistant._state.close()
