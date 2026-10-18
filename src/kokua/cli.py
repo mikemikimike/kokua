@@ -376,8 +376,8 @@ def format_agent_access(config: AssistantConfig) -> list[str]:
     """The lines ``kokua agents`` prints: per agent, what it may use, what is in context, what asks first.
 
     Reads declarations only. Nothing is built, so this runs with the model server down and shows what the
-    config says rather than what a live agent holds. Residency has no declaration yet, so every available
-    toolset is resident and the line says that instead of repeating the list.
+    config says rather than what a live agent holds. An agent declaring no ``resident`` list holds every
+    available toolset from its first turn, and the line says that instead of repeating the list.
     """
 
     def entries(names: list[str]) -> str:
@@ -386,10 +386,11 @@ def format_agent_access(config: AssistantConfig) -> list[str]:
     lines: list[str] = []
     for name, agent in config.agents.items():
         confirm, review, source = config.approval_entries_for(name)
+        resident = entries(config.resident_for(name)) if agent.resident is not None else "every available toolset"
         lines += [
             name,
             f"  available: {entries(agent.available)}",
-            "  resident:  every available toolset",
+            f"  resident:  {resident}",
             f"  confirm:   {entries(confirm)}  (from {source})",
             f"  review:    {entries(review)}  (from {source})",
             "",
@@ -407,8 +408,8 @@ def access_summary_lines(config: AssistantConfig) -> list[str]:
     lines = []
     for name, agent in config.agents.items():
         confirm, review, source = config.approval_entries_for(name)
-        count = len(agent.available)
-        line = f"{name}: {count} available, {count} resident, {len(confirm)} confirm, {len(review)} review"
+        available, resident = len(agent.available), len(config.resident_for(name))
+        line = f"{name}: {available} available, {resident} resident, {len(confirm)} confirm, {len(review)} review"
         line += f" (from {source})"
         lines.append(line)
     return lines

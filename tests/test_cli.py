@@ -569,15 +569,15 @@ def test_summary_line_per_agent():
     config = _config(
         Path("/tmp"),
         agents={
-            "assistant": AgentConfig(available=["a"] * 12),
-            "coder": AgentConfig(available=["b"] * 5, confirm=["compute.run_command"], review=[]),
+            "assistant": AgentConfig(available=[f"a{n}" for n in range(12)], resident=[f"a{n}" for n in range(7)]),
+            "coder": AgentConfig(available=[f"b{n}" for n in range(5)], confirm=["compute.run_command"], review=[]),
         },
         default_confirm=["x", "y", "z"],
         default_review=["p", "q", "r"],
     )
 
     assert access_summary_lines(config) == [
-        "assistant: 12 available, 12 resident, 3 confirm, 3 review (from [assistant.tools])",
+        "assistant: 12 available, 7 resident, 3 confirm, 3 review (from [assistant.tools])",
         "coder: 5 available, 5 resident, 1 confirm, 0 review (from [agents.coder.tools])",
     ]
 
@@ -589,6 +589,7 @@ def test_agents_command_prints_each_agents_three_axes(monkeypatch, tmp_path, cap
 
     out = capsys.readouterr().out
     assert "assistant\n  available: " in out
+    assert "  resident:  memory, config, conversations, planning, capabilities, time, messaging" in out
     assert "  resident:  every available toolset" in out
     confirm = "skills.add_skill_script, mcp.add_mcp_server, config.update_config"
     review = "compute.run_command, compute.execute_python, fs_write"

@@ -271,10 +271,8 @@ ENTRY_AGENT_TOOLS = {
 # Present because the shipped entry agent declares the `memory` and `documents` toolsets, so they are
 # asserted separately from the rest below.
 STORE_TOOLS = {
-    "aimu make_memory_tools + make_document_tools": {
-        "store_memory",
-        "search_memories",
-        "list_memories",
+    "aimu make_memory_tools": {"store_memory", "search_memories", "list_memories"},
+    "aimu make_document_tools": {
         "save_document",
         "read_document",
         "edit_document",
@@ -282,10 +280,40 @@ STORE_TOOLS = {
         "search_documents",
     },
 }
+# The sources above whose toolsets the shipped entry agent defers: absent from its tools until it loads
+# them, and present in the inventory because they are still part of what it can reach.
+DEFERRED_SOURCES = {
+    "aimu make_document_tools",
+    "kokua toolsets/mcp.py",
+    "kokua toolsets/scheduling.py",
+    "kokua toolsets/benchmark.py",
+    "aimu make_skill_authoring_tool / make_skill_update_tool / make_skill_script_tool",
+}
+# What AIMU adds to an agent holding at least one deferred toolset, so the model can see and load them.
+LOADER_TOOLS = {"available_tools", "load_tools"}
+
+
+async def _loaded_tools(assistant, *toolsets: str) -> list:
+    """The entry agent's tools after loading ``toolsets``, the way a model's `load_tools` call would."""
+    for toolset in toolsets:
+        assert (await assistant._agent.load_tool_group(toolset)).startswith(f"Loaded '{toolset}':")
+    return assistant._agent._effective_tools(None)
 
 
 def _expected(*groups: dict) -> set[str]:
     return {name for group in groups for names in group.values() for name in names}
+
+
+def _resident_expected() -> set[str]:
+    """What the shipped entry agent's tools hold at wiring: the inventory minus its deferred sources, plus the loaders."""
+    inventory = {**ENTRY_AGENT_TOOLS, **STORE_TOOLS}
+    resident = {source: names for source, names in inventory.items() if source not in DEFERRED_SOURCES}
+    return _expected(resident) | LOADER_TOOLS
+
+
+def _deferred_expected() -> set[str]:
+    inventory = {**ENTRY_AGENT_TOOLS, **STORE_TOOLS}
+    return _expected({source: names for source, names in inventory.items() if source in DEFERRED_SOURCES})
 
 
 def _source_of(name: str) -> str:
@@ -303,23 +331,49 @@ def _without(*toolsets: str) -> dict[str, AgentConfig]:
     return agents
 
 
+def test_shipped_entry_agent_resident_set(tmp_path):
+    config = _config(tmp_path)
+    assert config.resident_for("assistant") == [
+        "memory",
+        "config",
+        "conversations",
+        "planning",
+        "capabilities",
+        "time",
+        "messaging",
+    ]
+    assert config.deferred_for("assistant") == ["documents", "skills", "mcp", "scheduling", "benchmark"]
+
+
 async def test_entry_agent_toolset_is_exactly_the_documented_inventory(tmp_path):
     """The entry agent's tool context is the point of the design: what the shipped [agents.assistant]
-    table declares, and nothing else. It holds what mutates shared state (skills, MCP, memory, config,
-    scheduling), reading its other conversations, the clock, the delegate, and `benchmark`, which
-    measures the model this session runs on; the built-in groups and the remaining shipped toolsets are
-    declared by the workers instead, or by nobody.
+    table makes resident, and nothing else. It holds from its first turn what it uses on most turns
+    (memory, config, its other conversations, the clock, the delegate, messaging), and meets the rest
+    (documents, skills, MCP, scheduling, `benchmark`) through `available_tools` / `load_tools`; the
+    built-in groups and the remaining shipped toolsets are declared by the workers instead, or by nobody.
 
     Asserted as an exact set rather than a sample, so a plugin toolset leaking onto the entry agent fails
-    here, and so does adding a tool without updating the inventory table this list mirrors."""
+    here, and so does adding a tool without updating the inventory table this list mirrors. The deferred
+    half is asserted absent, so a toolset quietly becoming resident fails too."""
     assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
-    names = {fn.__name__ for fn in assistant._agent.tools}
-    expected = _expected(ENTRY_AGENT_TOOLS, STORE_TOOLS)
+    names = {fn.__name__ for fn in assistant._agent._effective_tools(None)}
+    expected = _resident_expected()
 
     leaked = sorted(names - expected)
     missing = sorted(expected - names)
     assert not leaked, f"undocumented tools on the entry agent: {leaked} (a worker tool leaking here?)"
     assert not missing, f"documented tools absent: {[(n, _source_of(n)) for n in missing]}"
+    assert names.isdisjoint(_deferred_expected())
+    assistant._state.close()
+
+
+async def test_loading_every_deferred_toolset_completes_the_documented_inventory(tmp_path):
+    assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
+    for toolset in assistant._config.deferred_for("assistant"):
+        assert (await assistant._agent.load_tool_group(toolset)).startswith(f"Loaded '{toolset}':")
+    names = {fn.__name__ for fn in assistant._agent._effective_tools(None)}
+    assert names == _expected(ENTRY_AGENT_TOOLS, STORE_TOOLS) | LOADER_TOOLS
+    assistant._state.close()
 
 
 async def test_undeclaring_the_store_toolsets_drops_exactly_their_tools(tmp_path):
@@ -327,8 +381,9 @@ async def test_undeclaring_the_store_toolsets_drops_exactly_their_tools(tmp_path
     loses exactly their tools, with nothing else disturbed."""
     config = _config(tmp_path, agents=_without("memory", "documents"))
     assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
-    names = {fn.__name__ for fn in assistant._agent.tools}
-    assert names == _expected(ENTRY_AGENT_TOOLS)
+    names = {fn.__name__ for fn in assistant._agent._effective_tools(None)}
+    assert names == _resident_expected() - _expected({"memory": STORE_TOOLS["aimu make_memory_tools"]})
+    assistant._state.close()
 
 
 CONVERSATION_TOOL_NAMES = ENTRY_AGENT_TOOLS["kokua toolsets/conversations.py"]
@@ -536,7 +591,7 @@ async def test_assistant_wires_author_skill_tool(tmp_path):
     cfg = _config(tmp_path)
     assistant = await Assistant.create(cfg, FakeChannel(), client=MockAsyncModelClient([]))
 
-    tools = assistant._agent.tools
+    tools = await _loaded_tools(assistant, "skills")
     author = next((t for t in tools if t.__name__ == "author_skill"), None)
     assert author is not None and author.__tool_is_async__ is True
 
@@ -547,13 +602,14 @@ async def test_assistant_wires_author_skill_tool(tmp_path):
 
 async def test_declaring_the_store_toolsets_wires_both_stores(tmp_path):
     assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
-    names = {fn.__name__ for fn in assistant._agent.tools}
+    names = {fn.__name__ for fn in await _loaded_tools(assistant, "documents")}
     assert _MEMORY_TOOL_NAMES <= names
 
 
 async def test_memory_stores_exist_when_an_agent_declares_them(tmp_path):
     assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
     await assistant.start()
+    await _loaded_tools(assistant, "documents")
     assert assistant._memory_store is not None
     assert assistant._document_store is not None
 
@@ -578,7 +634,7 @@ async def test_no_store_declaration_omits_the_tools_and_the_stores(tmp_path):
 async def test_document_tools_round_trip(tmp_path):
     """The document tools are wired to a working DocumentStore (pure-Python, hermetic)."""
     assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
-    tools = {fn.__name__: fn for fn in assistant._agent.tools}
+    tools = {fn.__name__: fn for fn in await _loaded_tools(assistant, "documents")}
     assert tools["save_document"]("/notes/standup.md", "Yesterday, Today, Blockers") == "Saved /notes/standup.md."
     assert tools["read_document"]("/notes/standup.md") == "Yesterday, Today, Blockers"
 
@@ -611,7 +667,7 @@ async def test_assistant_can_fix_a_skill_it_authored(tmp_path):
     cfg = _config(tmp_path)
     assistant = await Assistant.create(cfg, FakeChannel(), client=MockAsyncModelClient([]))
 
-    tools = assistant._agent.tools
+    tools = await _loaded_tools(assistant, "skills")
     author = next(t for t in tools if t.__name__ == "author_skill")
     update = next(t for t in tools if t.__name__ == "update_skill")
 
@@ -628,7 +684,7 @@ async def test_assistant_authors_and_registers_runnable_script(tmp_path):
     cfg = _config(tmp_path)
     assistant = await Assistant.create(cfg, FakeChannel(), client=MockAsyncModelClient([]))
 
-    tools = assistant._agent.tools
+    tools = await _loaded_tools(assistant, "skills")
     author = next(t for t in tools if t.__name__ == "author_skill")
     add_script = next(t for t in tools if t.__name__ == "add_skill_script")
     assert add_script.__tool_is_async__ is True
@@ -650,7 +706,7 @@ async def test_skill_authored_in_one_conversation_is_visible_in_another(tmp_path
     cfg = _config(tmp_path)
     assistant = await Assistant.create(cfg, FakeChannel(), client_factory=lambda cid: MockAsyncModelClient([]))
     first_agent = assistant._agent
-    author = next(t for t in first_agent.tools if t.__name__ == "author_skill")
+    author = next(t for t in await _loaded_tools(assistant, "skills") if t.__name__ == "author_skill")
     await author(name="shared-skill", description="Shared.", body="# Shared\n\nDo X.")
 
     await assistant.new_conversation()
@@ -694,7 +750,7 @@ def test_make_agent_builder_wires_and_restores(tmp_path):
     agent = build("c1")
     assert agent.tool_approval is not None
     tool_names = {getattr(t, "__name__", None) for t in agent.tools}
-    assert "author_skill" in tool_names
+    assert "store_memory" in tool_names
     # Messages for this conversation were restored onto the fresh agent's client.
     assert any(m.get("content") == "hello" for m in agent.model_client.messages)
 
@@ -746,7 +802,7 @@ async def test_runtime_mcp_rebuild_keeps_the_activity_reporter(tmp_path, monkeyp
     )
     assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
 
-    add_mcp = next(t for t in assistant._agent.tools if getattr(t, "__name__", "") == "add_mcp_server")
+    add_mcp = next(t for t in await _loaded_tools(assistant, "mcp") if getattr(t, "__name__", "") == "add_mcp_server")
     captured.clear()
     await add_mcp(url="https://broker/mcp")
 
@@ -1127,8 +1183,8 @@ def test_a_deferred_toolset_carrying_a_workflow_still_offers_its_command(tmp_pat
     assert "plan" in commands
 
 
-def test_the_shipped_entry_agent_has_no_deferred_group(tmp_path):
-    agent, _ = _wired(_config(tmp_path))
+def test_an_agent_declaring_no_resident_list_has_no_deferred_group(tmp_path):
+    agent, _ = _wired(_config(tmp_path, agents={"assistant": AgentConfig(available=["time"])}))
     assert "load_tools" not in _tool_names(agent)
 
 

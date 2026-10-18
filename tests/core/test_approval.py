@@ -44,6 +44,7 @@ async def test_approve_gated_tool_waits_for_routed_answer(tmp_path):
         _config(tmp_path, default_confirm=["skills.add_skill_script"]), channel, client=MockAsyncModelClient([])
     )
     await assistant.start()
+    await assistant._agent.load_tool_group("skills")
     # Foreground: the calling turn's conversation is the one currently viewed.
     token = streaming_conversation.set(assistant._active_id)
     try:
@@ -70,6 +71,7 @@ async def test_approve_backgrounded_auto_denies_without_prompting(tmp_path):
         _config(tmp_path, default_confirm=["skills.add_skill_script"]), channel, client=MockAsyncModelClient([])
     )
     await assistant.start()
+    await assistant._agent.load_tool_group("skills")
     # Background: the calling turn's conversation ("elsewhere") isn't the one being viewed.
     token = streaming_conversation.set("elsewhere")
     try:
@@ -106,6 +108,7 @@ async def test_denied_gated_tool_does_not_run(tmp_path):
     client = _RequestsToolOnce("add_skill_script", {"skill_name": "disk", "filename": "u.py", "content": "print(1)\n"})
     assistant = await Assistant.create(cfg, FakeChannel(), client=client)
     await assistant.start()
+    await assistant._agent.load_tool_group("skills")
     # No streaming_conversation is set around this call, so it defaults to None -- not the viewed
     # conversation -- making the gate auto-deny without an interactive prompt. That exercises the real
     # dispatch path (the Agent's tool-loop engine + approval gate) via a normal run.
@@ -236,6 +239,9 @@ async def test_the_shipped_gates_all_name_tools_that_exist(tmp_path):
     assert config.default_confirm == AssistantConfig().default_confirm
     assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
     await assistant.start()
+    # Two of the entries name toolsets the shipped entry agent defers, so they resolve as it loads them.
+    for toolset in ("skills", "mcp"):
+        await assistant._agent.load_tool_group(toolset)
     assert assistant._human.policies.default.gated == {
         "add_skill_script",
         "add_mcp_server",
@@ -398,7 +404,13 @@ async def test_the_reserved_namespace_gates_both_of_its_members(tmp_path):
     _write_skill(config)
     assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
     await assistant.start()
-    assert assistant._human.policies.default.gated == {"spawn_subagent", "activate_skill"}
+    # AIMU adds the two loaders to an agent with a deferred toolset, and they belong to no toolset either.
+    assert assistant._human.policies.default.gated == {
+        "spawn_subagent",
+        "activate_skill",
+        "available_tools",
+        "load_tools",
+    }
     assistant._state.close()
 
 
@@ -697,18 +709,27 @@ async def test_the_shipped_example_resolves_to_todays_gate(tmp_path):
     # A scaffolded config writes its lock list out in full, so the default list's entry alone would
     # leave [assistant.tools] writable by update_config.
     assert "assistant.tools.*" in loaded["locked_config_keys"]
-    config, state, entry = await _wired(tmp_path)
-    config = dataclasses.replace(
-        config, default_confirm=loaded["default_confirm"], default_review=loaded["default_review"]
-    )
+    config = _config(tmp_path, default_confirm=loaded["default_confirm"], default_review=loaded["default_review"])
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    await assistant.start()
 
-    policies = resolve_approval_policies(config, state, entry)
+    # `skills` and `mcp` are deferred by the shipped entry agent, so the two entries naming their tools
+    # wait for the build instead of resolving at startup.
+    at_startup = assistant._human.policies.default
+    assert at_startup.confirm == {"update_config"}
+    assert at_startup.review == {"execute_python", "run_command", "write_file", "edit_file"}
+    assert at_startup.pending_confirm == {"skills.add_skill_script", "mcp.add_mcp_server"}
+    assert at_startup.pending_review == frozenset()
+    assert len(at_startup.gated) == 5
 
-    assert policies.default.confirm == {"add_skill_script", "add_mcp_server", "update_config"}
-    assert policies.default.review == {"execute_python", "run_command", "write_file", "edit_file"}
-    # The union is what the old six-entry gate held, so the split changed who is asked first and not
-    # which calls are held.
-    assert policies.default.gated == {
+    for toolset in ("skills", "mcp"):
+        await assistant._agent.load_tool_group(toolset)
+
+    # The union is what the old six-entry gate held, so neither the split nor residency changed which
+    # calls are held: two of them resolve on load instead of at startup.
+    after_load = assistant._human.policies.default
+    assert after_load.pending_confirm == frozenset()
+    assert after_load.gated == {
         "add_skill_script",
         "add_mcp_server",
         "execute_python",
@@ -717,6 +738,7 @@ async def test_the_shipped_example_resolves_to_todays_gate(tmp_path):
         "edit_file",
         "update_config",
     }
+    assistant._state.close()
 
 
 # --- every agent's calls are judged by its own policy -------------------------------------------------
