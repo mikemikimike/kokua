@@ -250,14 +250,12 @@ class ChannelUI:
         """Prompt for tool approval, as a frame or as a plain-text question.
 
         ``agent`` names who is asking, since a delegated worker's call reaches the same prompt as the
-        entry agent's and the user is deciding whether *that* agent may act. It is forwarded only when
-        known, so a channel written against the older one-argument frame method keeps working.
+        entry agent's and the user is deciding whether *that* agent may act. The frame method always
+        receives ``agent`` (None when unknown), so a channel written against the older one-argument
+        method raises ``TypeError`` rather than being half-served: the frame change is a breaking one.
         """
         if self._approval_request is not None:
-            if agent is None:
-                await self._approval_request(name, arguments)
-            else:
-                await self._approval_request(name, arguments, agent=agent)
+            await self._approval_request(name, arguments, agent=agent)
         elif agent is None:
             await self._channel.send(f"[approve] Allow {name}({arguments})? [y/N]")
         else:
@@ -272,6 +270,7 @@ class ChannelUI:
         reason: str,
         model: str,
         conversation_id: Optional[str] = None,
+        agent: Optional[str] = None,
     ) -> None:
         """Report a reviewer's answer about a gated tool call, as a card or as a plain-text line.
 
@@ -293,6 +292,9 @@ class ChannelUI:
         screen when it arrives. The text fallback drops it: a channel with one conversation in view has
         nowhere else it could have landed.
 
+        ``agent`` names whose call was reviewed, for the reason :meth:`ask_approval` names it: a worker's
+        gated call and the entry agent's land in the same log.
+
         The reason is appended only when there is one. A reviewer that answered with an empty sentence
         is unlikely and not impossible, and this line is what a user reads about a gated call that was
         waved through, so it should not trail a bare colon.
@@ -305,13 +307,15 @@ class ChannelUI:
                 reason=reason,
                 model=model,
                 conversation_id=conversation_id,
+                agent=agent,
             )
             return
         because = f": {reason}" if reason else ""
+        call = f"{agent}'s {name}({arguments})" if agent else f"{name}({arguments})"
         if approved:
-            await self._channel.send(f"[auto-approval] {model} auto-approved {name}({arguments}){because}")
+            await self._channel.send(f"[auto-approval] {model} auto-approved {call}{because}")
         else:
-            await self._channel.send(f"[auto-approval] {model} is asking you to approve {name}({arguments}){because}")
+            await self._channel.send(f"[auto-approval] {model} is asking you to approve {call}{because}")
 
     async def ask_plan_review(self, plan: str, critique: Optional[list[str]] = None) -> None:
         """Prompt for plan approve/edit/reject, surfacing any reviewer critique for the user to weigh."""

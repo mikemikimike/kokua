@@ -1226,6 +1226,12 @@ def test_security_confirm_tools_is_gone():
         _load_text('[security]\nconfirm_tools = ["fs_write"]\n')
 
 
+def test_security_confirm_tools_message_says_to_lock_the_new_table():
+    """An existing config writes locked_config_keys out in full, so it lacks the new table's lock."""
+    with pytest.raises(settings.ConfigError, match=r"assistant\.tools\.\*"):
+        _load_text('[security]\nconfirm_tools = ["fs_write"]\n')
+
+
 def test_auto_approval_tools_is_gone():
     with pytest.raises(
         settings.ConfigError,

@@ -33,6 +33,7 @@ from .aimu_compat import AimuVersionError, require_aimu
 from kokua.config import file as settings
 from kokua.config import AssistantConfig, ConfigError, MCPServerConfig
 from kokua.config import settings_sources
+from kokua.config.schema import DEFAULT_POLICY_SOURCE
 from kokua.config.store import disambiguate_name, name_from_url
 
 # Safe at module level, unlike kokua.core.agents below: `from . import plugins` above already imports
@@ -92,12 +93,12 @@ def build_arg_parser(prog: str = "kokua") -> argparse.ArgumentParser:
         "--confirm-tools",
         default=None,
         metavar="NAMES",
-        help="Comma-separated tools that require interactive confirmation before each call; replaces "
-        "[assistant.tools].confirm. Each entry "
-        "names its toolset: 'compute' (or 'compute.*') for every tool that capability provides, "
-        "'compute.execute_python' for one, with 'core' reserved for the tools no toolset provides. "
-        "Default: skills.add_skill_script,mcp.add_mcp_server,compute.execute_python,compute.run_command,"
-        "fs_write,config.update_config. Pass an empty string to disable.",
+        help="Comma-separated tools that require interactive confirmation before each call. Replaces only "
+        "[assistant.tools].confirm for this run: [assistant.tools].review and any agent's own "
+        "confirm/review pair are unaffected, so an empty value clears confirm but review still "
+        "prompts. Must not name a tool already in review, or startup fails. Each entry names its "
+        "toolset: 'compute' (or 'compute.*') for every tool that capability provides, "
+        "'compute.execute_python' for one, with 'core' reserved for the tools no toolset provides.",
     )
 
     # Web front-end binding (ignored by other front ends).
@@ -393,7 +394,8 @@ def format_agent_access(config: AssistantConfig) -> list[str]:
             f"  review:    {entries(review)}  (from {source})",
             "",
         ]
-    lines.append("composed workers: confirm and review from [assistant.tools]")
+    lines.append(f"composed workers, confirm (from {DEFAULT_POLICY_SOURCE}): {entries(config.default_confirm)}")
+    lines.append(f"composed workers, review (from {DEFAULT_POLICY_SOURCE}): {entries(config.default_review)}")
     return lines
 
 
@@ -407,8 +409,7 @@ def access_summary_lines(config: AssistantConfig) -> list[str]:
         confirm, review, source = config.approval_entries_for(name)
         count = len(agent.available)
         line = f"{name}: {count} available, {count} resident, {len(confirm)} confirm, {len(review)} review"
-        if source == "[assistant.tools]":
-            line += f" (from {source})"
+        line += f" (from {source})"
         lines.append(line)
     return lines
 

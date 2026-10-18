@@ -76,9 +76,10 @@ capture_requests = true
 # you notice. Locked by default. Restart to apply, and keep this sub-table LAST in [assistant] (a plain
 # key after the header would join it).
 [assistant.tools]
-# Ask you before each call (terminal y/N, or Allow/Deny in the web UI). [] clears this list only; empty `review` too to turn approval off. These
-# change what may act LATER: update_config rewrites the file every setting comes from, add_skill_script
-# writes a script that becomes a tool, and add_mcp_server adds a tool source.
+# Ask you before each call (y/N in the terminal, Allow/Deny in the web UI). Emptying only this list
+# leaves `review` prompting; empty both to turn approval off. These change what may act LATER:
+# update_config rewrites the file every setting comes from, add_skill_script writes a script that
+# becomes a tool, and add_mcp_server adds a tool source.
 confirm = [
     "skills.add_skill_script",
     "mcp.add_mcp_server",

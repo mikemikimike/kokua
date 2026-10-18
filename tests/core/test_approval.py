@@ -811,3 +811,36 @@ async def test_review_entries_prompt_when_auto_approval_is_off(tmp_path):
     finally:
         streaming_conversation.reset(token)
     assistant._state.close()
+
+
+async def test_the_entry_agents_pair_may_name_a_skills_script_tool(tmp_path):
+    """The entry agent's SkillAgent holds every skill, so its pair resolves against their toolsets too."""
+    from tests.core.test_skill_toolsets import write_skill
+
+    config = _config(tmp_path, default_confirm=["fs_write"], default_review=[])
+    write_skill(config, "citation-check", "Verify a claim.", script="print('checked')\n")
+    config = _declaring(config, assistant=(["citation-check.citation_check__run"], []))
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        policy = resolve_approval_policies(config, assistant._state, assistant._agent).for_agent("assistant")
+        assert policy.confirm == {"citation_check__run"}
+    finally:
+        assistant._state.close()
+
+
+async def test_an_unattended_turn_runs_a_tool_the_workers_own_pair_does_not_gate(tmp_path):
+    """The inverse of the denial above: the default tier gates fs_write, but coder declared only
+    run_command, so coder's write goes through even when nobody is watching."""
+    from kokua.channels.web import proactive_turn
+
+    config = _declaring(_config(tmp_path), coder=(["compute.run_command"], []))
+    config = dataclasses.replace(config, default_confirm=["fs_write"], default_review=[])
+    channel = AlertCapturingChannel()
+    assistant = await Assistant.create(config, channel, client_factory=lambda cid: MockAsyncModelClient([]))
+    await assistant.start()
+    token = proactive_turn.set(True)
+    try:
+        assert await assistant._human.approve("coder", "write_file", {}) is True
+    finally:
+        proactive_turn.reset(token)
+    assistant._state.close()

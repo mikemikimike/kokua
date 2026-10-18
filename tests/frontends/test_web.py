@@ -989,8 +989,17 @@ async def test_web_channel_sends_an_auto_approval_frame():
             "reason": "lists files",
             "model": "ollama:b",
             "conversation_id": "c1",
+            "agent": None,
         }
     ]
+
+
+async def test_web_auto_approval_frame_carries_the_agent():
+    ws = _FakeWS()
+    await WebChannel(ws).send_auto_approval(
+        "run_command", {}, approved=True, reason="", model="ollama:b", agent="coder"
+    )
+    assert ws.frames[0]["agent"] == "coder"
 
 
 async def test_an_auto_approval_frame_is_never_muted_by_a_switch():

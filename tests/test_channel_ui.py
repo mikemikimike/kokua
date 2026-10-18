@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any, AsyncIterator, Optional
 
+import pytest
+
 from kokua.channels.ui import ChannelUI
 
 
@@ -54,9 +56,9 @@ class RichChannelDouble(BareChannel):
         self.calls.append(("approval", (name, arguments, agent)))
 
     async def send_auto_approval(
-        self, name: str, arguments: Any, *, approved: bool, reason: str, model: str, conversation_id=None
+        self, name: str, arguments: Any, *, approved: bool, reason: str, model: str, conversation_id=None, agent=None
     ) -> None:
-        self.calls.append(("auto_approval", (name, arguments, approved, reason, model, conversation_id)))
+        self.calls.append(("auto_approval", (name, arguments, approved, reason, model, conversation_id, agent)))
 
     async def send_plan_review_request(self, plan: str, critique: Optional[str] = None) -> None:
         self.calls.append(("plan_review", (plan, critique)))
@@ -352,8 +354,37 @@ async def test_auto_approval_uses_the_frame_when_the_channel_has_one():
     )
     assert channel.calls[-1] == (
         "auto_approval",
-        ("run_command", {"command": "ls"}, True, "lists files", "ollama:b", "c1"),
+        ("run_command", {"command": "ls"}, True, "lists files", "ollama:b", "c1", None),
     )
+
+
+async def test_auto_approval_card_carries_the_agent():
+    channel = RichChannelDouble()
+    await ChannelUI(channel).show_auto_approval("run_command", {}, approved=True, reason="ok", model="m", agent="coder")
+    assert channel.calls[-1][1][-1] == "coder"
+
+
+async def test_plain_text_auto_approval_names_the_agent():
+    channel = BareChannel()
+    ui = ChannelUI(channel)
+    await ui.show_auto_approval("run_command", {}, approved=True, reason="", model="m", agent="coder")
+    await ui.show_auto_approval("run_command", {}, approved=False, reason="", model="m", agent="coder")
+    assert channel.sent == [
+        "[auto-approval] m auto-approved coder's run_command({})",
+        "[auto-approval] m is asking you to approve coder's run_command({})",
+    ]
+
+
+async def test_a_channel_with_a_one_argument_approval_method_is_not_called_the_old_way():
+    """The approval frame is a breaking change for such a channel: it always receives `agent`, so it
+    fails loudly instead of being half-served by a branch that only some calls take."""
+
+    class OldChannel(BareChannel):
+        async def send_approval_request(self, name, arguments):
+            raise AssertionError("must not be called without agent")
+
+    with pytest.raises(TypeError):
+        await ChannelUI(OldChannel()).ask_approval("run_command", {})
 
 
 async def test_an_empty_reason_does_not_trail_a_colon():

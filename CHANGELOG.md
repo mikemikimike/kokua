@@ -681,8 +681,10 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer
   [auto-approval](https://saxman.info/kokua/explanation/auto-approval/) on. A config that sets neither key
   keeps the old six-entry gate. `--confirm-tools` now overrides `[assistant.tools].confirm`, and naming a
   tool the file's `review` also names is refused. `assistant.tools.*` joins the default
-  `locked_config_keys` (a scaffolded config writes the list out in full, so it carries the new entry), so
-  `update_config` cannot rewrite the default policy.
+  `locked_config_keys` for newly scaffolded configs only. An existing config writes the list out in full
+  without it (the old `"security.*"` is what covered `confirm_tools`), so add `"assistant.tools.*"` to
+  `[security].locked_config_keys` by hand, or `update_config` can rewrite the default policy; the
+  removed-key message for `[security].confirm_tools` says so.
 - **Each agent's tool calls are judged by its own approval policy.** `confirm` and `review` are one pair:
   an agent whose table declares either declares its whole policy (a key it leaves out is empty), and one
   that declares neither inherits `[assistant.tools]`'s pair whole. A declared pair replaces the default and
@@ -703,13 +705,15 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer
   agent to stderr (for example `assistant: 12 available, 12 resident, 3 confirm, 3 review (from [assistant.tools])`), because a declared
   policy replacing the default silently dropping its other entries is the one foot-gun the replace-whole
   rule leaves, and this is where it shows.
-- **The approval prompt names the agent asking** ("Allow coder to run ..."), on the terminal and on the
-  web card, since agents now hold different policies and a bare tool name no longer says whose call it is.
-- **Breaking for a third-party channel: `RichChannel.send_approval_request` takes an `agent` argument.**
-  The signature is now `send_approval_request(name, arguments, *, agent=None)`, and `ChannelUI` passes
-  `agent=` whenever it knows who is asking, which for Kokua's own gate is every call, so a channel still
-  implementing the two-argument form raises `TypeError` the first time a gated call asks. A channel that does not show who is asking can accept and ignore it, which is what
-  adding `agent=None` to the signature does. It is keyword-only for the reason `send_turn_saved`'s `token`
+- **The approval prompt and the auto-approval card name the agent asking** ("Allow coder to run ...",
+  "<model> auto-approved coder's ..."), on the terminal and on the web card (the `approval` and
+  `auto_approval` frames carry `"agent"`), since agents now hold different policies and a bare tool name no longer says whose call it is.
+- **Breaking for a third-party channel: `RichChannel.send_approval_request` and `send_auto_approval` take
+  an `agent` argument.** The signatures are now `send_approval_request(name, arguments, *, agent=None)`
+  and `send_auto_approval(..., agent=None)`, and `ChannelUI` always passes `agent=` (None when unknown),
+  so a channel still implementing the older form raises `TypeError` the first time a gated call asks. A
+  channel that does not show who is asking can accept and ignore it, which is what adding `agent=None`
+  to the signature does. It is keyword-only for the reason `send_turn_saved`'s `token`
   is.
 - **The AIMU floor is 0.37.0**, for the spawn spec's `"tool_approval"` key. See the floor history under
   "Diagnostics and error reporting" below.

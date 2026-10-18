@@ -94,6 +94,7 @@ class RichChannel(Protocol):
         reason: str,
         model: str,
         conversation_id: Optional[str] = None,
+        agent: Optional[str] = None,
     ) -> None:
         """Report that a reviewer answered for a gated tool call, whichever way it answered.
 

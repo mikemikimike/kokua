@@ -131,14 +131,16 @@ class _UI:
         self.asked: list[str] = []
         self.asked_by: list[str | None] = []
         self.auto_approvals: list[tuple[str, dict, bool, str, str, str]] = []
+        self.auto_approval_agents: list[str | None] = []
         self.alerts: list[str] = []
 
     async def ask_approval(self, name, arguments, *, agent=None):
         self.asked.append(f"approve:{name}")
         self.asked_by.append(agent)
 
-    async def show_auto_approval(self, name, arguments, *, approved, reason, model, conversation_id=None):
+    async def show_auto_approval(self, name, arguments, *, approved, reason, model, conversation_id=None, agent=None):
         self.auto_approvals.append((name, arguments, approved, reason, model, conversation_id))
+        self.auto_approval_agents.append(agent)
 
     async def alert(self, text, *, conversation_id=None, group=None):
         self.alerts.append(text)
@@ -368,6 +370,7 @@ async def test_an_approved_review_needs_no_prompt(monkeypatch, in_turn):
     assert ui.auto_approvals == [
         ("run_command", {"command": "uv run pytest -q"}, True, "runs the test suite", "ollama:b", "c1")
     ]
+    assert ui.auto_approval_agents == ["assistant"]
 
 
 async def test_an_escalated_review_still_prompts_and_carries_the_reason(monkeypatch, in_turn):

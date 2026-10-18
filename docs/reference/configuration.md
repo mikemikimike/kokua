@@ -815,6 +815,11 @@ These fail startup with a message naming the replacement; there is no migration 
 The `--confirm-tools` flag now overrides `[assistant.tools].confirm` for one run. A tool it names that
 the file's `review` list also names is refused as being in both.
 
+If `[security].locked_config_keys` is written out in your `config.toml` (a scaffolded one is), add
+`"assistant.tools.*"` to it: the old `"security.*"` entry is what locked `confirm_tools`, so without the
+new one `update_config` can rewrite `[assistant.tools]`, the default policy. A missing lock is not an
+error, since you may loosen it, and nothing else reports it.
+
 ## `[reviewers.<name>]`
 
 A reviewer is one context-free model call whose answer code consumes, declared here so you can read the

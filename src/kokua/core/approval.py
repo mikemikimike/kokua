@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from kokua.config import ConfigError
+from kokua.config.schema import DEFAULT_POLICY_SOURCE
 from kokua.core.agents import gateable_tools, resolve_gate_entries
 from kokua.registry.registry import RESERVED_GATE_NAMESPACE
 
@@ -30,8 +31,8 @@ if TYPE_CHECKING:
     from kokua.config.schema import AssistantConfig
     from kokua.registry.context import LiveState
 
-#: The default tier's name. No agent can have it: brackets and dots cannot appear in a TOML bare key.
-DEFAULT_POLICY = "[assistant.tools]"
+#: The default tier's name (defined with the config, which labels entries by it). No agent can have it.
+DEFAULT_POLICY = DEFAULT_POLICY_SOURCE
 
 _GATE_EFFECT = "gate nothing"
 _GATE_REMEDY = (

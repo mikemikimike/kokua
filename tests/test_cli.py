@@ -578,7 +578,7 @@ def test_summary_line_per_agent():
 
     assert access_summary_lines(config) == [
         "assistant: 12 available, 12 resident, 3 confirm, 3 review (from [assistant.tools])",
-        "coder: 5 available, 5 resident, 1 confirm, 0 review",
+        "coder: 5 available, 5 resident, 1 confirm, 0 review (from [agents.coder.tools])",
     ]
 
 
@@ -590,9 +590,26 @@ def test_agents_command_prints_each_agents_three_axes(monkeypatch, tmp_path, cap
     out = capsys.readouterr().out
     assert "assistant\n  available: " in out
     assert "  resident:  every available toolset" in out
-    assert "  confirm:   skills.add_skill_script" in out
-    assert "(from [assistant.tools])" in out
-    assert "composed workers: confirm and review from [assistant.tools]" in out
+    confirm = "skills.add_skill_script, mcp.add_mcp_server, config.update_config"
+    review = "compute.run_command, compute.execute_python, fs_write"
+    assert f"  confirm:   {confirm}  (from [assistant.tools])" in out
+    assert f"  review:    {review}  (from [assistant.tools])" in out
+    assert f"composed workers, confirm (from [assistant.tools]): {confirm}" in out
+    assert f"composed workers, review (from [assistant.tools]): {review}" in out
+
+
+def test_agents_command_shows_a_declared_pair_source(monkeypatch, tmp_path, capsys):
+    anchor = 'available = ["fs", "fs_write", "compute", "time", "messaging"]'
+
+    def declare_pair(text):
+        assert anchor in text
+        return text.replace(anchor, anchor + '\nconfirm = ["compute.run_command"]\nreview = []')
+
+    _write_example_config(monkeypatch, tmp_path, declare_pair)
+
+    _run_main(monkeypatch, ["agents"])
+
+    assert "  confirm:   compute.run_command  (from [agents.coder.tools])" in capsys.readouterr().out
 
 
 def test_agents_command_reports_a_bad_config_and_exits_2(monkeypatch, tmp_path, capsys):

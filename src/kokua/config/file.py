@@ -921,7 +921,8 @@ _REMOVED_KEYS = {
     ("security", "confirm_tools"): (
         "[security].confirm_tools is gone. Gated tools are now [assistant.tools].confirm (asks you) and "
         "[assistant.tools].review (asks a reviewer first), or the same two keys in an agent's own "
-        "[agents.<name>.tools]."
+        "[agents.<name>.tools]. If [security].locked_config_keys is written out in your config.toml, add "
+        '"assistant.tools.*" to it, or update_config can rewrite this policy.'
     ),
     (_AUTO_APPROVAL_SECTION, "tools"): (
         "[security.auto_approval].tools is gone. Move those entries to [assistant.tools].review and remove "

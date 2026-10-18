@@ -219,6 +219,7 @@ class HumanGate:
                 reason=outcome.reason,
                 model=outcome.model,
                 conversation_id=turn_conversation,
+                agent=agent,
             )
             if outcome.approved:
                 return True

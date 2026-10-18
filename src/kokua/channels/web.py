@@ -605,6 +605,7 @@ class WebChannel(BaseWebChannel):
         reason: str,
         model: str,
         conversation_id: Optional[str] = None,
+        agent: Optional[str] = None,
     ) -> None:
         """Show the page a reviewer's answer about a gated tool call. Nothing replies to this frame.
 
@@ -627,6 +628,7 @@ class WebChannel(BaseWebChannel):
                 "reason": reason,
                 "model": model,
                 "conversation_id": conversation_id,
+                "agent": agent,
             }
         )
 

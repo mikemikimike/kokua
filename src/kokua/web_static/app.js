@@ -2435,7 +2435,11 @@ function renderAutoApproval(frame) {
   el.className = frame.approved ? "bubble approval auto-approved" : "bubble approval auto-escalated";
   const prompt = document.createElement("div");
   prompt.className = "prompt";
-  prompt.textContent = frame.approved ? `${frame.model} auto-approved ` : `${frame.model} is asking you to approve `;
+  // The agent is named for the reason the approval prompt names it: a worker's call lands in the same log.
+  const call = frame.agent ? `${frame.agent}'s ` : "";
+  prompt.textContent = frame.approved
+    ? `${frame.model} auto-approved ${call}`
+    : `${frame.model} is asking you to approve ${call}`;
   const code = document.createElement("code");
   code.textContent = toolLine(frame.name, frame.arguments);
   prompt.appendChild(code);

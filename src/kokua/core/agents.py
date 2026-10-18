@@ -633,6 +633,7 @@ def _spawn_tool(config: AssistantConfig, state: LiveState, delegator: str) -> Ca
     # Deferred: core.approval imports this module for the gate vocabulary.
     from kokua.core.approval import DEFAULT_POLICY
 
+    # A fallback no Kokua spawn reaches: every spec carries its own gate and Kokua spawns with max_depth=1.
     return make_async_subagent_tool(
         config.default_model,
         agent_types=build_agent_specs(config, state, delegator),
@@ -669,6 +670,7 @@ def make_delegation_tool(agent, config: AssistantConfig, state: LiveState) -> Op
     # Deferred: core.approval imports this module for the gate vocabulary.
     from kokua.core.approval import DEFAULT_POLICY
 
+    # A fallback no Kokua spawn reaches: every spec carries its own gate and Kokua spawns with max_depth=1.
     return make_async_subagent_tool(
         config.default_model,
         agent_types=build_agent_specs(config, state, name),

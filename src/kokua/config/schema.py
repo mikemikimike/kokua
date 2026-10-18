@@ -13,6 +13,9 @@ from typing import Optional, Union
 
 from kokua.config import paths as paths
 
+#: The default approval tier's name, used as a policy's source label. No agent can have it: brackets and
+#: dots cannot appear in a TOML bare key.
+DEFAULT_POLICY_SOURCE = "[assistant.tools]"
 DEFAULT_SYSTEM_MESSAGE = "You are a personal assistant running on the user's own machine. Be concise and helpful."
 
 #: The write policy Kokua ships with, and the default of ``[security].locked_config_keys``. A pattern is
@@ -225,9 +228,10 @@ class AssistantConfig:
     generate_titles: bool = True
     # Hot: one of ``CORE_RUNTIME_SETTINGS`` (config/table.py); read once per turn by ``TurnRunner``.
     capture_requests: bool = True
-    # The default tier of tools that require interactive confirmation before each call, for every agent that
-    # does not declare its own pair in [agents.<name>.tools] ([assistant.tools].confirm) (see the per-agent gate, core.interaction.HumanGate.approve). These
-    # run with full machine access; an empty list disables approval. Proactive turns auto-deny them.
+    # The default tier of tools that require interactive confirmation before each call, for every agent
+    # that does not declare its own pair in [agents.<name>.tools] ([assistant.tools].confirm); see the
+    # per-agent gate, core.interaction.HumanGate.approve. These run with full machine access. Emptying
+    # both this and default_review turns default approvals off. Proactive turns auto-deny them.
     # Each entry names the toolset providing the tool: "<toolset>" or "<toolset>.*" for all of them,
     # "<toolset>.<tool>" for one, with "core" reserved for the tools no toolset provides. Resolved to
     # tool names at startup by core.approval.resolve_approval_policies, which rejects an entry gating nothing.
@@ -373,7 +377,7 @@ class AssistantConfig:
         agent = self.agents.get(agent_name)
         if agent is not None and agent.confirm is not None and agent.review is not None:
             return agent.confirm, agent.review, f"[agents.{agent_name}.tools]"
-        return self.default_confirm, self.default_review, "[assistant.tools]"
+        return self.default_confirm, self.default_review, DEFAULT_POLICY_SOURCE
 
     def generation_for(self, agent_name: str) -> dict:
         """The generation parameters ``agent_name`` runs with: ``[assistant.generation]``, per-key
