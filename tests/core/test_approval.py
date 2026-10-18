@@ -1279,6 +1279,96 @@ async def test_a_worker_composed_with_a_deferred_toolset_is_gated_by_the_pending
     assert "add_mcp_server" in assistant._human.policies.for_agent(label).confirm
 
 
+async def test_a_real_mcp_tool_shadowed_by_fs_is_reported_at_startup(tmp_path, monkeypatch):
+    """No stubs between the config and the alert: a connected server's tool names reach
+    ``tools_by_toolset`` through the startup builds, and trust order puts Kokua's own ``fs`` first."""
+    import kokua.core.agents as agents_mod
+    from aimu import aio
+    from kokua.config.schema import ALL_TOOLSETS, MCPServerConfig
+    from tests.fakes import _FakeMCP, _fake_mcp_tool
+
+    async def fake_connect(*, url=None, auth=None, **kw):
+        return _FakeMCP([_fake_mcp_tool("read_file")])
+
+    monkeypatch.setattr(aio.MCPClient, "connect", fake_connect)
+    captured: list = []
+
+    def fake_make(model, *, agent_types, tool_approval, **kwargs):
+        captured.append(agent_types)
+
+        async def spawn_subagent(agent_type: str, task: str) -> str:
+            """menu"""
+            return "ok"
+
+        spawn_subagent.__tool_is_async__ = True
+        spawn_subagent.__tool_is_streaming__ = False
+        spawn_subagent.__tool_spec__ = {"function": {"name": "spawn_subagent"}}
+        return spawn_subagent
+
+    monkeypatch.setattr(agents_mod, "make_async_subagent_tool", fake_make)
+    agents = {
+        "assistant": AgentConfig(available=["time"], delegates_to=["explorer"]),
+        "explorer": AgentConfig(description="Explores.", available=ALL_TOOLSETS, resident=["fs", "files"]),
+    }
+    config = _config(
+        tmp_path,
+        agents=agents,
+        mcp_servers=[MCPServerConfig(url="https://files.example/mcp", name="files")],
+        default_confirm=[],
+        default_review=[],
+    )
+    channel = AlertCapturingChannel()
+    assistant = await Assistant.create(config, channel, client=MockAsyncModelClient([]))
+    await assistant.start()
+
+    assert [text for text, *_ in channel.alerts] == [
+        "explorer: read_file from 'files' is shadowed by 'fs' (trust order keeps the first)."
+    ]
+    kept = [fn for fn in captured[-1]["explorer"]["tools"] if fn.__name__ == "read_file"]
+    assert len(kept) == 1 and kept[0].__module__ != "tests.fakes"
+    assistant._state.close()
+
+
+async def test_an_agent_whose_toolsets_were_never_built_is_skipped_not_reported(tmp_path, caplog):
+    """An agent nothing delegates to is never built at startup, so its toolsets' names are unknown and
+    "no shadows" would be a claim nobody checked."""
+    import logging
+
+    from kokua.config.schema import ALL_TOOLSETS
+
+    agents = {
+        "assistant": AgentConfig(available=["time"]),
+        "orphan": AgentConfig(description="Unreached.", available=ALL_TOOLSETS, resident=["fs", "time"]),
+    }
+    config = _config(tmp_path, agents=agents, default_confirm=[], default_review=[])
+    assistant = await Assistant.create(config, AlertCapturingChannel(), client=MockAsyncModelClient([]))
+    with caplog.at_level(logging.INFO, logger="kokua.core.agents"):
+        await assistant.start()
+    assert any("orphan" in record.getMessage() for record in caplog.records)
+    assistant._state.close()
+
+
+async def test_a_failing_shadow_alert_does_not_stop_startup(tmp_path, monkeypatch):
+    from kokua.core import agents
+    from kokua.core.agents import ShadowedTool
+
+    monkeypatch.setattr(
+        agents, "shadowed_tools", lambda config, registry, tools: [ShadowedTool("explorer", "read_file", "fs", "files")]
+    )
+    assistant = await Assistant.create(_config(tmp_path), AlertCapturingChannel(), client=MockAsyncModelClient([]))
+
+    async def broken_alert(text, **kwargs):
+        raise RuntimeError("channel went away")
+
+    armed: list[bool] = []
+    monkeypatch.setattr(assistant._ui, "alert", broken_alert)
+    monkeypatch.setattr(type(assistant._state.tasks), "arm_all", lambda self: armed.append(True))
+    await assistant.start()
+
+    assert armed == [True]
+    assistant._state.close()
+
+
 async def test_startup_notices_each_shadowed_resident_tool(tmp_path, monkeypatch):
     from kokua.core import agents
     from kokua.core.agents import ShadowedTool

@@ -366,11 +366,16 @@ class Assistant:
 
         # After every startup build, since only then does `tools_by_toolset` hold what each resident
         # toolset offered. Once, here, because a shadow is a fact about the declaration, not about a turn.
+        # Guarded per notice, because `_started` is already set: a channel that raises here must not leave
+        # scheduled tasks unarmed with a retry of `start` a no-op. A notice is never worth that.
         for shadow in shadowed_tools(config, state.registry, state.tools_by_toolset):
-            await self._ui.alert(
-                f"{shadow.agent}: {shadow.tool} from {shadow.shadowed!r} is shadowed by {shadow.kept!r} "
-                "(trust order keeps the first)."
-            )
+            try:
+                await self._ui.alert(
+                    f"{shadow.agent}: {shadow.tool} from {shadow.shadowed!r} is shadowed by {shadow.kept!r} "
+                    "(trust order keeps the first)."
+                )
+            except Exception:
+                logger.warning("Could not raise the shadowed-tool notice for %s.", shadow, exc_info=True)
 
         state.tasks.arm_all()
 

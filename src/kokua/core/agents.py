@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import difflib
 import functools
+import logging
 from dataclasses import dataclass
 from typing import Callable, Collection, Mapping, Optional, Sequence
 
@@ -37,6 +38,7 @@ from kokua.registry.registry import (
 )
 from kokua.workflows import Workflow
 
+logger = logging.getLogger(__name__)
 
 # Provider labels `build_registry` hands to `register`. These are what `--list-toolsets` groups by, and
 # what a collision message names, so they are the words a user reads rather than an internal taxonomy.
@@ -188,12 +190,22 @@ def shadowed_tools(
     tool can silently lose to one Kokua ships. ``tools_by_toolset`` records what each toolset offered,
     which is all this needs. The entry agent's skills are held back as wiring holds them back, since its
     ``SkillAgent`` supplies those tools by another route and they are never competing for a name here.
+
+    Startup builds the entry agent's resident toolsets and those of every worker reachable from it by
+    ``delegates_to``; an agent nothing delegates to is never built, so a resident toolset absent from
+    ``tools_by_toolset`` has no recorded names. Such an agent is skipped and logged at INFO rather than
+    reported as shadow-free, and its toolsets are not built just to look, because building has side
+    effects. A toolset another agent built still counts, since the record is per toolset, not per agent.
     """
     shadows: list[ShadowedTool] = []
     for agent_name in config.agents:
         resident = resident_for(config, registry, agent_name)
         if agent_name == config.entry_agent:
             resident = without_skill_names(resident, registry)
+        unbuilt = [toolset for toolset in resident if toolset not in tools_by_toolset]
+        if unbuilt:
+            logger.info("Not checking %s for shadowed tools: %s not built at startup.", agent_name, unbuilt)
+            continue
         holder: dict[str, str] = {}
         for toolset in resident:
             for tool in sorted(tools_by_toolset.get(toolset, ())):
