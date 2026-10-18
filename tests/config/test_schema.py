@@ -147,3 +147,17 @@ def test_approval_entries_for_a_declared_agent_and_the_default():
     assert config.approval_entries_for("coder") == (["compute.run_command"], [], "[agents.coder.tools]")
     assert config.approval_entries_for("researcher") == (["fs_write"], ["compute.run_command"], "[assistant.tools]")
     assert config.approval_entries_for("composed:x") == (["fs_write"], ["compute.run_command"], "[assistant.tools]")
+
+
+def test_resident_absent_means_everything_resident():
+    config = AssistantConfig(agents={"a": AgentConfig(available=["memory", "web"])})
+    assert config.resident_for("a") == ["memory", "web"]
+    assert config.deferred_for("a") == []
+
+
+def test_resident_order_never_reorders_tools():
+    config = AssistantConfig(
+        agents={"a": AgentConfig(available=["memory", "web", "time"], resident=["time", "memory"])}
+    )
+    assert config.resident_for("a") == ["memory", "time"]
+    assert config.deferred_for("a") == ["web"]

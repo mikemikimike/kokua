@@ -285,10 +285,13 @@ def _parse_mcp_servers(value: Any) -> list[MCPServerConfig]:
                 f"[[mcp.server]] requires a string 'name' (server {url}): a server is named so an "
                 "agent can name it in its available list."
             )
-        unknown = set(entry) - {"url", "token_env", "name"}
+        description = entry.get("description")
+        if description is not None and not isinstance(description, str):
+            raise ConfigError(f"[[mcp.server]].description must be a string (server {url})")
+        unknown = set(entry) - {"url", "token_env", "name", "description"}
         if unknown:
             raise ConfigError(f"unknown key(s) in [[mcp.server]] (server {url}): {', '.join(sorted(unknown))}")
-        servers.append(MCPServerConfig(url=url, name=name, token_env=token_env))
+        servers.append(MCPServerConfig(url=url, name=name, token_env=token_env, description=description))
     return servers
 
 
@@ -315,9 +318,8 @@ _AGENT_KEYS = {
 _REMOVED_AGENT_KEYS = {"groups", "tool_packs", "mcp_servers"}
 
 
-# Keys an agent's `tools` table takes. `resident` is deliberately absent until deferred loading exists:
-# accepting a key that changes nothing would let a config say something the runtime does not do.
-_AGENT_TOOLS_KEYS = ("available", "confirm", "review")
+# Keys an agent's `tools` table takes.
+_AGENT_TOOLS_KEYS = ("available", "confirm", "review", "resident")
 
 
 def _parse_agent_tools(name: str, value: Any) -> dict:
@@ -346,6 +348,12 @@ def _parse_agent_tools(name: str, value: Any) -> dict:
             if not isinstance(value[key], list):
                 raise ConfigError(f"[{section}].{key} must be a list of strings")
             fields[key] = _str_list(section, key, value[key])
+    for entry in fields.get("resident", []):
+        if entry not in fields["available"]:
+            raise ConfigError(
+                f"[agents.{name}.tools].resident names {entry!r}, which is not in available. A resident "
+                "toolset is one this agent already holds; add it to available or drop it here."
+            )
     if "confirm" in fields or "review" in fields:
         fields.setdefault("confirm", [])
         fields.setdefault("review", [])

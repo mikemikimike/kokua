@@ -554,3 +554,13 @@ async def test_a_scalar_tools_write_points_at_the_subtable(tmp_path):
     result = await update_config("agents.coder", "tools", "time")
     assert 'section="agents.coder.tools"' in result
     assert not path.exists()
+
+
+async def test_an_agent_resident_write_round_trips_through_the_loader(tmp_path):
+    config = _unlocked(tmp_path, agents={"coder": AgentConfig(available=["time", "memory"])}, entry_agent="coder")
+    path, _, update_config = _tools(
+        tmp_path, config=config, registry={"time": _stub_toolset("time"), "memory": _stub_toolset("memory")}
+    )
+    await update_config("agents.coder.tools", "resident", "time")
+    loaded = settings.load(str(path), table=core_table())
+    assert loaded["agents"]["coder"].resident == ["time"]

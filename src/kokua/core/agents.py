@@ -62,7 +62,7 @@ def mcp_toolsets(config: AssistantConfig) -> list[Toolset]:
     return [
         Toolset(
             name=server.name,
-            description=f"Tools from the MCP server at {server.url}.",
+            description=server.description or f"Tools from the MCP server at {server.url}.",
             build=lambda ctx, _url=server.url: _server_tools(_url, ctx.state),
         )
         for server in config.mcp_servers

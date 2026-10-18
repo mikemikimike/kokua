@@ -1189,11 +1189,6 @@ def test_agent_tools_table_requires_available():
         _load_text('[agents.coder.tools]\nconfirm = ["fs_write"]\n')
 
 
-def test_resident_is_not_a_key_yet():
-    with pytest.raises(settings.ConfigError, match=r"unknown config key \[agents\.coder\.tools\]\.resident"):
-        _load_text('[agents.coder.tools]\navailable = ["fs"]\nresident = ["fs"]\n')
-
-
 def test_assistant_tools_pair_rule():
     overrides = _load_text('[assistant.tools]\nreview = ["fs_write"]\n')
     assert overrides["default_review"] == ["fs_write"] and overrides["default_confirm"] == []
@@ -1243,3 +1238,26 @@ def test_auto_approval_tools_is_gone():
 def test_assistant_tools_lock_pattern_is_valid_without_the_table():
     overrides = _load_text('[security]\nlocked_config_keys = ["security.*", "agents.*", "assistant.tools.*"]\n')
     assert "assistant.tools.*" in overrides["locked_config_keys"]
+
+
+def test_resident_parses_and_must_be_within_available():
+    agent = _load_text('[agents.assistant.tools]\navailable = ["memory", "web"]\nresident = ["memory"]\n')["agents"][
+        "assistant"
+    ]
+    assert agent.resident == ["memory"]
+    with pytest.raises(
+        settings.ConfigError,
+        match=r"\[agents\.assistant\.tools\]\.resident names 'compute', which is not in available",
+    ):
+        _load_text('[agents.assistant.tools]\navailable = ["memory"]\nresident = ["memory", "compute"]\n')
+
+
+def test_mcp_server_description_parses_and_must_be_a_string(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[[mcp.server]]\nurl = "https://b/mcp"\nname = "stocks"\ndescription = "Quotes."\n', encoding="utf-8"
+    )
+    assert settings.load(str(path), table=core_table())["mcp_servers"][0].description == "Quotes."
+    path.write_text('[[mcp.server]]\nurl = "https://b/mcp"\nname = "stocks"\ndescription = 3\n', encoding="utf-8")
+    with pytest.raises(settings.ConfigError, match="description"):
+        settings.load(str(path), table=core_table())

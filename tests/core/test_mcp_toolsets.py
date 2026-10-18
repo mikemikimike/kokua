@@ -103,3 +103,17 @@ def test_a_server_without_a_name_is_a_config_error(tmp_path):
     with pytest.raises(ConfigError) as excinfo:
         AssistantConfig(**load(str(path), table=core_table()))
     assert "name" in str(excinfo.value)
+
+
+def test_mcp_server_description_is_optional_and_named_in_the_catalogue():
+    from kokua.core.agents import mcp_toolsets
+
+    config = AssistantConfig(
+        mcp_servers=[
+            MCPServerConfig(url="https://a/mcp", name="stocks", description="Quotes and fundamentals."),
+            MCPServerConfig(url="https://b/mcp", name="plain"),
+        ]
+    )
+    toolsets = {t.name: t for t in mcp_toolsets(config)}
+    assert toolsets["stocks"].description == "Quotes and fundamentals."
+    assert toolsets["plain"].description == "Tools from the MCP server at https://b/mcp."
