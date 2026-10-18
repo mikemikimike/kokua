@@ -7,10 +7,12 @@ collision is an error, not a precedence rule, so nothing here depends on one pro
 from __future__ import annotations
 
 import difflib
-from typing import Callable, Mapping, Optional, Sequence
+import functools
+from typing import Callable, Collection, Mapping, Optional, Sequence
 
 from aimu import trim_messages
 from aimu.aio.tools.builtin import SubagentObserver, make_async_subagent_tool
+from aimu.tools.groups import CORE_TOOL_NAMES
 
 from kokua.config.file import ConfigError
 from kokua.config.schema import DEFAULT_SYSTEM_MESSAGE, AssistantConfig
@@ -62,7 +64,7 @@ def mcp_toolsets(config: AssistantConfig) -> list[Toolset]:
     return [
         Toolset(
             name=server.name,
-            description=f"Tools from the MCP server at {server.url}.",
+            description=server.description or f"Tools from the MCP server at {server.url}.",
             build=lambda ctx, _url=server.url: _server_tools(_url, ctx.state),
         )
         for server in config.mcp_servers
@@ -107,6 +109,21 @@ def without_skill_names(names: Sequence[str], registry: ToolsetRegistry) -> list
     its prompt. A plain agent has no such machinery and resolves them normally.
     """
     return [name for name in names if registry.providers.get(name) != _SKILL_PROVIDER]
+
+
+def loadable_toolsets(config: AssistantConfig, registry: ToolsetRegistry, agent_name: str) -> list[str]:
+    """The toolsets ``agent_name`` loads on demand, divided exactly as wiring divides them.
+
+    ``AssistantConfig.deferred_for`` reads the declaration alone, so it counts a skill the entry agent
+    names outside ``resident``. Wiring does not: the entry agent is a ``SkillAgent`` that already holds
+    every skill, so ``wire_agent`` holds skill names back before the residency split. This is what
+    decides whether an agent carries the loader tools at all. Whether an approval entry waits for a
+    build is a different question, answered by :func:`built_toolsets`.
+    """
+    deferred = config.deferred_for(agent_name)
+    if agent_name == config.entry_agent:
+        return without_skill_names(deferred, registry)
+    return deferred
 
 
 def build_registry(config: AssistantConfig) -> ToolsetRegistry:
@@ -428,8 +445,55 @@ LEAN_DELEGATION_GUIDANCE = (
 )
 
 
-def assemble_system_message(config: AssistantConfig, agent_name: str, toolsets: Sequence[Toolset]) -> str:
+def split_by_residency(
+    config: AssistantConfig, agent_name: str, toolsets: Sequence[Toolset]
+) -> tuple[list[Toolset], list[Toolset]]:
+    """``toolsets`` divided into what ``agent_name`` holds from its first turn and what it loads on demand.
+
+    Both halves keep the order they arrived in. ``toolsets`` may be a subset of the agent's declaration
+    (the entry agent's skill names are held back before this runs), so membership is decided by name
+    against ``resident_for`` rather than by position.
+    """
+    resident_names = set(config.resident_for(agent_name))
+    resident = [toolset for toolset in toolsets if toolset.name in resident_names]
+    deferred = [toolset for toolset in toolsets if toolset.name not in resident_names]
+    return resident, deferred
+
+
+def approval_note(confirm: list[str], review: list[str], toolset: str) -> str:
+    """What the model is told about which of ``toolset``'s tools ask before they run, or "" for none.
+
+    Shown beside a toolset in ``available_tools``, so a model choosing what to load knows a gated tool
+    will stop for an answer before it plans around the tool. Entries speak the gate's own vocabulary
+    (``toolset``, ``toolset.*``, ``toolset.tool``) and both lists count, since a reviewed call is a
+    gated call that a person may still be asked about.
+    """
+    tools: set[str] = set()
+    for entry in [*confirm, *review]:
+        name, _, tool = entry.partition(_GATE_SEPARATOR)
+        if name != toolset:
+            continue
+        if tool in ("", _GATE_WILDCARD):
+            return "Asks first: every tool."
+        tools.add(tool)
+    if not tools:
+        return ""
+    return f"Asks first: {', '.join(sorted(tools))}."
+
+
+def assemble_system_message(
+    config: AssistantConfig,
+    agent_name: str,
+    toolsets: Sequence[Toolset],
+    deferred: Sequence[Toolset] = (),
+) -> str:
     """One agent's full system message: its opener plus the guidance it earned.
+
+    ``toolsets`` are the ones the agent holds from its first turn, and only their guidance is written
+    in: a deferred toolset's guidance arrives with the tools themselves, when the model loads them, so
+    the prompt pays for nothing the agent is not yet using. The deferred ones are named in one line, so
+    the model knows there is something to load, and they still count toward whether the agent is a lean
+    supervisor: an agent that can load a domain toolset is not short on tools.
 
     Guidance travels with the capability that needs it, so installing a toolset brings the instructions
     that make the model use it and removing one takes them away. Nothing here is conditional on a
@@ -449,9 +513,11 @@ def assemble_system_message(config: AssistantConfig, agent_name: str, toolsets: 
         opener = agent.system_message or config.system_message or DEFAULT_SYSTEM_MESSAGE
     parts = [opener]
     parts.extend(toolset.guidance for toolset in toolsets if toolset.guidance)
+    if deferred:
+        parts.append(f" Also available, load before use: {', '.join(toolset.name for toolset in deferred)}.")
     if agent.delegates_to:
         parts.append(DELEGATION_GUIDANCE)
-        if all(toolset.cross_cutting for toolset in toolsets):
+        if all(toolset.cross_cutting for toolset in [*toolsets, *deferred]):
             parts.append(LEAN_DELEGATION_GUIDANCE)
     return "".join(parts)
 
@@ -506,15 +572,26 @@ def build_agent_specs(config: AssistantConfig, state: LiveState, delegator: str)
     terminate: every recursive call moves to a target strictly further from ``delegator`` along a path
     with no repeated agent, and the graph has finitely many agents.
     """
+    # Imported here, not at module level: kokua.core.build imports this module lazily for the same cycle
+    # resolve_system_message documents, so neither side may import the other at module scope.
+    from kokua.core.build import tool_groups_for
+
     specs: dict[str, dict] = {}
     for name in config.agents[delegator].delegates_to:
         agent = config.agents[name]
         toolsets = select(agent.available, state.registry, agent=name, entry_point=config.entry_agent)
+        resident, deferred = split_by_residency(config, name, toolsets)
         # A spawned worker is a plain AIMU Agent, so `agent=None`: the one toolset needing the live
         # agent object is entry-point-only and validation has already rejected it here. The name is
         # carried regardless, so a toolset scoping itself to its holder (`benchmark`) resolves this
         # worker's own model rather than the delegator's.
-        tools = build_tools(toolsets, ToolsetContext(state=state, agent=None, agent_name=name))
+        # A partial, so each worker's groups build with that worker's own context (a bare closure over a
+        # loop variable would hand every group the last worker's).
+        make_context = functools.partial(ToolsetContext, state=state, agent=None, agent_name=name)
+        # Only the resident toolsets are built here. A deferred one is built by its group, when the
+        # worker loads it, and that build goes through `build_tools` too, so recording and approval
+        # cover it exactly as they cover a toolset built now.
+        tools = build_tools(resident, make_context())
         if agent.delegates_to:
             tools = tools + [_spawn_tool(config, state, name)]
         # AIMU reads the first line of a spec's system_message as that agent_type's menu label (see
@@ -522,10 +599,11 @@ def build_agent_specs(config: AssistantConfig, state: LiveState, delegator: str)
         # line break, which would make a useless label, so the description leads on its own line;
         # falling back to the agent's own name means an agent that skips `description` still gets a
         # label instead of a blank one.
-        message = assemble_system_message(config, name, toolsets)
+        message = assemble_system_message(config, name, resident, deferred)
         specs[name] = {
             "system_message": f"{agent.description or name}\n\n{message}",
             "tools": tools,
+            "tool_groups": tool_groups_for(config, state, name, resident, deferred, make_context),
             # Bound to this worker's own name, so its calls are judged by its own policy rather than
             # its delegator's.
             "tool_approval": state.gate_for(name),
@@ -729,8 +807,82 @@ def gateable_tools(state: LiveState, entry_agent) -> dict[str, set[str]]:
         name = getattr(fn, "__name__", None)
         if name and name not in owned:
             reserved.add(name)
+    # An agent that can defer a toolset holds AIMU's loader tools, which no toolset provides, so a gate
+    # on them is writable only under the reserved prefix.
+    if any(loadable_toolsets(state.config, state.registry, name) for name in state.config.agents):
+        reserved |= set(CORE_TOOL_NAMES)
     by_toolset[RESERVED_GATE_NAMESPACE] = reserved
     return by_toolset
+
+
+def gate_entry_grammar_fault(entry: str) -> str:
+    """What is malformed about ``entry``'s shape, or an empty string when it is well formed.
+
+    Split out so an entry parked until its toolset is built is still checked at startup: the shape
+    needs no tool names, and a malformed entry would otherwise fail a later build with a message about
+    a missing tool while the real fault was discarded.
+    """
+    parts = entry.split(_GATE_SEPARATOR)
+    if len(parts) > 2:
+        return f"{entry!r} has more than one {_GATE_SEPARATOR!r}. {_GATE_GRAMMAR}"
+    toolset, tool = (parts[0], _GATE_WILDCARD) if len(parts) == 1 else (parts[0], parts[1])
+    if _GATE_WILDCARD in toolset or (tool != _GATE_WILDCARD and _GATE_WILDCARD in tool):
+        return (
+            f"{entry!r} uses {_GATE_WILDCARD!r} inside a name. It is legal only as the whole tool, as in "
+            f"'compute.{_GATE_WILDCARD}', because a pattern matching fewer tools than its author meant "
+            "is the same silent gap as a name matching none."
+        )
+    return ""
+
+
+def built_toolsets(state: LiveState) -> set[str]:
+    """The toolsets whose tool names already exist: the one answer to "is this toolset built yet?".
+
+    Every toolset a ``build_tools`` call has recorded, plus every skill the entry agent's ``SkillAgent``
+    holds. The second half matters because that agent's skills server is built by AIMU rather than
+    through ``build_tools``, so no build ever records it, yet its tools exist from the first turn. Without
+    it, a gate on such a skill would wait for a build whenever any agent could load the skill later, and
+    the entry agent would run the skill's scripts ungated meanwhile.
+    """
+    return set(state.tools_by_toolset) | {skill.name for skill in state.skill_manager.skills.values()}
+
+
+def pending_gate_entries(entries: Sequence[str], deferred: set[str], built: Collection[str]) -> set[str]:
+    """The well-formed entries naming a deferred toolset that is not built yet (see :func:`built_toolsets`).
+
+    These wait for the build instead of resolving at startup. A malformed entry is never parked, so it
+    still reaches the resolver and fails startup with its own sentence.
+    """
+    return {
+        entry
+        for entry in entries
+        if not gate_entry_grammar_fault(entry)
+        and entry.split(_GATE_SEPARATOR)[0] in deferred
+        and entry.split(_GATE_SEPARATOR)[0] not in built
+    }
+
+
+def certain_overlap(left: Collection[str], right: Collection[str]) -> list[str]:
+    """What two lists of pending gate entries are sure to share once their toolset builds, as entries.
+
+    Decided from the text alone, so a conflict between entries still waiting on a build fails startup
+    rather than refusing every later build of that toolset. A whole toolset (``T`` or ``T.*``) holds
+    whatever ``T.x`` names, and if ``x`` turns out not to exist, the ``T.x`` entry is dead and refuses
+    the build on its own, so the pair can never build cleanly either way. Two different tools of one
+    toolset are left alone: whether they collide is not something the text says.
+    """
+    shared: set[str] = set()
+    for one in left:
+        for other in right:
+            toolset, tool = (one.split(_GATE_SEPARATOR) + [_GATE_WILDCARD])[:2]
+            other_toolset, other_tool = (other.split(_GATE_SEPARATOR) + [_GATE_WILDCARD])[:2]
+            if toolset != other_toolset:
+                continue
+            if tool == _GATE_WILDCARD:
+                shared.add(toolset if other_tool == _GATE_WILDCARD else other)
+            elif other_tool == _GATE_WILDCARD or tool == other_tool:
+                shared.add(one)
+    return sorted(shared)
 
 
 def _resolve_gate_entry(entry: str, vocabulary: dict[str, set[str]], registry: Mapping[str, Toolset]) -> tuple:
@@ -741,16 +893,11 @@ def _resolve_gate_entry(entry: str, vocabulary: dict[str, set[str]], registry: M
     wrote a name meaning to hold a tool back, and the difference between the name they wrote and the
     one that works is the whole content of the error.
     """
+    grammar_fault = gate_entry_grammar_fault(entry)
+    if grammar_fault:
+        return set(), grammar_fault
     parts = entry.split(_GATE_SEPARATOR)
-    if len(parts) > 2:
-        return set(), f"{entry!r} has more than one {_GATE_SEPARATOR!r}. {_GATE_GRAMMAR}"
     toolset, tool = (parts[0], _GATE_WILDCARD) if len(parts) == 1 else (parts[0], parts[1])
-    if _GATE_WILDCARD in toolset or (tool != _GATE_WILDCARD and _GATE_WILDCARD in tool):
-        return set(), (
-            f"{entry!r} uses {_GATE_WILDCARD!r} inside a name. It is legal only as the whole tool, as in "
-            f"'compute.{_GATE_WILDCARD}', because a pattern matching fewer tools than its author meant "
-            "is the same silent gap as a name matching none."
-        )
     if toolset not in vocabulary:
         if len(parts) == 1:
             owners = sorted(name for name, tools in vocabulary.items() if toolset in tools)

@@ -9,7 +9,8 @@ import pytest
 from aimu.aio.channels.base import Channel, ChannelMessage
 
 from kokua.config import ConfigError
-from kokua.config.schema import AssistantConfig, ReviewerConfig
+from kokua.config.schema import AgentConfig, AssistantConfig, ReviewerConfig
+from kokua.core.agents import build_registry
 from kokua.core.assistant import Assistant
 from tests.channels import AlertCapturingChannel, FakeChannel, _config
 from tests.fakes import _RequestsToolOnce
@@ -44,6 +45,7 @@ async def test_approve_gated_tool_waits_for_routed_answer(tmp_path):
         _config(tmp_path, default_confirm=["skills.add_skill_script"]), channel, client=MockAsyncModelClient([])
     )
     await assistant.start()
+    await assistant._agent.load_tool_group("skills")
     # Foreground: the calling turn's conversation is the one currently viewed.
     token = streaming_conversation.set(assistant._active_id)
     try:
@@ -70,6 +72,7 @@ async def test_approve_backgrounded_auto_denies_without_prompting(tmp_path):
         _config(tmp_path, default_confirm=["skills.add_skill_script"]), channel, client=MockAsyncModelClient([])
     )
     await assistant.start()
+    await assistant._agent.load_tool_group("skills")
     # Background: the calling turn's conversation ("elsewhere") isn't the one being viewed.
     token = streaming_conversation.set("elsewhere")
     try:
@@ -106,6 +109,7 @@ async def test_denied_gated_tool_does_not_run(tmp_path):
     client = _RequestsToolOnce("add_skill_script", {"skill_name": "disk", "filename": "u.py", "content": "print(1)\n"})
     assistant = await Assistant.create(cfg, FakeChannel(), client=client)
     await assistant.start()
+    await assistant._agent.load_tool_group("skills")
     # No streaming_conversation is set around this call, so it defaults to None -- not the viewed
     # conversation -- making the gate auto-deny without an interactive prompt. That exercises the real
     # dispatch path (the Agent's tool-loop engine + approval gate) via a normal run.
@@ -236,6 +240,9 @@ async def test_the_shipped_gates_all_name_tools_that_exist(tmp_path):
     assert config.default_confirm == AssistantConfig().default_confirm
     assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
     await assistant.start()
+    # Two of the entries name toolsets the shipped entry agent defers, so they resolve as it loads them.
+    for toolset in ("skills", "mcp"):
+        await assistant._agent.load_tool_group(toolset)
     assert assistant._human.policies.default.gated == {
         "add_skill_script",
         "add_mcp_server",
@@ -393,12 +400,18 @@ async def test_the_delegation_tool_is_gateable(tmp_path):
     assert await _gated(tmp_path, ["core.spawn_subagent"]) == {"spawn_subagent"}
 
 
-async def test_the_reserved_namespace_gates_both_of_its_members(tmp_path):
+async def test_the_reserved_namespace_also_gates_the_loaders_when_something_is_deferred(tmp_path):
     config = _config(tmp_path, default_confirm=["core"])
     _write_skill(config)
     assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
     await assistant.start()
-    assert assistant._human.policies.default.gated == {"spawn_subagent", "activate_skill"}
+    # AIMU adds the two loaders to an agent with a deferred toolset, and they belong to no toolset either.
+    assert assistant._human.policies.default.gated == {
+        "spawn_subagent",
+        "activate_skill",
+        "available_tools",
+        "load_tools",
+    }
     assistant._state.close()
 
 
@@ -697,18 +710,30 @@ async def test_the_shipped_example_resolves_to_todays_gate(tmp_path):
     # A scaffolded config writes its lock list out in full, so the default list's entry alone would
     # leave [assistant.tools] writable by update_config.
     assert "assistant.tools.*" in loaded["locked_config_keys"]
-    config, state, entry = await _wired(tmp_path)
-    config = dataclasses.replace(
-        config, default_confirm=loaded["default_confirm"], default_review=loaded["default_review"]
-    )
+    config = _config(tmp_path, default_confirm=loaded["default_confirm"], default_review=loaded["default_review"])
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    await assistant.start()
 
-    policies = resolve_approval_policies(config, state, entry)
+    # `skills` and `mcp` are deferred by the shipped entry agent, so the two entries naming their tools
+    # wait for the build instead of resolving at startup.
+    at_startup = assistant._human.policies.default
+    assert at_startup.confirm == {"update_config"}
+    assert at_startup.review == {"execute_python", "run_command", "write_file", "edit_file"}
+    assert at_startup.pending_confirm == {"skills.add_skill_script", "mcp.add_mcp_server"}
+    assert at_startup.pending_review == frozenset()
+    assert len(at_startup.gated) == 5
 
-    assert policies.default.confirm == {"add_skill_script", "add_mcp_server", "update_config"}
-    assert policies.default.review == {"execute_python", "run_command", "write_file", "edit_file"}
-    # The union is what the old six-entry gate held, so the split changed who is asked first and not
-    # which calls are held.
-    assert policies.default.gated == {
+    for toolset in ("skills", "mcp"):
+        await assistant._agent.load_tool_group(toolset)
+
+    # The union is what the old six-entry gate held, so neither the split nor residency changed which
+    # calls are held: two of them resolve on load instead of at startup.
+    after_load = assistant._human.policies.default
+    assert after_load.pending_confirm == frozenset()
+    # A pending confirm entry must land in confirm, not review: review is the half a model can approve.
+    assert after_load.confirm == {"add_skill_script", "add_mcp_server", "update_config"}
+    assert after_load.review == {"execute_python", "run_command", "write_file", "edit_file"}
+    assert after_load.gated == {
         "add_skill_script",
         "add_mcp_server",
         "execute_python",
@@ -717,6 +742,130 @@ async def test_the_shipped_example_resolves_to_todays_gate(tmp_path):
         "edit_file",
         "update_config",
     }
+    assistant._state.close()
+
+
+async def test_the_reserved_namespace_has_no_loaders_without_a_deferred_toolset(tmp_path):
+    agents = {
+        "assistant": AgentConfig(available=["time", "weekly-digest"], delegates_to=["helper"]),
+        "helper": AgentConfig(description="Helps.", available=["time"]),
+    }
+    config = _config(tmp_path, agents=agents, default_confirm=["core"])
+    _write_skill(config)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    await assistant.start()
+    assert assistant._human.policies.default.gated == {"spawn_subagent", "activate_skill"}
+    assistant._state.close()
+
+
+# A skill on the entry agent is never deferred: its SkillAgent advertises every skill, and wiring holds
+# skill names back before the residency split. So a gate naming one must resolve at startup, not wait
+# for a build that never comes while the skill's scripts run ungated.
+
+
+def _skill_tool_names(assistant) -> set[str]:
+    names = set(assistant._state.skill_manager.skills["weekly-digest"].script_tool_names())
+    assert names, "the skill must provide a tool for the gate to hold back"
+    return names
+
+
+def _with_skill_on_entry_agent(config: AssistantConfig) -> AssistantConfig:
+    entry = config.agents["assistant"]
+    assert entry.resident is not None, "the shipped entry agent declares resident, which is what exposes this"
+    config.agents["assistant"] = dataclasses.replace(entry, available=[*entry.available, "weekly-digest"])
+    _write_skill(config)
+    return config
+
+
+async def test_a_gate_on_an_entry_agent_skill_resolves_at_startup_with_resident_declared(tmp_path):
+    config = _with_skill_on_entry_agent(_config(tmp_path, default_confirm=["weekly-digest"]))
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        await assistant.start()
+        policy = assistant._human.policies.default
+        assert policy.pending_confirm == frozenset()
+        assert _skill_tool_names(assistant) <= policy.confirm
+    finally:
+        assistant._state.close()
+
+
+async def test_a_skill_alone_outside_resident_earns_no_loaders(tmp_path):
+    """An entry agent whose only non-resident name is a skill defers nothing, so it holds no loaders and
+    a bare `core` gates exactly what it did before residency."""
+    agents = {
+        "assistant": AgentConfig(available=["time", "weekly-digest"], resident=["time"], delegates_to=["helper"]),
+        "helper": AgentConfig(description="Helps.", available=["time"]),
+    }
+    config = _config(tmp_path, agents=agents, default_confirm=["core"])
+    _write_skill(config)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        await assistant.start()
+        assert "load_tools" not in {fn.__name__ for fn in assistant._agent._effective_tools(None)}
+        assert assistant._human.policies.default.gated == {"spawn_subagent", "activate_skill"}
+    finally:
+        assistant._state.close()
+
+
+# A worker deferring a skill must not re-park a gate on that skill when the entry agent's SkillAgent
+# already holds it: those tools exist from the first turn, whoever else could load them later.
+
+
+def _worker_defers_skill(config: AssistantConfig) -> AssistantConfig:
+    worker = config.agents["researcher"]
+    config.agents["researcher"] = dataclasses.replace(
+        worker, available=[*worker.available, "weekly-digest"], resident=list(worker.available)
+    )
+    return config
+
+
+@pytest.mark.parametrize("entry_names_skill", [False, True], ids=["entry-does-not-name", "entry-names"])
+async def test_a_worker_deferring_a_skill_the_entry_agent_holds_does_not_park_its_gate(tmp_path, entry_names_skill):
+    config = _worker_defers_skill(_config(tmp_path, default_confirm=["weekly-digest"]))
+    if entry_names_skill:
+        entry = config.agents["assistant"]
+        config.agents["assistant"] = dataclasses.replace(entry, available=[*entry.available, "weekly-digest"])
+    _write_skill(config)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        await assistant.start()
+        assert "weekly-digest" in {skill.name for skill in assistant._state.skill_manager.skills.values()}
+        policy = assistant._human.policies.default
+        assert policy.pending_confirm == frozenset()
+        assert _skill_tool_names(assistant) <= policy.confirm
+    finally:
+        assistant._state.close()
+
+
+async def test_a_workers_own_pair_on_a_skill_it_defers_waits_for_its_build(tmp_path):
+    """Nothing holds the skill at startup here (the entry agent neither names it nor authors skills), so
+    the worker's own entry waits, and resolves when the worker's build of the skill reports its tools."""
+    from kokua.registry.context import ToolsetContext
+    from kokua.registry.registry import build_tools
+
+    agents = {
+        "assistant": AgentConfig(available=["time"], delegates_to=["helper"]),
+        "helper": AgentConfig(
+            description="Helps.",
+            available=["time", "weekly-digest"],
+            resident=["time"],
+            confirm=["weekly-digest"],
+            review=[],
+        ),
+    }
+    config = _config(tmp_path, agents=agents, default_confirm=[], default_review=[])
+    _write_skill(config)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        await assistant.start()
+        state = assistant._state
+        assert assistant._human.policies.by_agent["helper"].pending_confirm == {"weekly-digest"}
+        build_tools([state.registry["weekly-digest"]], ToolsetContext(state=state, agent=None, agent_name="helper"))
+        helper = assistant._human.policies.by_agent["helper"]
+        assert helper.pending_confirm == frozenset()
+        assert set(state.all_skills.skills["weekly-digest"].script_tool_names()) <= helper.confirm
+    finally:
+        assistant._state.close()
 
 
 # --- every agent's calls are judged by its own policy -------------------------------------------------
@@ -844,3 +993,256 @@ async def test_an_unattended_turn_runs_a_tool_the_workers_own_pair_does_not_gate
     finally:
         proactive_turn.reset(token)
     assistant._state.close()
+
+
+# Residency: an approval entry naming a toolset nobody has built yet waits, and resolves the moment a
+# build produces its tools. These tests hand-build the state, because nothing defers at wiring yet.
+
+
+def _deferred_setup(tmp_path, **config_overrides):
+    from types import SimpleNamespace
+
+    from kokua.config.schema import AgentConfig
+    from kokua.core.approval import resolve_approval_policies
+    from kokua.registry.context import LiveState
+
+    agents = {"assistant": AgentConfig(available=["memory", "mcp", "compute"], resident=["memory"])}
+    config_overrides = {"default_confirm": [], "default_review": [], **config_overrides}
+    config = AssistantConfig(data_dir=tmp_path, agents=agents, entry_agent="assistant", **config_overrides)
+    # A real registry: which toolsets wait for a build depends on provenance (an entry agent's skills never do).
+    state = LiveState(config=config, registry=build_registry(config))
+    state.tools_by_toolset = {"memory": {"remember"}}
+    policies = resolve_approval_policies(config, state, SimpleNamespace(tools=[]))
+    return config, state, policies
+
+
+def test_an_entry_for_a_deferred_toolset_is_pending_at_startup(tmp_path):
+    _, _, policies = _deferred_setup(tmp_path, default_confirm=["mcp.add_mcp_server"])
+    assert "mcp.add_mcp_server" in policies.default.pending_confirm
+    assert "add_mcp_server" not in policies.default.gated
+
+
+def test_building_the_toolset_resolves_its_pending_entries(tmp_path):
+    _, _, policies = _deferred_setup(tmp_path, default_confirm=["mcp.add_mcp_server"])
+    updated = policies.with_built("mcp", frozenset({"add_mcp_server", "remove_mcp_server"}))
+    assert "add_mcp_server" in updated.default.confirm
+    assert "remove_mcp_server" not in updated.default.confirm
+    assert updated.default.pending_confirm == frozenset()
+    assert policies.default.pending_confirm  # the original object is unchanged
+    assert "add_mcp_server" not in policies.default.confirm
+
+
+def test_a_bare_toolset_entry_resolves_to_every_built_tool(tmp_path):
+    _, _, policies = _deferred_setup(tmp_path, default_review=["compute"])
+    updated = policies.with_built("compute", frozenset({"calculate", "run_command"}))
+    assert updated.default.review >= {"calculate", "run_command"}
+    assert updated.default.pending_review == frozenset()
+
+
+def test_building_one_toolset_leaves_another_toolsets_entries_pending(tmp_path):
+    _, _, policies = _deferred_setup(tmp_path, default_confirm=["mcp.add_mcp_server", "compute.run_command"])
+    updated = policies.with_built("mcp", frozenset({"add_mcp_server"}))
+    assert updated.default.pending_confirm == frozenset({"compute.run_command"})
+
+
+def test_a_declared_pair_waits_on_its_own_agents_deferred_toolsets(tmp_path):
+    from types import SimpleNamespace
+
+    from kokua.config.schema import AgentConfig
+    from kokua.core.approval import resolve_approval_policies
+    from kokua.registry.context import LiveState
+
+    agents = {
+        "assistant": AgentConfig(
+            available=["memory", "mcp"], resident=["memory"], confirm=["mcp.add_mcp_server"], review=[]
+        )
+    }
+    config = AssistantConfig(
+        data_dir=tmp_path, agents=agents, entry_agent="assistant", default_confirm=[], default_review=[]
+    )
+    # A real registry: which toolsets wait for a build depends on provenance (an entry agent's skills never do).
+    state = LiveState(config=config, registry=build_registry(config))
+    state.tools_by_toolset = {"memory": {"remember"}}
+    policies = resolve_approval_policies(config, state, SimpleNamespace(tools=[]))
+    assert policies.by_agent["assistant"].pending_confirm == frozenset({"mcp.add_mcp_server"})
+    updated = policies.with_built("mcp", frozenset({"add_mcp_server"}))
+    assert updated.by_agent["assistant"].confirm == frozenset({"add_mcp_server"})
+
+
+def test_a_misnamed_tool_entry_refuses_the_build(tmp_path):
+    _, _, policies = _deferred_setup(tmp_path, default_confirm=["mcp.add_mcp_servr"])
+    with pytest.raises(
+        ConfigError,
+        match=r"\[assistant\.tools\]\.confirm names 'mcp\.add_mcp_servr', but the 'mcp' toolset, now built, "
+        r"provides no such tool",
+    ):
+        policies.with_built("mcp", frozenset({"add_mcp_server"}))
+
+
+def test_a_built_tool_in_both_halves_is_refused(tmp_path):
+    """The backstop for an overlap no entry's text reveals: a review already holding the tool's name
+    through another toolset, while the confirm entry naming it waits on ``mcp``."""
+    import dataclasses
+
+    _, _, policies = _deferred_setup(tmp_path, default_confirm=["mcp.add_mcp_server"])
+    default = dataclasses.replace(policies.default, review=frozenset({"add_mcp_server"}))
+    policies = dataclasses.replace(policies, default=default)
+    with pytest.raises(ConfigError, match="in both confirm and review"):
+        policies.with_built("mcp", frozenset({"add_mcp_server"}))
+
+
+@pytest.mark.parametrize(
+    ("confirm", "review"),
+    [
+        ("mcp.add_mcp_server", "mcp"),
+        ("mcp.add_mcp_server", "mcp.*"),
+        ("mcp", "mcp.add_mcp_server"),
+        ("mcp.add_mcp_server", "mcp.add_mcp_server"),
+    ],
+)
+def test_pending_entries_certain_to_overlap_fail_startup(tmp_path, confirm, review):
+    """Decidable from the text alone: if the named tool exists, both halves hold it; if not, the tool
+    entry is dead and the build fails anyway. Either way waiting for the build only refuses every load."""
+    with pytest.raises(ConfigError, match=r"\[assistant\.tools\] gates mcp\.add_mcp_server in both confirm and review"):
+        _deferred_setup(tmp_path, default_confirm=[confirm], default_review=[review])
+
+
+def test_whole_toolset_entries_pending_in_both_halves_fail_startup(tmp_path):
+    with pytest.raises(ConfigError, match=r"gates mcp in both confirm and review"):
+        _deferred_setup(tmp_path, default_confirm=["mcp"], default_review=["mcp.*"])
+
+
+def test_a_declared_pairs_pending_overlap_fails_startup_naming_its_table(tmp_path):
+    from types import SimpleNamespace
+
+    from kokua.config.schema import AgentConfig
+    from kokua.core.approval import resolve_approval_policies
+    from kokua.registry.context import LiveState
+
+    agents = {
+        "assistant": AgentConfig(
+            available=["memory", "mcp"], resident=["memory"], confirm=["mcp"], review=["mcp.add_mcp_server"]
+        )
+    }
+    config = AssistantConfig(
+        data_dir=tmp_path, agents=agents, entry_agent="assistant", default_confirm=[], default_review=[]
+    )
+    state = LiveState(config=config, registry=build_registry(config))
+    state.tools_by_toolset = {"memory": {"remember"}}
+    with pytest.raises(ConfigError, match=r"\[agents\.assistant\.tools\] gates mcp\.add_mcp_server in both"):
+        resolve_approval_policies(config, state, SimpleNamespace(tools=[]))
+
+
+@pytest.mark.parametrize(
+    ("confirm", "review"),
+    [("mcp.add_mcp_server", "mcp.remove_mcp_server"), ("mcp.add_mcp_server", "compute"), ("mcp", "compute.*")],
+)
+def test_pending_entries_that_may_not_overlap_still_start(tmp_path, confirm, review):
+    _, _, policies = _deferred_setup(tmp_path, default_confirm=[confirm], default_review=[review])
+    assert policies.default.pending_confirm == frozenset({confirm})
+
+
+@pytest.mark.parametrize("entry", ["mcp", "mcp.*", "mcp.add_mcp_server"])
+def test_a_build_through_build_tools_resolves_a_pending_entry(tmp_path, entry):
+    """The mechanism a composed worker's late build relies on: the hook set on the state reaches a
+    policies holder, so the tool is gated from the moment the build returns. Two tools, because a hook
+    called once per tool would let a bare entry be drained by the first call and leave the second ungated."""
+    from kokua.registry.context import ToolsetContext
+    from kokua.registry.registry import Toolset, build_tools
+
+    _, state, policies = _deferred_setup(tmp_path, default_confirm=[entry])
+    holder = [policies]
+    state.toolset_built = lambda name, names: holder.__setitem__(0, holder[0].with_built(name, names))
+
+    def add_mcp_server():
+        pass
+
+    def remove_mcp_server():
+        pass
+
+    toolset = Toolset(name="mcp", description="mcp", build=lambda ctx: [add_mcp_server, remove_mcp_server])
+    build_tools([toolset], ToolsetContext(state=state, agent=None, agent_name="composed:x"))
+    confirmed = holder[0].for_agent("composed:x").confirm
+    assert "add_mcp_server" in confirmed
+    assert ("remove_mcp_server" in confirmed) == (entry != "mcp.add_mcp_server")
+
+
+@pytest.mark.parametrize("entry", ["mcp.add*", "mcp.a.b", "mc*p.add_mcp_server"])
+def test_a_malformed_entry_for_a_deferred_toolset_still_fails_startup(tmp_path, entry):
+    with pytest.raises(ConfigError, match="would gate nothing"):
+        _deferred_setup(tmp_path, default_confirm=[entry])
+
+
+def test_a_refused_build_names_the_resolvers_reason(tmp_path):
+    _, _, policies = _deferred_setup(tmp_path, default_confirm=["mcp.add_mcp_servr"])
+    with pytest.raises(ConfigError, match=r"did you mean 'add_mcp_server'"):
+        policies.with_built("mcp", frozenset({"add_mcp_server"}))
+
+
+def test_core_namespace_gains_the_group_tools_when_something_is_deferred(tmp_path):
+    from types import SimpleNamespace
+
+    from kokua.config.schema import AgentConfig
+    from kokua.core.agents import gateable_tools
+    from kokua.registry.context import LiveState
+
+    def core_tools(resident):
+        agents = {"assistant": AgentConfig(available=["memory", "mcp"], resident=resident)}
+        config = AssistantConfig(data_dir=tmp_path, agents=agents, entry_agent="assistant")
+        state = LiveState(config=config, registry=build_registry(config))
+        return gateable_tools(state, SimpleNamespace(tools=[]))["core"]
+
+    assert core_tools(["memory"]) >= {"available_tools", "load_tools"}
+    assert not core_tools(["memory", "mcp"]) & {"available_tools", "load_tools"}
+
+
+async def test_assistant_hook_is_a_no_op_before_policies_exist_and_replaces_them_after(tmp_path):
+    assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
+    assistant._human.policies = None
+    assistant._on_toolset_built("mcp", frozenset({"add_mcp_server"}))
+    assert assistant._human.policies is None
+
+    await assistant.start()
+    before = assistant._human.policies
+    assistant._on_toolset_built("mcp", frozenset({"add_mcp_server"}))
+    assert assistant._human.policies is not before  # replaced, never mutated
+    assistant._state.close()
+
+
+async def test_a_worker_composed_with_a_deferred_toolset_is_gated_by_the_pending_entry(tmp_path, monkeypatch):
+    """The only declared holder of ``mcp`` defers it, so it is unbuilt at startup and its approval entry is
+    pending. Composing a worker with ``mcp`` builds it through ``build_tools``, which resolves the entry
+    before any tool reaches the worker, so the worker's own policy gates ``add_mcp_server``."""
+    import kokua.core.agents  # noqa: F401  (bind the real spawn factory before the patch below)
+    from kokua.config.schema import AgentConfig
+    from kokua.registry.context import ToolsetContext
+    from kokua.toolsets.capabilities import make_capability_tools
+
+    class _Spawn:
+        def __call__(self, model, **kwargs):
+            async def spawn_subagent(agent_type: str, task: str, ctx=None) -> str:
+                return "ran"
+
+            return spawn_subagent
+
+    monkeypatch.setattr("aimu.aio.tools.builtin.make_async_subagent_tool", _Spawn())
+    config = _config(
+        tmp_path,
+        agents={"assistant": AgentConfig(available=["time", "mcp", "capabilities"], resident=["time", "capabilities"])},
+        default_confirm=["mcp.add_mcp_server"],
+    )
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    await assistant.start()
+    assert "mcp" not in assistant._state.tools_by_toolset or not assistant._state.tools_by_toolset["mcp"]
+
+    compose = next(
+        fn
+        for fn in make_capability_tools(ToolsetContext(state=assistant._state, agent=object(), agent_name="assistant"))
+        if fn.__name__ == "compose_subagent"
+    )
+    label = "composed:registrar"
+    assert "add_mcp_server" not in assistant._human.policies.for_agent(label).confirm  # still pending
+
+    await compose("registrar", "Add a server.", ["mcp"], "Manage servers.")
+
+    assert "add_mcp_server" in assistant._human.policies.for_agent(label).confirm

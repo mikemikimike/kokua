@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Callable, Mapping, Optional
 from aimu.tools import tool
 from aimu.tools.context import ToolContext
 
+from kokua.config import ConfigError
 from kokua.registry.registry import Setting, Toolset, ToolsetError, build_tools, select
 
 if TYPE_CHECKING:
@@ -258,6 +259,12 @@ def _make_compose_tool(state: "LiveState", *, remaining_depth: int | None, model
         try:
             spec = _compose_spec(label, tools, instructions, state, extra_tools=extra_tools, model=model)
         except ToolsetError as error:
+            return f"Could not compose {label!r}: {error}"
+        except ConfigError as error:
+            # The approval hook refusing a build: a gate entry that matches nothing once its toolset
+            # built. It is the user's config to fix, so the user is told, as for a refused load.
+            if state.alert_soon is not None:
+                state.alert_soon(f"Composing {label} failed: {error}")
             return f"Could not compose {label!r}: {error}"
         # Imported here rather than at module scope because aimu.aio.tools.builtin is the AIMU surface
         # aimu_compat.require_aimu probes, and this module is reached whenever config is resolved (the

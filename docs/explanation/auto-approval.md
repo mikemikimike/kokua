@@ -81,8 +81,9 @@ may ever answer for them:
 - `skills.add_skill_script` writes a script that becomes a tool the next turn can call.
 - `mcp.add_mcp_server` adds a whole source of tools.
 
-Naming one of them in any policy's `review` list is a startup error, not a warning, though only when
-auto-approval is enabled: with it off nothing consults the floor, so there is nothing for the entry to
+Naming one of them in any policy's `review` list is a startup error, not a warning, whether by the
+tool itself or by its whole toolset (`mcp`, `mcp.*`), and even while that toolset is still waiting to be
+loaded, though only when auto-approval is enabled: with it off nothing consults the floor, so there is nothing for the entry to
 fail to hold back. The list is yours to empty by hand, like every control in that section, and what emptying it buys is a reviewer
 that can approve a capability grant.
 

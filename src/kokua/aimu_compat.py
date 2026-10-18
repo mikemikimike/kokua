@@ -362,8 +362,11 @@ MINIMUM_AIMU = (0, 37, 0)
 # `ValueError` naming the key when the spawn factory is called, which `wire_agent` reaches while building
 # a conversation's agent: loud, and at the one moment it matters. By the reasoning recorded for 0.28.0's
 # `"max_iterations"` key, the single probe slot stays on a capability that fails in silence, which is
-# `RunEvent.run_id` below. `aimu.tools.ToolGroup` also arrived in 0.37.0 and nothing calls it yet, so it
-# is the floor's job until it is used.
+# `RunEvent.run_id` below. `aimu.tools.ToolGroup` also arrived in 0.37.0, unused when the floor moved and
+# now what residency rides (`core/build.py`'s `tool_groups_for`). It does not get the probe either, by the
+# same reasoning: `core/build.py` imports it at module scope, so a checkout without it raises
+# `ImportError` as soon as the core is imported, which is after this preflight and before any
+# conversation exists. Loud, so it is the floor's job.
 
 # The surface is `aimu.events.RunEvent`'s `run_id` field. 0.36.0 gave every run event the identity of
 # the run that emitted it (`run_id`) and of the run that started that one (`parent_run_id`), and Kokua's

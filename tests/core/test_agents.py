@@ -296,3 +296,30 @@ def test_a_diamond_shaped_graph_passes():
     }
     config = _config(agents)
     validate_agents(config, build_registry(config))
+
+
+def test_approval_note_wording():
+    from kokua.core.agents import approval_note
+
+    assert approval_note(["compute.run_command"], ["compute.execute_python"], "compute") == (
+        "Asks first: execute_python, run_command."
+    )
+    assert approval_note(["fs_write"], [], "fs_write") == "Asks first: every tool."
+    assert approval_note(["fs_write.*"], [], "fs_write") == "Asks first: every tool."
+    assert approval_note(["fs_write"], [], "web") == ""
+    assert approval_note([], [], "web") == ""
+
+
+def test_lean_delegation_hint_considers_deferred_toolsets():
+    from kokua.core.agents import LEAN_DELEGATION_GUIDANCE, assemble_system_message
+
+    registry = build_registry(AssistantConfig())
+    config = AssistantConfig(
+        agents={"lead": AgentConfig(available=["time", "web"], resident=["time"], delegates_to=["helper"])},
+        entry_agent="lead",
+    )
+    resident, deferred = [registry["time"]], [registry["web"]]
+    assert LEAN_DELEGATION_GUIDANCE not in assemble_system_message(config, "lead", resident, deferred)
+    # Judged over the resident toolsets alone it would read as a lean supervisor, which is the mistake
+    # a deferred domain toolset must not allow.
+    assert LEAN_DELEGATION_GUIDANCE in assemble_system_message(config, "lead", resident)

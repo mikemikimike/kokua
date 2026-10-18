@@ -584,3 +584,50 @@ def test_every_worker_spec_carries_the_worker_source(tmp_path):
 
     assert sorted(specs) == ["coder", "researcher"]
     assert all(spec["inbox"] is WORKER_SOURCE for spec in specs.values())
+
+
+def test_a_worker_spec_carries_its_deferred_toolsets_as_groups(tmp_path):
+    agents = {
+        "assistant": AgentConfig(delegates_to=["researcher"]),
+        "researcher": AgentConfig(available=["web", "time"], resident=["time"]),
+    }
+    config, state = _state(tmp_path, agents)
+    spec = build_agent_specs(config, state, "assistant")["researcher"]
+    assert [fn.__name__ for fn in spec["tools"]] == ["get_current_date_and_time", "convert_time"]
+    assert [g.name for g in spec["tool_groups"]] == ["time", "web"]
+    assert spec["tool_groups"][0].resident and not spec["tool_groups"][1].resident
+
+
+def test_a_worker_spec_names_its_deferred_toolsets_in_its_prompt(tmp_path):
+    agents = {
+        "assistant": AgentConfig(delegates_to=["researcher"]),
+        "researcher": AgentConfig(available=["web", "time"], resident=["time"]),
+    }
+    config, state = _state(tmp_path, agents)
+    message = build_agent_specs(config, state, "assistant")["researcher"]["system_message"]
+    assert "Also available, load before use: web." in message
+    assert "training cutoff" not in message
+
+
+async def test_a_worker_loads_a_deferred_group_and_its_guidance_comes_with_it(tmp_path):
+    agents = {
+        "assistant": AgentConfig(delegates_to=["researcher"]),
+        "researcher": AgentConfig(available=["web", "time"], resident=["time"]),
+    }
+    config, state = _state(tmp_path, agents)
+    web_group = build_agent_specs(config, state, "assistant")["researcher"]["tool_groups"][1]
+    assert {fn.__name__ for fn in web_group.build()} == {fn.__name__ for fn in builtin.web}
+    assert "training cutoff" in web_group.guidance
+
+
+def test_a_group_carries_the_approval_note_of_its_holder(tmp_path):
+    agents = {
+        "assistant": AgentConfig(delegates_to=["coder"]),
+        "coder": AgentConfig(
+            available=["compute", "time"], resident=["time"], confirm=["compute.run_command"], review=[]
+        ),
+    }
+    config, state = _state(tmp_path, agents)
+    groups = {g.name: g for g in build_agent_specs(config, state, "assistant")["coder"]["tool_groups"]}
+    assert groups["compute"].note == "Asks first: run_command."
+    assert groups["time"].note == ""

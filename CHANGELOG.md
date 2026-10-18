@@ -665,7 +665,7 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer
   agent may call (availability), what is in its context (residency), and what asks before it runs
   (approval) used to share one list per agent and two global lists. Availability and approval now have
   their own keys, in one `[agents.<name>.tools]` subtable per agent with `[assistant.tools]` as the default
-  for the approval half; residency has no key yet, so every available toolset is still resident. The
+  for the approval half, and residency has `resident` (below). The
   explanation is [Tool access](https://saxman.info/kokua/explanation/tool-access/). The old keys fail
   startup with a message naming their replacement:
 
@@ -697,12 +697,57 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer
   a dead `review` entry fails startup even with it off; and `never_auto_approve` is checked only when it is
   on. `[security.auto_approval]` keeps `enabled`, `reviewers`, `timeout_seconds`, and `max_per_turn`.
   Enabling it with no `review` entry in any policy is a startup error.
+- **Residency: an agent loads part of its capability on demand.** `[agents.<name>.tools].resident` names
+  the toolsets from `available` whose tools are in the agent's context from its first turn. The rest are
+  deferred, and the agent gets AIMU 0.37.0's `available_tools` (every toolset it holds or can load, with
+  its description and which of its tools ask first) and `load_tools(name)`. Its prompt names the deferred
+  toolsets in one line, `Also available, load before use: ...`, and a deferred toolset's guidance arrives
+  with its tools when it loads, not in the prompt. Unset, every available toolset is resident, which is
+  how every shipped worker is declared; an entry outside `available` is a startup error, and
+  `update_config`'s dry run refuses it too. The shipped entry agent keeps `memory`, `config`,
+  `conversations`, `planning`, `capabilities`, `time`, and `messaging` resident and loads `documents`,
+  `skills`, `mcp`, `scheduling`, and `benchmark` on demand. Measured as the JSON of every tool spec it is
+  sent, its tool block falls from 30,560 bytes (all 37 tools) to 16,244 bytes (nineteen: seventeen
+  resident plus the two loaders), 46.8% smaller on every round that loads nothing; a turn that needs a
+  deferred toolset pays one round to load it. `available = "all"` is not built yet. See
+  [Tool access](https://saxman.info/kokua/explanation/tool-access/#residency-what-is-in-context-and-what-loads-on-demand).
+- **A load pays for the build, and checks approval, when it happens.** A deferred toolset is built when
+  it is loaded, through the same `build_tools` call a resident one gets, so a failure surfaces at load:
+  the model reads `Could not load '<name>': <error>`, you get an alert, and the toolset stays loadable
+  for a retry. A deferred MCP server that is not connected refuses to load rather than loading empty. An
+  approval entry naming a deferred toolset is checked for shape at startup and resolved when the toolset
+  is built, by whichever path builds it (a model's load, a composed worker, a rebuilt agent's preload);
+  one that then matches nothing refuses every build of that toolset, failing closed rather than letting
+  it load ungated. A refused load reads `Could not load`, and a refused `compose_subagent` reads
+  `Could not compose`, each naming the entry, and either raises an alert. With auto-approval enabled,
+  `[security].never_auto_approve` entries for a deferred toolset wait the same way, and a build after which a policy's `review` reaches the floor is refused.
+  A conflict the pending entries' text already settles (`review = ["mcp"]` against the floor's
+  `mcp.add_mcp_server`, or one tool reached by both halves of a pair) fails startup instead of every
+  load.
+  A skill the entry agent's `SkillAgent` holds (every skill when it declares `skills`, otherwise the skills it names) exists from the first turn, so a gate on
+  it resolves at startup, even when a worker could also load that skill later. The shipped gate covers the same
+  seven tools it did: `skills.add_skill_script` and `mcp.add_mcp_server` resolve when their toolset first
+  loads.
+- **A rebuilt agent preloads what its conversation loaded.** On restart, when switching among more than
+  eight conversations evicts an agent, and after a truncation, the rebuilt agent builds the toolsets its
+  transcript's `load_tools` calls loaded, in order, rather than replaying the calls (the builder is
+  synchronous and AIMU's load is async). Only a load whose stored result says it succeeded comes back: a
+  load the approval gate refused stays refused, rather than returning at the next restart, and a failed
+  or cancelled one stays loadable. `available_tools` then lists those as resident rather than
+  loaded. A preload that fails is logged at WARNING, not alerted, and the toolset stays deferred and
+  loadable; a preloaded tool whose name the agent already holds is skipped and logged.
+- **`core.available_tools` and `core.load_tools` are gate names.** Wherever some agent defers a toolset,
+  a bare `core` approval entry covers the two loaders as well as `spawn_subagent` and `activate_skill`,
+  and each can be named on its own.
+- **`[[mcp.server]].description`.** An optional string: the server's line in `available_tools`,
+  `list_capabilities`, and `--list-toolsets`, which is what an agent deferring the server decides by.
+  Unset, it reads `Tools from the MCP server at <url>.`; a non-string is a startup error.
 - **Agent names may not contain `:` or `[`.** The gate reserves them for `composed:<label>` and for the
   default tier's own label, so an agent named either way would collide with them. Refused at startup.
 - **`kokua agents`, and a startup summary.** `kokua agents` prints each declared agent's availability,
   residency, and `confirm` / `review` lists, marking which came from `[assistant.tools]`, reading the
   config alone and building nothing, so it works with the model server down. Startup writes one line per
-  agent to stderr (for example `assistant: 12 available, 12 resident, 3 confirm, 3 review (from [assistant.tools])`), because a declared
+  agent to stderr (for example `assistant: 12 available, 7 resident, 3 confirm, 3 review (from [assistant.tools])`), because a declared
   policy replacing the default silently dropping its other entries is the one foot-gun the replace-whole
   rule leaves, and this is where it shows.
 - **The approval prompt and the auto-approval card name the agent asking** ("Allow coder to run ...",
@@ -715,7 +760,8 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer
   channel that does not show who is asking can accept and ignore it, which is what adding `agent=None`
   to the signature does. It is keyword-only for the reason `send_turn_saved`'s `token`
   is.
-- **The AIMU floor is 0.37.0**, for the spawn spec's `"tool_approval"` key. See the floor history under
+- **The AIMU floor is 0.37.0**, for the spawn spec's `"tool_approval"` key and for `ToolGroup`, which
+  residency rides. See the floor history under
   "Diagnostics and error reporting" below.
 
 - **An individual skill is a name in the same namespace as everything else.** A `[agents.*]` table lists
@@ -2032,7 +2078,9 @@ notice on startup.
   whether a misbehaving host source was caught rather than trusted. `Inbox` joins the probe's job.
   Today the floor is **0.37.0**: a spawned worker's spec carries a `"tool_approval"` key, which is what lets
   each agent's tool calls be judged by its own approval policy; its absence raises loudly, so the startup
-  check stays where it was. Before it the floor was **0.36.0**: every run event carries `run_id` and
+  check stays where it was. Residency rides the same release's `ToolGroup`, and the check skips it for the
+  same reason: the core imports it at module scope, so an AIMU without it fails at import, after the
+  check and before any conversation. Before it the floor was **0.36.0**: every run event carries `run_id` and
   `parent_run_id`, which the request records behind "what the model saw" are keyed by, and the startup
   check is a signature check on `aimu.events.RunEvent` for its `run_id` field. Before that it was **0.34.0**, the first one a rename alone moved: AIMU renamed its
   mid-turn-message seam from `Steering` to `Inbox`, with no legacy path, and taught it which agent is

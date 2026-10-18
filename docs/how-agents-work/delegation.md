@@ -124,7 +124,7 @@ delegates_to = ["researcher", "coder", "introspector"]
 description = "Research specialist: gather and verify information from the web."
 
 [agents.researcher.tools]
-available = ["web", "misc", "time"]
+available = ["web", "misc", "time", "messaging"]
 ```
 
 Nothing else grants that tool. The delegate is built in

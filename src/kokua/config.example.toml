@@ -156,7 +156,8 @@ max_per_turn = 5
 # agent's `available` list, in its [agents.<name>.tools] table, IS its capability: nothing is added in
 # code, and nothing is implicit, including the clock (declare "time" to get it). The same table may
 # carry the agent's own `confirm` and `review` lists, replacing [assistant.tools] as a pair; leave both
-# out to inherit it.
+# out to inherit it. An optional `resident` list, a subset of `available`, is what is in the agent's
+# tools from its first turn; the rest it loads on demand. Leave it out and everything available is resident.
 #
 # One namespace covers everything, so an `available` entry may be an AIMU built-in group ("web", "fs",
 # "fs_write", "compute", "time", "misc", "audio", "speech", "transcription"), one of Kokua's own ("memory",
@@ -179,6 +180,8 @@ system_message = "You are a personal assistant running on the user's own machine
 delegates_to = ["researcher", "coder", "introspector"]
 [agents.assistant.tools]
 available = ["memory", "documents", "skills", "config", "mcp", "scheduling", "conversations", "planning", "capabilities", "time", "benchmark", "messaging"]
+# In its tools from the first turn; the rest of `available` it loads on demand with load_tools.
+resident = ["memory", "config", "conversations", "planning", "capabilities", "time", "messaging"]
 
 [agents.researcher]
 description = "Research specialist: gather and verify information from the web."
@@ -314,7 +317,8 @@ cost them their data."""
 # Remote MCP servers to connect at startup, one [[mcp.server]] table each. `url` and `name` are
 # required; `name` is how the server enters the toolset namespace, so an agent's `available` list must name it
 # for the server to reach anything. `token_env` names an env var holding a bearer token (omit it when
-# unauthenticated, or for OAuth, which triggers on an auth challenge). The add_mcp_server tool appends
+# unauthenticated, or for OAuth, which triggers on an auth challenge). `description` is the line an agent
+# reads when deciding whether to load the server. The add_mcp_server tool appends
 # servers here with a host-derived name; that name reaches no agent until you add it above and restart.
 # [[mcp.server]]
 # url = "https://api.githubcopilot.com/mcp/"
@@ -324,6 +328,7 @@ cost them their data."""
 # [[mcp.server]]
 # url = "https://broker.example.com/mcp"
 # name = "stocks"
+# description = "Stock quotes and fundamentals, and placing trades."
 
 # [mcp]
 # Where an OAuth server sends your browser after you approve, and where Kokua listens for the code.

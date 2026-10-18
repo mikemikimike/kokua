@@ -34,6 +34,15 @@ def _using(name: str, url: str) -> dict:
     }
 
 
+async def _mcp_tools(assistant) -> list:
+    """The entry agent's tools with the `mcp` toolset in them: the shipped entry agent defers it, so a
+    test reaching for `add_mcp_server` loads it the way the model would."""
+    if "mcp" in assistant._config.deferred_for("assistant"):
+        result = await assistant._agent.load_tool_group("mcp")
+        assert result.startswith(("Loaded 'mcp':", "'mcp' is already loaded")), result
+    return assistant._agent._effective_tools(None)
+
+
 @pytest.fixture
 def delegates(monkeypatch):
     """Record the ``agent_types`` every ``spawn_subagent`` delegate is built with, newest last.
@@ -143,7 +152,7 @@ async def test_add_mcp_server_connects_once_and_exposes_its_callables(tmp_path, 
     monkeypatch.setattr(aio.MCPClient, "connect", fake_connect)
 
     assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
-    add_mcp = next(t for t in assistant._agent.tools if t.__name__ == "add_mcp_server")
+    add_mcp = next(t for t in await _mcp_tools(assistant) if t.__name__ == "add_mcp_server")
     assert add_mcp.__tool_is_async__ is True
 
     msg = await add_mcp(url="https://svc/mcp")
@@ -206,7 +215,7 @@ async def test_add_mcp_server_tool_reports_connect_failure(tmp_path, monkeypatch
     monkeypatch.setattr(aio.MCPClient, "connect", fake_connect)
 
     assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
-    add_mcp = next(t for t in assistant._agent.tools if t.__name__ == "add_mcp_server")
+    add_mcp = next(t for t in await _mcp_tools(assistant) if t.__name__ == "add_mcp_server")
 
     msg = await add_mcp(url="https://down/mcp")
     assert "Failed to connect" in msg and "boom" in msg
@@ -230,7 +239,7 @@ async def test_add_mcp_server_auto_oauth_on_auth_challenge(tmp_path, monkeypatch
     monkeypatch.setattr(aio.MCPClient, "connect", fake_connect)
 
     assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
-    add_mcp = next(t for t in assistant._agent.tools if t.__name__ == "add_mcp_server")
+    add_mcp = next(t for t in await _mcp_tools(assistant) if t.__name__ == "add_mcp_server")
 
     msg = await add_mcp(url="https://svc/mcp")  # no bearer token -> auto OAuth on the 401
     assert attempts[0] is None  # first attempt unauthenticated
@@ -254,7 +263,7 @@ async def test_add_mcp_server_no_oauth_on_non_auth_failure(tmp_path, monkeypatch
     monkeypatch.setattr(aio.MCPClient, "connect", fake_connect)
 
     assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
-    add_mcp = next(t for t in assistant._agent.tools if t.__name__ == "add_mcp_server")
+    add_mcp = next(t for t in await _mcp_tools(assistant) if t.__name__ == "add_mcp_server")
 
     msg = await add_mcp(url="https://down/mcp")
     assert attempts == [None]  # did not escalate to OAuth
@@ -287,7 +296,7 @@ async def test_runtime_added_server_persists_and_reconnects(tmp_path, monkeypatc
 
     a1 = await Assistant.create(cfg, FakeChannel(), client=MockAsyncModelClient([]))
     await a1.start()
-    add_mcp = next(t for t in a1._agent.tools if t.__name__ == "add_mcp_server")
+    add_mcp = next(t for t in await _mcp_tools(a1) if t.__name__ == "add_mcp_server")
     await add_mcp(url="https://svc/mcp")
     a1._store.close()
     # Recorded in config.toml [[mcp.server]] with just the URL (no secret on disk).
@@ -316,7 +325,7 @@ async def test_oauth_server_persists_and_reconnects_with_provider(tmp_path, monk
 
     a1 = await Assistant.create(cfg, FakeChannel(), client=MockAsyncModelClient([]))
     await a1.start()
-    add_mcp = next(t for t in a1._agent.tools if t.__name__ == "add_mcp_server")
+    add_mcp = next(t for t in await _mcp_tools(a1) if t.__name__ == "add_mcp_server")
     await add_mcp(url="https://svc/mcp")
     a1._store.close()
     # No auth_mode is stored, only the URL; reconnect rediscovers OAuth via the challenge path.
@@ -348,7 +357,7 @@ async def test_bearer_server_not_persisted(tmp_path, monkeypatch):
     cfg = _config(tmp_path)
 
     a1 = await Assistant.create(cfg, FakeChannel(), client=MockAsyncModelClient([]))
-    add_mcp = next(t for t in a1._agent.tools if t.__name__ == "add_mcp_server")
+    add_mcp = next(t for t in await _mcp_tools(a1) if t.__name__ == "add_mcp_server")
     msg = await add_mcp(url="https://svc/mcp", bearer_token="secret")
     a1._store.close()
     assert "session only" in msg
@@ -369,8 +378,8 @@ async def test_remove_mcp_server_drops_tools_and_forgets(tmp_path, monkeypatch):
     cfg = _config(tmp_path)
 
     a1 = await Assistant.create(cfg, FakeChannel(), client=MockAsyncModelClient([]))
-    add_mcp = next(t for t in a1._agent.tools if t.__name__ == "add_mcp_server")
-    remove_mcp = next(t for t in a1._agent.tools if t.__name__ == "remove_mcp_server")
+    add_mcp = next(t for t in await _mcp_tools(a1) if t.__name__ == "add_mcp_server")
+    remove_mcp = next(t for t in await _mcp_tools(a1) if t.__name__ == "remove_mcp_server")
     await add_mcp(url="https://svc/mcp")
 
     assert await remove_mcp(url="https://nope/mcp") == "No MCP server is connected at 'https://nope/mcp'."
@@ -476,11 +485,11 @@ async def test_remove_mcp_server_keeps_tool_still_owned_by_another_server(tmp_pa
         "kokua.mcp.servers.connect_mcp",
         lambda *a, **k: _await_value((_FakeMCP([_fake_mcp_tool("shared_tool")]), "none")),
     )
-    add_tool = next(t for t in assistant._agent.tools if getattr(t, "__name__", "") == "add_mcp_server")
+    add_tool = next(t for t in await _mcp_tools(assistant) if getattr(t, "__name__", "") == "add_mcp_server")
     await add_tool(url="https://server-a/mcp")
     await add_tool(url="https://server-b/mcp")
 
-    remove_tool = next(t for t in assistant._agent.tools if getattr(t, "__name__", "") == "remove_mcp_server")
+    remove_tool = next(t for t in await _mcp_tools(assistant) if getattr(t, "__name__", "") == "remove_mcp_server")
     msg = await remove_tool(url="https://server-b/mcp")
 
     assert "shared_tool" in _worker_tools(assistant)

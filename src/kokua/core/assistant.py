@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import threading
 import time
 from dataclasses import replace
 from typing import Callable, Optional
@@ -142,6 +143,7 @@ class Assistant:
         # Tool approval and a workflow's own decision: each a single-slot request the serve loop
         # resolves with the user's next message. Both are lock-guarded, so concurrent tool calls (or
         # concurrent workflow turns) can never clobber the slot the serve loop is about to resolve.
+        self._policies_lock = threading.Lock()
         self._human = HumanGate(
             self._ui,
             active_id=lambda: self._book.active_id,
@@ -174,6 +176,11 @@ class Assistant:
         # end them: a task that outlives `self._store.close()` writes to a closed file, out of a task
         # nobody is watching -- the same failure invariant 7 in `core/turns.py` describes for turns.
         self._title_tasks: set[asyncio.Task] = set()
+        # The event loop `start()` ran on, and the alerts scheduled onto it from worker threads (see
+        # `_alert_soon`). Held so an unreferenced task is not collected before it runs, and so shutdown
+        # can cancel them (see `_cancel_alerts`).
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._alert_tasks: set[asyncio.Task] = set()
         # Whether `start()` has run. Set before its body rather than after, so a failed start is
         # terminal for this assistant instead of leaving a retry that would connect every MCP server
         # a second time. Both front ends abort on that failure, which is what makes terminal the
@@ -278,6 +285,8 @@ class Assistant:
         )
         # Assigned after construction because it closes over assistant._registry, which is built below it.
         state.for_each_agent = for_each_agent
+        state.toolset_built = assistant._on_toolset_built
+        state.alert_soon = assistant._alert_soon
         assistant._state = state
         assistant._tasks = state.tasks
         # The workflow context needs the shared toolset state, which does not exist until here.
@@ -317,6 +326,7 @@ class Assistant:
         if self._started:
             return
         self._started = True
+        self._loop = asyncio.get_running_loop()
         # Imported here, not at module level, for the cycle `create` documents above.
         from kokua.core.agents import configured_but_undeclared
         from kokua.core.approval import resolve_approval_policies
@@ -346,10 +356,13 @@ class Assistant:
         # exists: the entry agent's own, and each worker's, built when the delegation tool above was.
         # It both validates and resolves: a policy entry names a toolset, and the gate matches a tool
         # name, so no gate can answer at all until this has run (see `HumanGate.policies`).
-        self._human.policies = resolve_approval_policies(config, state, entry_agent)
-        # Resolved from the same policies, because a review entry is itself a gate: the reviewer can only
-        # be asked about tools a policy already stops.
-        self._human.auto_approval = resolve_auto_approval(config, state, entry_agent, self._human.policies)
+        with self._policies_lock:
+            policies = resolve_approval_policies(config, state, entry_agent)
+            # Resolved from the same policies, because a review entry is itself a gate: the reviewer can
+            # only be asked about tools a policy already stops. In the same lock so a deferred build
+            # never sees one assigned without the other.
+            self._human.auto_approval = resolve_auto_approval(config, state, entry_agent, policies)
+            self._human.policies = policies
 
         state.tasks.arm_all()
 
@@ -759,6 +772,7 @@ class Assistant:
                 task.cancel()
             if self._title_tasks:
                 await asyncio.gather(*list(self._title_tasks), return_exceptions=True)
+            await self._cancel_alerts()
             for conn in self._mcp_servers:
                 try:
                     await conn.client.aclose()
@@ -972,6 +986,58 @@ class Assistant:
         whose policy it is judged by.
         """
         return functools.partial(self._human.approve, agent_name)
+
+    def _alert_soon(self, text: str) -> None:
+        """Raise ``text`` as an alert from any thread, doing nothing until ``start`` has captured the loop.
+
+        A deferred toolset builds in a worker thread, where ``ChannelUI.alert`` (a coroutine) cannot be
+        awaited, so the call is handed to the loop that owns the channel. Dropping the alert before
+        ``start`` is deliberate: nothing can load a toolset before an agent exists, so only a caller
+        outside the serve path reaches that state, and it has no one to alert.
+        """
+        loop = self._loop
+        if loop is None:
+            return
+
+        def schedule() -> None:
+            task = loop.create_task(self._ui.alert(text))
+            self._alert_tasks.add(task)
+            task.add_done_callback(self._alert_tasks.discard)
+
+        try:
+            loop.call_soon_threadsafe(schedule)
+        except RuntimeError:
+            # The loop has closed (shutdown). This runs inside a group build's error path, so raising
+            # here would replace the real build error in the text the model reads.
+            logger.debug("Dropping alert, the event loop is closed: %s", text)
+
+    async def _cancel_alerts(self) -> None:
+        """Cancel alerts still waiting to be raised: one must not outlive the channel it would write to."""
+        for task in list(self._alert_tasks):
+            task.cancel()
+        if self._alert_tasks:
+            await asyncio.gather(*list(self._alert_tasks), return_exceptions=True)
+
+    def _on_toolset_built(self, toolset: str, tool_names: frozenset[str]) -> None:
+        """Resolve the approval entries waiting on ``toolset``, now that it has built its tools.
+
+        Called from ``build_tools`` before the tools reach any agent, so a gate holds from the first
+        moment a tool can be called, whoever built it. A no-op until ``start`` has resolved the policies:
+        every build before that is a startup build, and the startup resolution covers it. A deferred
+        build runs in a worker thread, so the swap is under a lock that also covers the read: two
+        builds finishing together each resolve against the other's result instead of overwriting it.
+        """
+        with self._policies_lock:
+            current = self._human.policies
+            if current is None:
+                return
+            updated = current.with_built(toolset, tool_names)
+            # Both are computed before either is assigned, so a build the floor refuses leaves the old
+            # policies and the old auto-approval state exactly as they were.
+            auto = self._human.auto_approval
+            updated_auto = auto.with_built(updated, toolset, tool_names) if auto is not None else None
+            self._human.policies = updated
+            self._human.auto_approval = updated_auto
 
     async def _handle(
         self, msg: ChannelMessage, *, conversation_id: str, workflow=None, tid: Optional[int] = None

@@ -105,7 +105,7 @@ You are a research sub-agent. Investigate the task with web search and page look
 against sources rather than memory, and return a concise findings summary that names its sources."""
 
 [agents.researcher.tools]
-available = ["web", "misc", "time"]
+available = ["web", "misc", "time", "messaging"]
 
 [agents.report-writer]
 description = "Builds and emails PDF reports."
@@ -115,7 +115,8 @@ available = ["markdown-to-pdf", "email-report", "fs", "time"]
 ```
 
 - **`[agents.<name>.tools].available`** is the whole capability declaration, in one flat list over the one
-  namespace. (The same subtable can also carry the agent's own `confirm` and `review`; see
+  namespace. (The same subtable can also carry a `resident` subset, the toolsets in the agent's context
+  from its first turn with the rest loaded on demand, and the agent's own `confirm` and `review`; see
   [Tool access](../explanation/tool-access.md).) A built-in
   group, a core capability, a plugin toolset, and an MCP server are all named the same way.
 - **`delegates_to`** is itself the switch: a non-empty list gives that agent a

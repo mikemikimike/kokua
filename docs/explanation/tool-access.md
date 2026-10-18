@@ -8,7 +8,7 @@ same three questions show up in other frameworks under other names.
 | Axis | The question | Key |
 | --- | --- | --- |
 | **Availability** | What can this agent ever call? | `available` |
-| **Residency** | What is in its context from the start? | not built yet; see [below](#residency-what-exists-today) |
+| **Residency** | What is in its context from the start? | `resident` |
 | **Approval** | What asks before it runs, and who answers? | `confirm`, `review` |
 
 Every key lives in one subtable per agent, `[agents.<name>.tools]`, with `[assistant.tools]` as the
@@ -22,6 +22,11 @@ review = ["compute.run_command", "compute.execute_python", "fs_write"]          
 
 [agents.researcher.tools]
 available = ["web", "misc", "time", "messaging"]   # inherits [assistant.tools]'s confirm and review
+
+[agents.assistant.tools]
+available = ["memory", "documents", "skills", "config", "mcp", "scheduling", "conversations", "planning",
+             "capabilities", "time", "benchmark", "messaging"]
+resident = ["memory", "config", "conversations", "planning", "capabilities", "time", "messaging"]  # the rest load on demand
 ```
 
 ## Availability: fixed by the host, never by the model
@@ -58,11 +63,13 @@ declared. Kokua instead split the group by reach into two toolsets, `fs` (reads)
 (writes), so "read a file and do not write one" is something an agent's list can say. The shipped
 `introspector` holds `fs` for exactly that reason.
 
-One name inside the approval lists, `core`, is reserved for the two tools no toolset provides
-(`spawn_subagent` and `activate_skill`), and a delegating agent earns `spawn_subagent` by naming
-workers in `delegates_to` rather than by `available`.
+One name inside the approval lists, `core`, is reserved for the tools no toolset provides:
+`spawn_subagent` and `activate_skill`, plus `available_tools` and `load_tools` once any agent defers a
+toolset (see [Residency](#residency-what-is-in-context-and-what-loads-on-demand)). A bare `core` covers
+all of them and `core.<tool>` names one. A delegating agent earns `spawn_subagent` by naming workers in
+`delegates_to` rather than by `available`.
 
-## Residency: what exists today
+## Residency: what is in context, and what loads on demand
 
 Residency asks a different question from availability: of what an agent *could* call, how much sits in
 its context window on every request? Every other surveyed framework treats this as the dynamic axis.
@@ -70,12 +77,140 @@ Anthropic's tool search, Claude Code's deferred tools, Hermes' tool search, and 
 embedding retrieval are one pattern: a cheap index stays resident, and a tool's full schema is loaded
 when it is wanted. Agent Skills' progressive disclosure is the same idea applied to instructions.
 
-Kokua does not have this yet. **Today every available toolset is resident**: an agent's `available`
-list is also exactly the tools in its context on every call, and `kokua agents` says so. The
-`"all"` value for `available` and deferred loading are designed and not built. They are named here
-because the axis is real and because the cost is visible in the meantime: each model call in the web
-UI shows its `N tools` count, which is residency as the model experienced it. When the axis arrives it
-gets its own key, and this page grows a section.
+Kokua's version is one key and AIMU's tool groups. **`resident` names the toolsets an agent holds from
+its first turn,** and it is a subset of `available`. Whatever `available` names and `resident` does not
+is *deferred*: the agent can reach it, but none of its tool schemas are in the request until the model
+asks for them. Leave `resident` out and every available toolset is resident, which is how the shipped
+workers are declared. A `resident` entry that `available` does not hold is a startup error, because a
+resident toolset is one the agent already holds. The order you write `resident` in changes nothing:
+tools are presented in `available` order either way. `kokua agents` prints each agent's resident list,
+or "every available toolset" when it declares none.
+
+Note what residency cannot do: widen anything. A deferred toolset is one the agent's own `available`
+list already names, so loading it is the model choosing *when* to pay for a capability the host granted,
+never acquiring one. That is the same line Anthropic's `defer_loading` draws, for the same reason.
+
+### What the model sees
+
+An agent with at least one deferred toolset carries two more tools, which come from AIMU rather than
+from any toolset: `available_tools`, which lists every toolset the agent holds or can load, and
+`load_tools(name)`, which loads one. Its system prompt gains a single line naming what it can load, and
+only the names:
+
+```text
+Also available, load before use: documents, skills, mcp, scheduling, benchmark.
+```
+
+This is what `available_tools` returns for the shipped entry agent, abridged:
+
+```text
+memory [resident]: Facts about the user, remembered across conversations.
+config [resident]: Read config.toml and change a runtime setting, persisted back to the file. Asks first: update_config.
+...
+skills [loadable]: Author skills, revise them, and attach runnable scripts to them. Asks first: add_skill_script.
+mcp [loadable]: Connect and disconnect remote MCP servers at runtime. Asks first: add_mcp_server.
+scheduling [loadable]: Schedule, list, edit, and cancel recurring or one-off proactive tasks.
+```
+
+The description is the toolset's own (for an MCP server, its
+[`description`](../reference/configuration.md#mcpserver) key), and the `Asks first` note comes from the
+agent's approval policy, so a model choosing what to load knows a tool will stop for an answer before it
+plans around that tool. A deferred toolset's `guidance`, the instructions it would otherwise add to the
+prompt, arrives with its tools as part of `load_tools`' result, so the prompt pays for none of it until
+it is used. A load lasts for the rest of the agent's life, and nothing unloads. Loaded tools go after
+everything the agent already holds, so within a conversation a request's tool list only grows, which
+keeps a provider's prompt cache valid. A loaded tool whose name the agent already holds is skipped, and
+the result says so.
+
+### What a load costs: the build, paid when it happens
+
+A resident toolset is built when the agent is wired. A deferred one is built when it is loaded, through
+the same `build_tools` call, in a worker thread so the event loop keeps serving other conversations
+meanwhile. So whatever building a toolset does (opening the document store, for `documents`) is paid
+only by an agent that loads it.
+
+A build that fails, fails at load. The model reads AIMU's `Could not load '<name>': <error>` as the
+tool's result, you get an alert naming the toolset and the agent, and the toolset stays loadable, so a
+retry after the cause is fixed works. A deferred MCP server that is not connected refuses to load,
+rather than loading empty. Resident, the same server builds empty and a reconnect reaches the next
+rebuild; but a load is recorded as done, so an empty one would leave the server unloadable for the rest
+of the conversation even after it came back.
+
+### What a load checks: approval, before any tool is callable
+
+An approval entry naming a deferred toolset that is not built yet cannot be resolved at startup,
+because a tool name exists only once its toolset has built it. A toolset some agent holds resident is
+built at startup, and so is every skill the entry agent's `SkillAgent` holds (every skill when it declares `skills`, otherwise the skills it names); an entry on
+either resolves there like any other. So startup checks the entry's shape and
+holds it as *pending*, and the build resolves it: `build_tools` reports each toolset it builds to a
+hook, and the hook resolves the waiting entries before a single tool is returned. That holds whoever builds the toolset: the model's
+`load_tools`, a [composed worker](architecture.md#agents-and-delegation), or a rebuilt agent restoring
+what its conversation loaded (below).
+
+An entry that still matches nothing once its toolset is built, such as `mcp.add_mcp_servr`, refuses that
+build and every later one, so the toolset cannot be loaded until the entry is fixed and Kokua
+restarted (approval lists are startup-only, and locked by default). That is failing
+closed on purpose: the alternative is a tool running ungated because its gate was misspelled. On a load,
+the model reads the refusal as a `Could not load` result and you get the alert; a `compose_subagent`
+whose build is refused the same way answers `Could not compose`, naming the entry, with the same alert.
+With auto-approval enabled, `[security].never_auto_approve` entries naming a deferred toolset are
+pending in the same way, and a build after which some policy's `review` list reaches that floor is
+refused too. In the shipped config this is how
+`skills.add_skill_script` and `mcp.add_mcp_server` are gated: both name toolsets the entry agent
+defers, and both resolve the first time their toolset is built.
+
+A conflict the entries' own text already settles does not wait for that build. `review = ["mcp"]`
+(or `"mcp.*"`) against the floor's `mcp.add_mcp_server`, or `mcp.add_mcp_server` in a pair's `confirm`
+with `mcp` in its `review`, fails startup with the same error a build would give: if the tool exists,
+both lists hold it; if it does not, the tool entry is dead and refuses the build anyway. Waiting would
+only turn one startup error into a refusal on every load of the toolset. Two different tools of one
+toolset (`mcp.add_mcp_server` against `mcp.remove_mcp_server`) say nothing about each other, so they
+wait, and the build-time check stays as the backstop for an overlap no text reveals, such as a review
+list that already holds the same tool name through another toolset.
+
+### When an agent is rebuilt, it preloads
+
+A conversation's agent is rebuilt from the stored transcript more often than you might expect: on
+restart, when switching among more than eight conversations evicts the least recently used one, and when
+a conversation is truncated. The new agent preloads the toolsets the transcript's `load_tools` calls
+loaded, in the order they were first loaded, instead of replaying the calls. The reason is mechanical: the
+agent builder is synchronous and AIMU's load is async. The end state is the same tools, with the
+restored toolsets' guidance in the prompt and the names line listing only what is still loadable.
+
+Only a load that succeeded comes back, judged by the result stored beside the call. The call alone is
+not evidence, because it is stored whether or not it ran: if you gate `core.load_tools` and deny a load,
+or a turn nobody is watching has it auto-denied, the transcript still holds the call, and restoring
+from calls would hand you the toolset you refused at the next restart. A denied load has to stay
+denied. A load that failed, or that a cancelled turn left without a result, is left out too, and stays
+loadable.
+
+The cost is that a preloaded toolset is held like a resident one: `available_tools` lists it as
+`resident`, not `loaded`, and its tools sit with the resident ones, ahead of `spawn_subagent`, any
+skill tools, and the two loaders. A preload goes through the same build and the same approval hook as a load. One that fails (a refused
+approval entry, an MCP server still down) is logged at WARNING rather than raised as an alert, since a
+rebuild is something nobody asked for, and the toolset stays deferred and loadable so the model can try
+again and read the real error. A preloaded tool whose name the agent already holds is skipped
+and logged. Truncation rebuilds from the shortened transcript, so a load made in the deleted turns is not
+restored.
+
+### Workers, and the shipped split
+
+`resident` works the same on every agent. A delegated worker that declares one gets the same two tools
+and the same names line, and its loads are its own: a worker is built per spawn, so what it loads ends
+with it. A composed worker has no table and so no residency; everything it is composed from is built
+when it is.
+
+The shipped entry agent keeps `memory`, `config`, `conversations`, `planning`, `capabilities`, `time`,
+and `messaging` resident, the toolsets it reaches for on most turns, and loads `documents`, `skills`,
+`mcp`, `scheduling`, and `benchmark` on demand. Measured as the JSON of every tool spec the model is
+sent, its tool block went from 30,560 bytes for all 37 tools to 16,244 bytes for nineteen (seventeen
+resident, plus the two loaders): 46.8% smaller, on every round of every turn that loads nothing. The
+approval gate covers the same seven tools it did. What it costs is a round: a turn that needs a deferred
+toolset spends one model call on `load_tools` before it can use it. Each model call in the web UI still
+shows its `N tools` count, which is residency as the model experienced it.
+
+`available = "all"`, every installed toolset available to load, is designed and not built yet; today
+`available` is always a list.
 
 ## Approval: a per-call layer
 
@@ -128,7 +263,9 @@ agent goes to stderr at startup.
 
 A gate entry is a tool name, and the policy that matters is the one belonging to whoever is making the
 call. Kokua resolves one policy per agent after every agent is wired (a tool name exists only once its
-toolset has been built), and binds the human gate to the agent's name. The entry agent's gate is its own.
+toolset has been built, which is also why an entry for a deferred toolset waits for its
+[build](#what-a-load-checks-approval-before-any-tool-is-callable)), and binds the human gate to the
+agent's name. The entry agent's gate is its own.
 A delegated worker's gate rides in its spawn spec's `"tool_approval"` key (AIMU 0.37.0), bound to that
 worker's name, so a `coder` that declares `confirm = ["fs_write"]` is held to that and a `researcher`
 inheriting the default is held to the default.
@@ -152,6 +289,10 @@ these fails startup rather than warning:
 - `[security.auto_approval]` enabled with no `review` entry anywhere, or a `review` entry naming a tool
   in `[security].never_auto_approve`, the floor beneath the reviewer. That second check only runs when
   auto-approval is enabled.
+
+An entry naming a toolset the agent defers that is not built yet (no agent holds it resident, and it
+is not a skill the entry agent already holds) is the one exception to "at startup": startup checks its shape, and the build checks the rest, refusing the toolset rather than letting it load ungated (see
+[What a load checks](#what-a-load-checks-approval-before-any-tool-is-callable)).
 
 With auto-approval off, `review` entries prompt you exactly as `confirm` ones do: turning it off never
 ungates a call. Unattended turns still auto-deny every gated call, whichever list holds it.

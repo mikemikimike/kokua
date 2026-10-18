@@ -206,6 +206,9 @@ def build_tools(toolsets: Sequence[Toolset], ctx: "ToolsetContext") -> list:
     tools: list = []
     seen: set[str] = set()
     for toolset in toolsets:
+        # What this call built, kept apart from the shared record below: a concurrent build of the same
+        # toolset in another worker thread may be adding to that set while the hook reads.
+        built: set[str] = set()
         # Seeded even when the build returns nothing, so a workflow-only toolset like `planning` is
         # known-and-empty to the gate check rather than indistinguishable from a name nobody declared.
         provided = ctx.state.tools_by_toolset.setdefault(toolset.name, set())
@@ -214,9 +217,14 @@ def build_tools(toolsets: Sequence[Toolset], ctx: "ToolsetContext") -> list:
             if not name:
                 continue
             provided.add(name)
+            built.add(name)
             if name not in seen:
                 seen.add(name)
                 tools.append(fn)
+        # After recording and before the tools go back to the caller: approval has to cover a toolset
+        # however late, and by whomever, it is built, and a raising hook refuses the whole build.
+        if ctx.state.toolset_built is not None:
+            ctx.state.toolset_built(toolset.name, frozenset(built))
     return tools
 
 

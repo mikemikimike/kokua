@@ -30,6 +30,7 @@ token_env = "GITHUB_MCP_TOKEN"
 | `url` | yes | The server endpoint. |
 | `name` | **yes** | How the server enters the toolset namespace, and therefore the only way an agent can name it. |
 | `token_env` | no | Name of an **environment variable** holding a bearer token. Never the token itself. |
+| `description` | no | One line saying what the server's tools do: what an agent that [loads the server on demand](../reference/configuration.md#resident) decides by. Unset, it says only where the server is. |
 
 `name` shares one namespace with every other toolset, so it must not collide with a built-in group
 (`web`, `fs`, `compute`, ...), a core capability (`memory`, `config`, `scheduling`, ...), an installed
@@ -51,7 +52,10 @@ here cannot quietly produce an agent with fewer tools than you wrote. Unknown ke
 `[[mcp.server]]` are hard startup errors that name the offending server, as they always were.
 
 The server's tools are resolved from the live connections when the agent is built, so a server that is
-configured but not currently connected simply contributes nothing rather than failing the build.
+configured but not currently connected simply contributes nothing rather than failing the build. The
+exception is a server the agent loads on demand (left out of its `resident` list): that one refuses to
+load while it is disconnected, and stays loadable, because a load is recorded as done and an empty one
+would stay empty after the server came back.
 
 ## Authentication
 

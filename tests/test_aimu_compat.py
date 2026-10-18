@@ -525,12 +525,48 @@ def test_the_floor_covers_the_per_worker_gate_the_probe_does_not_grip():
     assert "tool_approval" in SUBAGENT_SPEC_KEYS
 
 
-def test_the_floor_covers_the_tool_group_nothing_uses_yet():
-    """``ToolGroup`` shipped in 0.37.0 beside the gate key and nothing in Kokua calls it yet; it is the
-    floor's job until a later change uses it."""
+def test_the_floor_covers_the_tool_group_residency_rides():
+    """``ToolGroup`` shipped in 0.37.0 beside the gate key, and residency (``core/build.py``'s
+    ``tool_groups_for``) now rides it. It is the floor's job rather than the probe's because
+    ``core/build.py`` imports it at module scope: a checkout without it fails loudly with ``ImportError``
+    when the core is imported, after the preflight and before any conversation exists."""
     from aimu.tools import ToolGroup
 
     assert ToolGroup is not None
+
+
+def test_aimu_still_opens_a_successful_load_result_the_way_restoring_reads_it():
+    """A rebuilt agent restores only the loads whose stored result says they succeeded
+    (``core/build.py``'s ``loaded_toolsets_in``), and the only record of success is AIMU's result text. If
+    that text changed, every restore would quietly stop and each conversation would come back with its
+    loads gone; this pins the text against a real load on AIMU's own ``Agent``."""
+    import asyncio
+
+    from aimu import aio
+    from aimu.tools import ToolGroup
+
+    from kokua.core.build import loaded_toolsets_in
+    from tests.helpers import MockAsyncModelClient
+
+    def tiny_tool() -> str:
+        """Do nothing."""
+        return ""
+
+    group = ToolGroup("tiny", "a tiny group", build=lambda: [tiny_tool])
+    agent = aio.Agent(MockAsyncModelClient([]), tools=[], tool_groups=[group])
+
+    async def load_twice() -> tuple[str, str]:
+        return await agent.load_tool_group("tiny"), await agent.load_tool_group("tiny")
+
+    loaded, again = asyncio.run(load_twice())
+
+    def stored(content: str) -> list[dict]:
+        call = {"id": "a", "type": "function", "function": {"name": "load_tools", "arguments": {"name": "tiny"}}}
+        return [{"role": "assistant", "tool_calls": [call]}, {"role": "tool", "tool_call_id": "a", "content": content}]
+
+    assert loaded.startswith("Loaded 'tiny':")
+    assert loaded_toolsets_in(stored(loaded)) == ["tiny"]
+    assert loaded_toolsets_in(stored(again)) == []
 
 
 def test_the_floor_covers_the_inbox_protocol_the_probe_no_longer_grips():

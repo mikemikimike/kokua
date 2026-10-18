@@ -221,11 +221,13 @@ friendlier sentence.
 
 **The arithmetic is not abstract, and the numbers are in this repository.** A locally served model is
 commonly given a 32768-token window. Set `[assistant.generation] max_tokens = 4096` and roughly 28k
-remains for the system prompt, the tool block, and the entire conversation. The shipped entry agent
-resolves to 37 tools, each contributing its name, description, and a described parameter list on
-*every* round of *every* turn ([Tool calling](tool-calling.md)), before a single word of conversation.
-That block is a fixed subtraction from the budget, and a long working session on a real task is how you
-spend what is left.
+remains for the system prompt, the tool block, and the entire conversation. The shipped entry agent can
+reach 37 tools, and the nineteen it holds from the first turn (seventeen from its resident toolsets, plus
+the `available_tools` / `load_tools` pair that loads the rest) each contribute a name, a description,
+and a described parameter list on *every* round of *every* turn ([Tool calling](tool-calling.md)),
+before a single word of conversation: 16,244 bytes of JSON, against 30,560 with every toolset resident.
+That block is a fixed subtraction from the budget (larger by whatever a turn loads), and a long working
+session on a real task is how you spend what is left.
 
 **What overflow looks like depends on the backend, which is the nasty part.** `context_length` is
 applied per request only on Ollama's native API; everywhere else the window is fixed at model load, at

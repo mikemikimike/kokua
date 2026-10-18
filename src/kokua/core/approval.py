@@ -18,13 +18,20 @@ back is the one mistake whose symptom is the absence of a symptom.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from kokua.config import ConfigError
 from kokua.config.schema import DEFAULT_POLICY_SOURCE
-from kokua.core.agents import gateable_tools, resolve_gate_entries
+from kokua.core.agents import (
+    _resolve_gate_entry,
+    built_toolsets,
+    certain_overlap,
+    gateable_tools,
+    pending_gate_entries,
+    resolve_gate_entries,
+)
 from kokua.registry.registry import RESERVED_GATE_NAMESPACE
 
 if TYPE_CHECKING:
@@ -52,6 +59,11 @@ class ApprovalPolicy:
     source: str
     confirm: frozenset[str]
     review: frozenset[str]
+    # Raw entries whose toolset is deferred and not yet built by anyone. They hold nothing back until
+    # `ApprovalPolicies.with_built` resolves them, which happens before the build returns any tool, so a
+    # tool is never callable while its entry is still waiting.
+    pending_confirm: frozenset[str] = frozenset()
+    pending_review: frozenset[str] = frozenset()
 
     @property
     def gated(self) -> frozenset[str]:
@@ -76,6 +88,54 @@ class ApprovalPolicies:
             return declared
         return dataclasses.replace(self.default, agent=name)
 
+    def with_built(self, toolset: str, tool_names: frozenset[str]) -> ApprovalPolicies:
+        """These policies with every pending entry naming ``toolset`` resolved against what it built.
+
+        Approval has to hold for a toolset however late, and by whomever, it is built: an agent loading
+        it, or a worker composed for one task. So the build itself calls this (through
+        ``LiveState.toolset_built``) before it returns a single tool, and an entry that matches nothing
+        raises there, refusing the build, because a gate naming a tool that does not exist holds nothing
+        back. Pure: returns a new object, so a reader holding the old one never sees a half-updated pair.
+        """
+        vocabulary = {toolset: set(tool_names)}
+        policies = {name: _with_built(policy, toolset, vocabulary) for name, policy in self.by_agent.items()}
+        return ApprovalPolicies(by_agent=policies, default=_with_built(self.default, toolset, vocabulary))
+
+
+def _with_built(policy: ApprovalPolicy, toolset: str, vocabulary: dict[str, set[str]]) -> ApprovalPolicy:
+    resolved = {"confirm": set(policy.confirm), "review": set(policy.review)}
+    waiting = {"confirm": set(policy.pending_confirm), "review": set(policy.pending_review)}
+    for key in ("confirm", "review"):
+        for entry in sorted(waiting[key]):
+            if entry.split(".")[0] != toolset:
+                continue
+            names, fault = _resolve_gate_entry(entry, vocabulary, {})
+            if fault:
+                raise ConfigError(
+                    f"{policy.source}.{key} names {entry!r}, but the {toolset!r} toolset, now built, "
+                    f"provides no such tool. Fix the entry; until then {toolset!r} cannot be loaded. {fault}."
+                )
+            resolved[key] |= names
+            waiting[key].discard(entry)
+    _refuse_overlap(policy.source, resolved["confirm"] & resolved["review"])
+    return dataclasses.replace(
+        policy,
+        confirm=frozenset(resolved["confirm"]),
+        review=frozenset(resolved["review"]),
+        pending_confirm=frozenset(waiting["confirm"]),
+        pending_review=frozenset(waiting["review"]),
+    )
+
+
+def _refuse_overlap(source: str, both: Iterable[str]) -> None:
+    """Refuse a pair whose halves share ``both``: tool names once resolved, or entries still pending."""
+    both = set(both)
+    if both:
+        raise ConfigError(
+            f"{source} gates {', '.join(sorted(both))} in both confirm and review. "
+            "A gated tool either asks you (confirm) or asks a reviewer first (review); pick one."
+        )
+
 
 def _vocabulary_for(
     name: str, config: AssistantConfig, state: LiveState, full: dict[str, set[str]]
@@ -99,10 +159,22 @@ def _resolve_pair(
     vocabulary: dict[str, set[str]],
     full: dict[str, set[str]],
     state: LiveState,
+    deferred: set[str],
 ) -> ApprovalPolicy:
+    """Resolve one pair; entries naming a deferred, unbuilt toolset wait in ``pending_*`` instead.
+
+    ``deferred`` is the toolsets this pair's holder(s) can load later. One already built, in the sense of
+    :func:`~kokua.core.agents.built_toolsets` (a recorded build, or a skill the entry agent's
+    ``SkillAgent`` holds), resolves now like any other, so only a toolset that is not built yet waits.
+    """
     resolved = {}
+    pending = {}
+    built = built_toolsets(state)
     for key, entries in (("confirm", confirm), ("review", review)):
         setting = f"{source}.{key}"
+        waiting = pending_gate_entries(entries, deferred, built)
+        pending[key] = frozenset(waiting)
+        entries = [entry for entry in entries if entry not in waiting]
         for entry in entries:
             toolset = entry.split(".")[0]
             # A toolset that exists but is out of this agent's reach gets its own sentence. One that
@@ -115,13 +187,19 @@ def _resolve_pair(
         resolved[key] = resolve_gate_entries(
             entries, vocabulary, state.registry, setting=setting, effect=_GATE_EFFECT, remedy=_GATE_REMEDY
         )
-    both = resolved["confirm"] & resolved["review"]
-    if both:
-        raise ConfigError(
-            f"{source} gates {', '.join(sorted(both))} in both confirm and review. "
-            "A gated tool either asks you (confirm) or asks a reviewer first (review); pick one."
-        )
-    return ApprovalPolicy(agent=agent, source=source, confirm=resolved["confirm"], review=resolved["review"])
+    _refuse_overlap(source, resolved["confirm"] & resolved["review"])
+    # Pending entries are checked too, by their text: a conflict certain to appear at the build would
+    # otherwise pass startup and then refuse every load of the toolset. `_with_built` still checks the
+    # built names, for an overlap no entry's text reveals.
+    _refuse_overlap(source, certain_overlap(pending["confirm"], pending["review"]))
+    return ApprovalPolicy(
+        agent=agent,
+        source=source,
+        confirm=resolved["confirm"],
+        review=resolved["review"],
+        pending_confirm=pending["confirm"],
+        pending_review=pending["review"],
+    )
 
 
 def resolve_approval_policies(config: AssistantConfig, state: LiveState, entry_agent) -> ApprovalPolicies:
@@ -132,8 +210,9 @@ def resolve_approval_policies(config: AssistantConfig, state: LiveState, entry_a
     the agent does not hold.
     """
     full = gateable_tools(state, entry_agent)
+    any_deferred = {toolset for name in config.agents for toolset in config.deferred_for(name)}
     default = _resolve_pair(
-        DEFAULT_POLICY, DEFAULT_POLICY, config.default_confirm, config.default_review, full, full, state
+        DEFAULT_POLICY, DEFAULT_POLICY, config.default_confirm, config.default_review, full, full, state, any_deferred
     )
     by_agent = {}
     for name, agent in config.agents.items():
@@ -141,5 +220,7 @@ def resolve_approval_policies(config: AssistantConfig, state: LiveState, entry_a
             continue
         confirm, review, source = config.approval_entries_for(name)
         vocabulary = _vocabulary_for(name, config, state, full)
-        by_agent[name] = _resolve_pair(name, source, confirm, review, vocabulary, full, state)
+        by_agent[name] = _resolve_pair(
+            name, source, confirm, review, vocabulary, full, state, set(config.deferred_for(name))
+        )
     return ApprovalPolicies(by_agent=by_agent, default=default)
