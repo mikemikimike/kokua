@@ -12,6 +12,7 @@ that can disagree with the declaration.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
@@ -96,11 +97,12 @@ class LiveState:
     # than imported by the toolsets that need it, since it lives in core.build and core.build imports
     # them.
     refresh_workers: Optional[Callable[[Any], None]] = None
-    # Re-reads the skills on disk into `registry` and `skill_tools`, then rebuilds every live agent's
-    # delegate, so a skill written mid-session reaches an "all" worker on its next spawn. Called by the
-    # skills toolset after each write; assigned by the composition root for the reason `refresh_workers`
-    # is. Raises ToolsetError when a skill on disk now collides with another toolset's name.
-    refresh_skills: Optional[Callable[[], None]] = None
+    # Re-reads the skills on disk into `registry` (and into `skill_tools` when called with
+    # `tools_changed=True`, a keyword argument), then rebuilds every live agent's delegate, so a skill
+    # written mid-session reaches an "all" worker on its next spawn. Called by the skills toolset after
+    # each write; assigned by the composition root for the reason `refresh_workers` is. Raises
+    # ToolsetError when a skill on disk now collides with another toolset's name.
+    refresh_skills: Optional[Callable[..., None]] = None
     # Every runtime-mutable setting this process knows, so the config toolset's update_config resolves a
     # key against the same declarations the applier uses. Assigned by the composition root,
     # which builds one table and shares it with the applier.
@@ -116,8 +118,15 @@ class LiveState:
     # known, it does nothing, because a failure still reaches the model as the load's result.
     alert_soon: Optional[Callable[[str], None]] = None
     # Every skills MCP client `skill_tools` has built, not only the current one: a worker spawned before a
-    # refresh may still be calling the old client's callables, so a client is closed only by close().
+    # refresh may still be calling the old client's callables, so a client is closed only by close(). The
+    # list grows by one per script-changing skill write (an authored skill or an added script) whose map
+    # some agent then reads, and is held until close(); a prose edit adds none.
     _skills_clients: list = field(default_factory=list, init=False, repr=False)
+    _skill_tools: Optional[dict[str, list]] = field(default=None, init=False, repr=False)
+    # Guards building and dropping `_skill_tools`. A deferred skill group builds in a worker thread while a
+    # refresh runs on the event loop, and without it a build that read the skills before a refresh could
+    # store its map after one, handing every worker the pre-refresh skills until the next write.
+    _skill_tools_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     @cached_property
     def memory_store(self) -> SemanticMemoryStore:
@@ -176,7 +185,7 @@ class LiveState:
             include=[name for name in declared if name in known],
         )
 
-    @cached_property
+    @property
     def skill_tools(self) -> dict[str, list]:
         """Each skill's callable tools by skill name: its own scripts plus the shared ``activate_skill``.
 
@@ -189,7 +198,17 @@ class LiveState:
         in-process server through an anyio blocking portal on a background thread, so building this from
         the event-loop thread is safe; it is one in-process ``list_tools`` round-trip, paid on first
         access rather than per agent.
+
+        A property over a lock rather than a ``cached_property``, which takes no lock on Python 3.12 and
+        later: see ``_skill_tools_lock``. Holding the lock through the build also means two first reads
+        in different threads build one server, not two.
         """
+        with self._skill_tools_lock:
+            if self._skill_tools is None:
+                self._skill_tools = self._build_skill_tools()
+            return self._skill_tools
+
+    def _build_skill_tools(self) -> dict[str, list]:
         from aimu.skills import build_skills_server
         from aimu.tools import MCPClient
 
@@ -210,10 +229,12 @@ class LiveState:
         """Re-read the skills directory, so the next ``skill_tools`` access includes what was written since.
 
         The built map is dropped rather than rebuilt here, so a refresh no agent ever reads pays for no
-        server. Its client is retired, not closed (see ``_skills_clients``).
+        server. Its client is retired, not closed (see ``_skills_clients``). Waits for a build already
+        under way, so that build cannot store its map after this drops it.
         """
-        self.all_skills.refresh()
-        self.__dict__.pop("skill_tools", None)
+        with self._skill_tools_lock:
+            self.all_skills.refresh()
+            self._skill_tools = None
 
     def script_env(self) -> dict[str, str]:
         """The host context every skill script gets, from this config.
@@ -255,7 +276,8 @@ class LiveState:
         portal released during interpreter finalization cannot be stopped, so the process never exits.
         Everything else here is either a plain object or holds no OS resource of its own.
         """
-        clients, self._skills_clients = self._skills_clients, []
+        with self._skill_tools_lock:
+            clients, self._skills_clients = self._skills_clients, []
         for client in clients:
             client.close()
 

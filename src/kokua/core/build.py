@@ -415,7 +415,7 @@ def make_agent_builder(
     # toolsets.agents, so that import would be circular), and every agent this builder produces must
     # share the one callback.
     state.refresh_workers = lambda agent: rebuild_delegation_tool(agent, state)
-    state.refresh_skills = lambda: refresh_skills(state)
+    state.refresh_skills = lambda *, tools_changed: refresh_skills(state, tools_changed=tools_changed)
 
     def build(conversation_id: str) -> aio.SkillAgent:
         session = store.get(conversation_id)
@@ -446,7 +446,7 @@ def rebuild_delegation_tool(agent: aio.SkillAgent, state: LiveState) -> None:
         agent.tools.append(tool)
 
 
-def refresh_skills(state: LiveState) -> None:
+def refresh_skills(state: LiveState, *, tools_changed: bool) -> None:
     """Bring the skills on disk into the registry, so a skill written mid-session reaches its next readers.
 
     Who that reaches follows from who reads the registry when. An ``"all"`` worker's spec is resolved when
@@ -456,6 +456,10 @@ def refresh_skills(state: LiveState) -> None:
     list is unchanged, since a list names its skills; the one thing it does pick up is new scripts on a
     skill it already names, because ``skill_tools`` is rebuilt for everyone. A conversation whose agent
     is not built yet reads the new registry when it is.
+
+    ``tools_changed`` says whether the write could change which tools a skill offers (a new skill, a new
+    script). Only then is ``skill_tools`` rebuilt, since each rebuild retires a skills server that stays
+    open until the process ends; a prose edit changes descriptions and guidance, which live in the registry.
 
     A collision (a skill on disk claiming another toolset's name) raises ``ToolsetError`` before anything
     is swapped, so the previous registry stays in force.
@@ -471,6 +475,7 @@ def refresh_skills(state: LiveState) -> None:
     # build, a compose, a catalogue listing) is synchronous on the event loop, as this function is, so it
     # runs wholly before or wholly after this line and sees one registry, old or new, never a mixture.
     state.registry = registry
-    state.refresh_skill_tools()
+    if tools_changed:
+        state.refresh_skill_tools()
     if state.for_each_agent is not None and state.refresh_workers is not None:
         state.for_each_agent(state.refresh_workers)

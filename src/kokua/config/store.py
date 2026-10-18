@@ -190,6 +190,28 @@ def add_mcp_server(path: Path, url: str, token_env: str | None = None) -> None:
     _write(path, doc)
 
 
+def mcp_server_names(path: Path) -> list[str]:
+    """The ``name`` of every ``[[mcp.server]]`` entry on file, or none when there is no file yet.
+
+    Read from the file rather than the live config because ``add_mcp_server`` persists a server the running
+    session's registry never learns, and the next start registers it. Entries without a string name are
+    skipped: the startup parse refuses them, so they claim nothing. Raises ``ConfigError`` for a file that
+    is not valid TOML.
+    """
+    text = read_text(path)
+    if text is None:
+        return []
+    try:
+        document = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as error:
+        raise settings.ConfigError(f"{path} is not valid TOML: {error}") from error
+    mcp = document.get("mcp")
+    entries = mcp.get("server") if isinstance(mcp, dict) else None
+    if not isinstance(entries, list):
+        return []
+    return [entry["name"] for entry in entries if isinstance(entry, dict) and isinstance(entry.get("name"), str)]
+
+
 def remove_mcp_server(path: Path, url: str) -> bool:
     """Remove the ``[[mcp.server]]`` entry with this URL. Returns whether one was removed."""
     doc = _load(path)

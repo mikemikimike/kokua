@@ -37,15 +37,20 @@ would buy a prompt and no boundary. Add either by hand if you want the prompt.
 from __future__ import annotations
 
 import functools
+import logging
 from typing import TYPE_CHECKING, Callable, Optional
 
 from aimu.skills import make_skill_authoring_tool, make_skill_script_tool, make_skill_update_tool
 
+from kokua.config import store as config_store
+from kokua.config.file import ConfigError
 from kokua.registry import Toolset
 from kokua.registry.registry import ALL_DECLARATION, RESERVED_GATE_NAMESPACE, ToolsetError
 
 if TYPE_CHECKING:
     from kokua.registry.context import LiveState, ToolsetContext
+
+logger = logging.getLogger(__name__)
 
 GUIDANCE = (
     " When the user teaches you a repeatable procedure worth remembering, call `author_skill` to save "
@@ -64,6 +69,10 @@ GUIDANCE = (
 def _claimed_by(name: str, state: "LiveState") -> Optional[str]:
     """What already holds ``name`` as a toolset, or None when a skill may take it.
 
+    Two sources, because the live registry is not everything the next start registers: a server
+    ``add_mcp_server`` connected this session is written to ``config.toml`` and never reaches the registry
+    until a restart, and a skill holding its name would stop that restart on the collision.
+
     A name that is already a skill is left to AIMU, which refuses to clobber one with a message of its own.
     """
     # Function-scope for the reason capabilities.py gives: core/build.py reaches toolsets/, so a module-scope
@@ -74,14 +83,24 @@ def _claimed_by(name: str, state: "LiveState") -> Optional[str]:
         return "reserved"
     if name in state.registry and not is_skill(name, state.registry):
         return state.registry.providers[name]
-    return None
+    try:
+        persisted = config_store.mcp_server_names(state.config.config_path)
+    except (ConfigError, OSError) as error:
+        # The next start will refuse a file that cannot be read anyway, and refusing every skill name
+        # until it is fixed would take authoring away for no protection, so the registry check stands alone.
+        logger.warning("Could not read MCP server names from %s: %s", state.config.config_path, error)
+        return None
+    # The provider label build_registry gives an MCP server, which is the word a collision names.
+    return "MCP server" if name in persisted else None
 
 
 def _refusing_toolset_names(author_skill: Callable, state: "LiveState") -> Callable:
     """``author_skill``, refusing a name some other toolset already holds before anything is written.
 
     AIMU cannot know Kokua's namespace, so without this a skill named ``web`` is written to disk and then
-    refused by the registry at the next start, as a collision that stops Kokua from starting at all.
+    refused by the registry at the next start, as a collision that stops Kokua from starting at all. It
+    wraps the refreshing tool rather than the other way round, so a refusal writes nothing and refreshes
+    nothing.
     """
 
     @functools.wraps(author_skill)
@@ -97,8 +116,13 @@ def _refusing_toolset_names(author_skill: Callable, state: "LiveState") -> Calla
     return guarded
 
 
-def _refreshing(tool_fn: Callable, state: "LiveState") -> Callable:
+def _refreshing(tool_fn: Callable, state: "LiveState", *, tools_changed: bool) -> Callable:
     """``tool_fn``, followed by ``state.refresh_skills`` so workers resolve the skills now on disk.
+
+    ``tools_changed`` is whether the tool can change which tools a skill offers. Authoring adds a skill
+    (and with it an ``activate_skill`` entry) and a script adds a tool, so both rebuild the skill tools;
+    ``update_skill`` edits prose only, so it refreshes descriptions and guidance and leaves the tools,
+    and with them the skills server, as they are.
 
     It refreshes whatever the tool answered, since a refresh after a write that did not happen costs one
     directory scan and changes nothing. A refresh that fails names a collision the name check could not
@@ -113,7 +137,7 @@ def _refreshing(tool_fn: Callable, state: "LiveState") -> Callable:
         if state.refresh_skills is None:
             return result
         try:
-            state.refresh_skills()
+            state.refresh_skills(tools_changed=tools_changed)
         except ToolsetError as error:
             return f"{result}\n\nWorkers were not given the change, and the next start will refuse it too: {error}"
         return result
@@ -123,11 +147,14 @@ def _refreshing(tool_fn: Callable, state: "LiveState") -> Callable:
 
 def _build(ctx: "ToolsetContext") -> list:
     state = ctx.state
-    author = make_skill_authoring_tool(state.skill_manager, ctx.config.skills_dir)
+    skills_dir = ctx.config.skills_dir
+    author = _refreshing(make_skill_authoring_tool(state.skill_manager, skills_dir), state, tools_changed=True)
+    update = _refreshing(make_skill_update_tool(state.skill_manager, skills_dir), state, tools_changed=False)
+    script = make_skill_script_tool(ctx.agent, state.skill_manager, skills_dir)
     return [
-        _refreshing(_refusing_toolset_names(author, state), state),
-        _refreshing(make_skill_update_tool(state.skill_manager, ctx.config.skills_dir), state),
-        _refreshing(make_skill_script_tool(ctx.agent, state.skill_manager, ctx.config.skills_dir), state),
+        _refusing_toolset_names(author, state),
+        update,
+        _refreshing(script, state, tools_changed=True),
     ]
 
 
