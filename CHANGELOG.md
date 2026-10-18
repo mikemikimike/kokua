@@ -718,8 +718,9 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer
   approval entry naming a deferred toolset is checked for shape at startup and resolved when the toolset
   is built, by whichever path builds it (a model's load, a composed worker, a rebuilt agent's preload);
   one that then matches nothing refuses every build of that toolset, failing closed rather than letting
-  it load ungated. With auto-approval enabled, `[security].never_auto_approve` entries for a deferred
-  toolset wait the same way, and a build after which a policy's `review` reaches the floor is refused.
+  it load ungated. A refused load reads `Could not load`, and a refused `compose_subagent` reads
+  `Could not compose`, each naming the entry, and either raises an alert. With auto-approval enabled,
+  `[security].never_auto_approve` entries for a deferred toolset wait the same way, and a build after which a policy's `review` reaches the floor is refused.
   A conflict the pending entries' text already settles (`review = ["mcp"]` against the floor's
   `mcp.add_mcp_server`, or one tool reached by both halves of a pair) fails startup instead of every
   load.

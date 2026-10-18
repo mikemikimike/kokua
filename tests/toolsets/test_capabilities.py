@@ -576,6 +576,45 @@ async def test_compose_subagent_reports_an_unknown_capability_as_text(tmp_path, 
     assert spawn.calls == []
 
 
+def _refusing_build(state, alerts: list) -> None:
+    """The approval hook refusing a build, as ``Assistant._on_toolset_built`` does for a dead gate entry."""
+    from kokua.config import ConfigError
+
+    def refuse(toolset, tool_names):
+        raise ConfigError(f"[assistant.tools].confirm names {toolset + '.nope'!r}, but the {toolset!r} toolset ...")
+
+    state.toolset_built = refuse
+    state.alert_soon = alerts.append
+
+
+async def test_compose_subagent_answers_a_refused_build_naming_the_entry(tmp_path, monkeypatch):
+    """A refusal raised from the build would otherwise reach the model as AIMU's generic "raised an
+    error", which names neither the entry nor the fix."""
+    state = _state(tmp_path)
+    _refusing_build(state, [])
+    compose, spawn = _compose(state, monkeypatch)
+
+    result = await compose("w", "Do it.", ["web"], "Instructions.")
+
+    assert result.startswith("Could not compose 'w':")
+    assert "'web.nope'" in result
+    assert spawn.calls == []
+
+
+async def test_compose_subagent_tells_the_user_when_a_build_is_refused(tmp_path, monkeypatch):
+    """The same card a refused load gets: a capability the user expected did not arrive, and the model's
+    tool result is not something the user reliably sees."""
+    state = _state(tmp_path)
+    alerts: list[str] = []
+    _refusing_build(state, alerts)
+    compose, _ = _compose(state, monkeypatch)
+
+    await compose("w", "Do it.", ["web"], "Instructions.")
+
+    assert len(alerts) == 1
+    assert alerts[0].startswith("Composing w failed: ") and "'web.nope'" in alerts[0]
+
+
 async def test_compose_subagent_asks_for_a_capability_when_given_none(tmp_path, monkeypatch):
     compose, spawn = _compose(_state(tmp_path), monkeypatch)
     result = await compose("w", "Do it.", [], "Instructions.")

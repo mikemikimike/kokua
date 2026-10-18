@@ -151,7 +151,8 @@ An entry that still matches nothing once its toolset is built, such as `mcp.add_
 build and every later one, so the toolset cannot be loaded until the entry is fixed and Kokua
 restarted (approval lists are startup-only, and locked by default). That is failing
 closed on purpose: the alternative is a tool running ungated because its gate was misspelled. On a load,
-the model reads the refusal as a `Could not load` result and you get the alert.
+the model reads the refusal as a `Could not load` result and you get the alert; a `compose_subagent`
+whose build is refused the same way answers `Could not compose`, naming the entry, with the same alert.
 With auto-approval enabled, `[security].never_auto_approve` entries naming a deferred toolset are
 pending in the same way, and a build after which some policy's `review` list reaches that floor is
 refused too. In the shipped config this is how
