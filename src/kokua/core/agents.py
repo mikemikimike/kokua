@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import difflib
 import functools
-from typing import Callable, Collection, Mapping, Optional, Sequence
+from typing import Callable, Collection, Iterable, Mapping, Optional, Sequence
 
 from aimu import trim_messages
 from aimu.aio.tools.builtin import SubagentObserver, make_async_subagent_tool
@@ -860,6 +860,29 @@ def pending_gate_entries(entries: Sequence[str], deferred: set[str], built: Coll
         and entry.split(_GATE_SEPARATOR)[0] in deferred
         and entry.split(_GATE_SEPARATOR)[0] not in built
     }
+
+
+def certain_overlap(left: Iterable[str], right: Iterable[str]) -> list[str]:
+    """What two lists of pending gate entries are sure to share once their toolset builds, as entries.
+
+    Decided from the text alone, so a conflict between entries still waiting on a build fails startup
+    rather than refusing every later build of that toolset. A whole toolset (``T`` or ``T.*``) holds
+    whatever ``T.x`` names, and if ``x`` turns out not to exist, the ``T.x`` entry is dead and refuses
+    the build on its own, so the pair can never build cleanly either way. Two different tools of one
+    toolset are left alone: whether they collide is not something the text says.
+    """
+    shared: set[str] = set()
+    for one in left:
+        for other in right:
+            toolset, tool = (one.split(_GATE_SEPARATOR) + [_GATE_WILDCARD])[:2]
+            other_toolset, other_tool = (other.split(_GATE_SEPARATOR) + [_GATE_WILDCARD])[:2]
+            if toolset != other_toolset:
+                continue
+            if tool == _GATE_WILDCARD:
+                shared.add(toolset if other_tool == _GATE_WILDCARD else other)
+            elif other_tool == _GATE_WILDCARD or tool == other_tool:
+                shared.add(one)
+    return sorted(shared)
 
 
 def _resolve_gate_entry(entry: str, vocabulary: dict[str, set[str]], registry: Mapping[str, Toolset]) -> tuple:

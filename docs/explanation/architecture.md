@@ -555,7 +555,11 @@ and step 6 its *approval* axis:
    the hook sits in the one build every path shares, it holds whoever builds the toolset: a model's
    `load_tools`, a composed worker, or a rebuilt agent's preload. An entry that still matches nothing, or
    (with auto-approval enabled) a `review` list that now reaches the floor, raises there and refuses the
-   build, every time, so a misnamed gate fails closed. Both objects are swapped under one lock, since a
+   build, every time, so a misnamed gate fails closed. A conflict between pending entries that their text
+   alone settles (a whole toolset on one side, one of its tools or the same toolset on the other, or one
+   tool named on both) is refused at startup instead, by `agents.certain_overlap` from the same two
+   checks, `_refuse_overlap` and `_refuse_floor_reach`; the build-time check remains for an overlap
+   only the built names reveal. Both objects are swapped under one lock, since a
    deferred build runs in a worker thread. Whether an entry waits is decided in one place,
    `agents.built_toolsets`: every toolset a `build_tools` call has recorded, plus every skill the entry
    agent's `SkillAgent` holds (every skill when it declares `skills`, otherwise the skills it names). AIMU builds that skills server itself, so no build ever records

@@ -18,7 +18,7 @@ back is the one mistake whose symptom is the absence of a symptom.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -27,6 +27,7 @@ from kokua.config.schema import DEFAULT_POLICY_SOURCE
 from kokua.core.agents import (
     _resolve_gate_entry,
     built_toolsets,
+    certain_overlap,
     gateable_tools,
     pending_gate_entries,
     resolve_gate_entries,
@@ -116,7 +117,7 @@ def _with_built(policy: ApprovalPolicy, toolset: str, vocabulary: dict[str, set[
                 )
             resolved[key] |= names
             waiting[key].discard(entry)
-    _refuse_overlap(policy.source, resolved["confirm"], resolved["review"])
+    _refuse_overlap(policy.source, resolved["confirm"] & resolved["review"])
     return dataclasses.replace(
         policy,
         confirm=frozenset(resolved["confirm"]),
@@ -126,8 +127,9 @@ def _with_built(policy: ApprovalPolicy, toolset: str, vocabulary: dict[str, set[
     )
 
 
-def _refuse_overlap(source: str, confirm: set[str] | frozenset[str], review: set[str] | frozenset[str]) -> None:
-    both = set(confirm) & set(review)
+def _refuse_overlap(source: str, both: Iterable[str]) -> None:
+    """Refuse a pair whose halves share ``both``: tool names once resolved, or entries still pending."""
+    both = set(both)
     if both:
         raise ConfigError(
             f"{source} gates {', '.join(sorted(both))} in both confirm and review. "
@@ -184,7 +186,11 @@ def _resolve_pair(
         resolved[key] = resolve_gate_entries(
             entries, vocabulary, state.registry, setting=setting, effect=_GATE_EFFECT, remedy=_GATE_REMEDY
         )
-    _refuse_overlap(source, resolved["confirm"], resolved["review"])
+    _refuse_overlap(source, resolved["confirm"] & resolved["review"])
+    # Pending entries are checked too, by their text: a conflict certain to appear at the build would
+    # otherwise pass startup and then refuse every load of the toolset. `_with_built` still checks the
+    # built names, for an overlap no entry's text reveals.
+    _refuse_overlap(source, certain_overlap(pending["confirm"], pending["review"]))
     return ApprovalPolicy(
         agent=agent,
         source=source,

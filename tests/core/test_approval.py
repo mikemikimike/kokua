@@ -1080,9 +1080,66 @@ def test_a_misnamed_tool_entry_refuses_the_build(tmp_path):
 
 
 def test_a_built_tool_in_both_halves_is_refused(tmp_path):
-    _, _, policies = _deferred_setup(tmp_path, default_confirm=["mcp.add_mcp_server"], default_review=["mcp"])
+    """The backstop for an overlap no entry's text reveals: a review already holding the tool's name
+    through another toolset, while the confirm entry naming it waits on ``mcp``."""
+    import dataclasses
+
+    _, _, policies = _deferred_setup(tmp_path, default_confirm=["mcp.add_mcp_server"])
+    default = dataclasses.replace(policies.default, review=frozenset({"add_mcp_server"}))
+    policies = dataclasses.replace(policies, default=default)
     with pytest.raises(ConfigError, match="in both confirm and review"):
         policies.with_built("mcp", frozenset({"add_mcp_server"}))
+
+
+@pytest.mark.parametrize(
+    ("confirm", "review"),
+    [
+        ("mcp.add_mcp_server", "mcp"),
+        ("mcp.add_mcp_server", "mcp.*"),
+        ("mcp", "mcp.add_mcp_server"),
+        ("mcp.add_mcp_server", "mcp.add_mcp_server"),
+    ],
+)
+def test_pending_entries_certain_to_overlap_fail_startup(tmp_path, confirm, review):
+    """Decidable from the text alone: if the named tool exists, both halves hold it; if not, the tool
+    entry is dead and the build fails anyway. Either way waiting for the build only refuses every load."""
+    with pytest.raises(ConfigError, match=r"\[assistant\.tools\] gates mcp\.add_mcp_server in both confirm and review"):
+        _deferred_setup(tmp_path, default_confirm=[confirm], default_review=[review])
+
+
+def test_whole_toolset_entries_pending_in_both_halves_fail_startup(tmp_path):
+    with pytest.raises(ConfigError, match=r"gates mcp in both confirm and review"):
+        _deferred_setup(tmp_path, default_confirm=["mcp"], default_review=["mcp.*"])
+
+
+def test_a_declared_pairs_pending_overlap_fails_startup_naming_its_table(tmp_path):
+    from types import SimpleNamespace
+
+    from kokua.config.schema import AgentConfig
+    from kokua.core.approval import resolve_approval_policies
+    from kokua.registry.context import LiveState
+
+    agents = {
+        "assistant": AgentConfig(
+            available=["memory", "mcp"], resident=["memory"], confirm=["mcp"], review=["mcp.add_mcp_server"]
+        )
+    }
+    config = AssistantConfig(
+        data_dir=tmp_path, agents=agents, entry_agent="assistant", default_confirm=[], default_review=[]
+    )
+    state = LiveState(config=config, registry=build_registry(config))
+    state.tools_by_toolset = {"memory": {"remember"}}
+    with pytest.raises(ConfigError, match=r"\[agents\.assistant\.tools\] gates mcp\.add_mcp_server in both"):
+        resolve_approval_policies(config, state, SimpleNamespace(tools=[]))
+
+
+@pytest.mark.parametrize(
+    ("confirm", "review"),
+    [("mcp.add_mcp_server", "mcp.remove_mcp_server"), ("mcp.add_mcp_server", "compute"), ("mcp", "compute.*")],
+)
+def test_pending_entries_that_may_not_overlap_still_start(tmp_path, confirm, review):
+    _, _, policies = _deferred_setup(tmp_path, default_confirm=[confirm], default_review=[review])
+    assert policies.default.pending_confirm == frozenset({confirm})
 
 
 @pytest.mark.parametrize("entry", ["mcp", "mcp.*", "mcp.add_mcp_server"])

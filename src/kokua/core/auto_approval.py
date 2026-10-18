@@ -241,9 +241,21 @@ class AutoApproval:
         )
 
 
-def _refuse_floor_reach(policies: Sequence[ApprovalPolicy], floor: frozenset[str] | set[str]) -> None:
+def _refuse_floor_reach(
+    policies: Sequence[ApprovalPolicy],
+    floor: frozenset[str] | set[str],
+    pending_floor: frozenset[str] | set[str] = frozenset(),
+) -> None:
+    """Refuse any review list reaching the floor, by tool name and, for entries still pending, by text.
+
+    The text check is what lets startup refuse ``review = ["mcp"]`` against ``mcp.add_mcp_server`` while
+    ``mcp`` is still unbuilt, rather than every load of ``mcp`` refusing it later (see
+    :func:`~kokua.core.agents.certain_overlap`).
+    """
+    from kokua.core.agents import certain_overlap
+
     for policy in policies:
-        forbidden = sorted(policy.review & floor)
+        forbidden = sorted(policy.review & floor) + certain_overlap(policy.pending_review, pending_floor)
         if forbidden:
             raise ConfigError(
                 f"{policy.source}.review reaches {', '.join(forbidden)}, which "
@@ -344,7 +356,7 @@ def resolve_auto_approval(
         effect="hold nothing back",
         remedy="An entry matching no tool holds nothing back from a reviewer that can approve it.",
     )
-    _refuse_floor_reach(all_policies, floor)
+    _refuse_floor_reach(all_policies, floor, pending_floor)
     toolset_of = {
         tool: ",".join(sorted(name for name, provided in vocabulary.items() if tool in provided)) for tool in tools
     }

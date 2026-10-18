@@ -720,6 +720,9 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer
   one that then matches nothing refuses every build of that toolset, failing closed rather than letting
   it load ungated. With auto-approval enabled, `[security].never_auto_approve` entries for a deferred
   toolset wait the same way, and a build after which a policy's `review` reaches the floor is refused.
+  A conflict the pending entries' text already settles (`review = ["mcp"]` against the floor's
+  `mcp.add_mcp_server`, or one tool reached by both halves of a pair) fails startup instead of every
+  load.
   A skill the entry agent's `SkillAgent` holds (every skill when it declares `skills`, otherwise the skills it names) exists from the first turn, so a gate on
   it resolves at startup, even when a worker could also load that skill later. The shipped gate covers the same
   seven tools it did: `skills.add_skill_script` and `mcp.add_mcp_server` resolve when their toolset first

@@ -562,9 +562,11 @@ widen this very list, a waved `add_skill_script` writes a script that becomes a 
 call, and a waved `add_mcp_server` adds a whole source of tools. Reviewing the arguments of a call like
 that answers a question about one action, when what the call actually grants is a capability.
 
-Naming one of these in any policy's `review` list is a startup error saying so, and so is an entry
-here that matches no tool at all: a floor holding nothing back is the same silent gap a gate matching
-nothing is. Both checks run only when the gate is enabled, which is worth knowing, because it means a
+Naming one of these in any policy's `review` list, by the tool or by its whole toolset, is a startup
+error saying so, and so is an entry here that matches no tool at all: a floor holding nothing back is
+the same silent gap a gate matching nothing is. (An entry on a toolset nobody has built yet, such as
+`mcp.add_mcp_server` while `mcp` waits to be loaded, has only its shape checked at startup; a misnamed
+tool there refuses that toolset's build instead, which fails just as closed.) Both checks run only when the gate is enabled, which is worth knowing, because it means a
 typo in this list sits unreported until the day you switch the gate on (nothing reads the list before
 then, so there is nothing for it to fail to hold back). Startup-only, and locked by default under
 `security.*`, so only a hand-edit changes it. Emptying it is a hand-edit you may make, and what it buys

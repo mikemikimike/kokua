@@ -780,11 +780,74 @@ def test_a_malformed_floor_entry_for_a_deferred_toolset_still_fails_startup(tmp_
         resolve_auto_approval(config, state, entry_agent, policies)
 
 
-def test_building_a_toolset_whose_review_reaches_the_floor_is_refused(tmp_path):
+_CONFIRM_WITHOUT_MCP = [entry for entry in _CONFIRM_WITHOUT_RUN_COMMAND if entry != "mcp.add_mcp_server"]
+
+
+@pytest.mark.parametrize("entry", ["mcp", "mcp.*"])
+async def test_a_review_of_a_deferred_toolset_reaching_the_shipped_floor_fails_startup(tmp_path, entry):
+    """The shipped entry agent defers ``mcp`` and the shipped floor names ``mcp.add_mcp_server``, so a
+    whole-toolset review entry is certain to reach it once ``mcp`` builds. Waiting for that build would
+    refuse every load of ``mcp`` instead of the one startup the docs promise refuses."""
+    with pytest.raises(
+        ConfigError,
+        match=r"\[assistant\.tools\]\.review reaches mcp\.add_mcp_server, "
+        r"which \[security\]\.never_auto_approve holds back",
+    ):
+        await _resolve(tmp_path, default_confirm=_CONFIRM_WITHOUT_MCP, default_review=["compute.run_command", entry])
+
+
+def test_a_whole_toolset_floor_entry_reached_by_a_pending_tool_review_fails_startup(tmp_path):
+    with pytest.raises(ConfigError, match=r"review reaches mcp\.remove_mcp_server, which"):
+        _pending_auto_resolved(tmp_path, default_review=["mcp.remove_mcp_server"], never_auto_approve=["mcp"])
+
+
+def test_the_same_pending_tool_in_review_and_floor_fails_startup(tmp_path):
+    with pytest.raises(ConfigError, match=r"review reaches mcp\.add_mcp_server, which"):
+        _pending_auto_resolved(
+            tmp_path, default_review=["mcp.add_mcp_server"], never_auto_approve=["mcp.add_mcp_server"]
+        )
+
+
+async def test_a_review_of_another_tool_in_the_floors_deferred_toolset_still_starts(tmp_path):
+    auto = await _resolve(
+        tmp_path, default_confirm=_CONFIRM_WITHOUT_MCP, default_review=["compute.run_command", "mcp.remove_mcp_server"]
+    )
+    assert "mcp.add_mcp_server" in auto.pending_floor
+
+
+async def test_with_auto_approval_off_a_review_reaching_the_floor_still_starts(tmp_path):
+    """The floor bounds what a reviewer may approve, so with no reviewer it bounds nothing."""
+    resolved = await _resolve(
+        tmp_path,
+        auto_approval_enabled=False,
+        default_confirm=_CONFIRM_WITHOUT_MCP,
+        default_review=["compute.run_command", "mcp"],
+    )
+    assert resolved is None
+
+
+def _pending_auto_resolved(tmp_path, **overrides):
+    config, state, entry_agent, policies = _pending_auto(tmp_path, **overrides)
+    return resolve_auto_approval(config, state, entry_agent, policies)
+
+
+def _reaching_the_floor_only_once_built(tmp_path):
+    """A gate whose review reaches the floor only once ``mcp`` builds, which startup cannot see.
+
+    The text of ``review = ["mcp"]`` against ``mcp.add_mcp_server`` is refused at startup, so the
+    conflict here is the kind only a build can reveal: a review list naming the tool through another
+    toolset that provides the same name, which is resolved already while the floor entry waits.
+    """
     config, state, entry_agent, policies = _pending_auto(
-        tmp_path, default_review=["mcp"], never_auto_approve=["mcp.add_mcp_server"]
+        tmp_path, default_review=["mcp.remove_mcp_server"], never_auto_approve=["mcp.add_mcp_server"]
     )
     auto = resolve_auto_approval(config, state, entry_agent, policies)
+    default = dataclasses.replace(policies.default, review=policies.default.review | {"add_mcp_server"})
+    return dataclasses.replace(policies, default=default), auto
+
+
+def test_building_a_toolset_whose_review_reaches_the_floor_is_refused(tmp_path):
+    policies, auto = _reaching_the_floor_only_once_built(tmp_path)
     names = frozenset({"add_mcp_server", "remove_mcp_server"})
     with pytest.raises(
         ConfigError,
@@ -807,17 +870,14 @@ def test_building_a_toolset_that_misses_the_floor_resolves_it_and_labels_the_too
 
 
 async def test_a_refused_build_leaves_the_old_policies_and_auto_approval_in_place(tmp_path):
-    config, state, entry_agent, policies = _pending_auto(
-        tmp_path, default_review=["mcp"], never_auto_approve=["mcp.add_mcp_server"]
-    )
-    auto = resolve_auto_approval(config, state, entry_agent, policies)
+    policies, auto = _reaching_the_floor_only_once_built(tmp_path)
     assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
     try:
         await assistant.start()
         assistant._human.policies = policies
         assistant._human.auto_approval = auto
         with pytest.raises(ConfigError, match="never_auto_approve holds back"):
-            assistant._on_toolset_built("mcp", frozenset({"add_mcp_server"}))
+            assistant._on_toolset_built("mcp", frozenset({"add_mcp_server", "remove_mcp_server"}))
         assert assistant._human.policies is policies
         assert assistant._human.auto_approval is auto
     finally:

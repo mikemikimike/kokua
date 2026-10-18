@@ -158,6 +158,15 @@ refused too. In the shipped config this is how
 `skills.add_skill_script` and `mcp.add_mcp_server` are gated: both name toolsets the entry agent
 defers, and both resolve the first time their toolset is built.
 
+A conflict the entries' own text already settles does not wait for that build. `review = ["mcp"]`
+(or `"mcp.*"`) against the floor's `mcp.add_mcp_server`, or `mcp.add_mcp_server` in a pair's `confirm`
+with `mcp` in its `review`, fails startup with the same error a build would give: if the tool exists,
+both lists hold it; if it does not, the tool entry is dead and refuses the build anyway. Waiting would
+only turn one startup error into a refusal on every load of the toolset. Two different tools of one
+toolset (`mcp.add_mcp_server` against `mcp.remove_mcp_server`) say nothing about each other, so they
+wait, and the build-time check stays as the backstop for an overlap no text reveals, such as a review
+list that already holds the same tool name through another toolset.
+
 ### When an agent is rebuilt, it preloads
 
 A conversation's agent is rebuilt from the stored transcript more often than you might expect: on
