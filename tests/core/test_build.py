@@ -8,7 +8,8 @@ import pytest
 
 
 from kokua.config import MCPServerConfig
-from kokua.config.schema import AgentConfig, ReviewerConfig
+from kokua.config.schema import ALL_TOOLSETS, AgentConfig, ReviewerConfig
+from kokua.core.agents import build_registry, deferred_for, resident_for
 from kokua.core.assistant import Assistant
 from kokua.registry.context import LiveState
 from kokua.mcp.auth import OAuthSettings
@@ -333,7 +334,7 @@ def _without(*toolsets: str) -> dict[str, AgentConfig]:
 
 def test_shipped_entry_agent_resident_set(tmp_path):
     config = _config(tmp_path)
-    assert config.resident_for("assistant") == [
+    assert resident_for(config, build_registry(config), "assistant") == [
         "memory",
         "config",
         "conversations",
@@ -342,7 +343,13 @@ def test_shipped_entry_agent_resident_set(tmp_path):
         "time",
         "messaging",
     ]
-    assert config.deferred_for("assistant") == ["documents", "skills", "mcp", "scheduling", "benchmark"]
+    assert deferred_for(config, build_registry(config), "assistant") == [
+        "documents",
+        "skills",
+        "mcp",
+        "scheduling",
+        "benchmark",
+    ]
 
 
 async def test_entry_agent_toolset_is_exactly_the_documented_inventory(tmp_path):
@@ -369,7 +376,7 @@ async def test_entry_agent_toolset_is_exactly_the_documented_inventory(tmp_path)
 
 async def test_loading_every_deferred_toolset_completes_the_documented_inventory(tmp_path):
     assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
-    for toolset in assistant._config.deferred_for("assistant"):
+    for toolset in deferred_for(assistant._config, assistant._state.registry, "assistant"):
         assert (await assistant._agent.load_tool_group(toolset)).startswith(f"Loaded '{toolset}':")
     names = {fn.__name__ for fn in assistant._agent._effective_tools(None)}
     assert names == _expected(ENTRY_AGENT_TOOLS, STORE_TOOLS) | LOADER_TOOLS
@@ -382,9 +389,9 @@ async def test_undeclaring_the_store_toolsets_drops_exactly_their_tools(tmp_path
     config = _config(tmp_path, agents=_without("memory", "documents"))
     assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
     # Undeclared, not merely deferred: `documents` is in neither list, so no load can bring it back.
-    assert "documents" not in assistant._config.resident_for("assistant")
-    assert "documents" not in assistant._config.deferred_for("assistant")
-    for toolset in assistant._config.deferred_for("assistant"):
+    assert "documents" not in resident_for(assistant._config, assistant._state.registry, "assistant")
+    assert "documents" not in deferred_for(assistant._config, assistant._state.registry, "assistant")
+    for toolset in deferred_for(assistant._config, assistant._state.registry, "assistant"):
         await assistant._agent.load_tool_group(toolset)
     names = {fn.__name__ for fn in assistant._agent._effective_tools(None)}
     inventory = {**ENTRY_AGENT_TOOLS, **STORE_TOOLS}
@@ -1713,3 +1720,71 @@ def test_loaded_toolsets_in_strips_the_name_as_the_load_does():
     from kokua.core.build import loaded_toolsets_in
 
     assert loaded_toolsets_in(_load_exchange(" web ")) == ["web"]
+
+
+# --- available = "all": the expansion is what every agent is built from --------------------------------
+
+
+def _write_digest_skill(config) -> None:
+    skill = config.skills_dir / "weekly-digest"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\nname: weekly-digest\ndescription: Digest the week.\n---\n\nDo the thing.\n", encoding="utf-8"
+    )
+
+
+def _all_worker_config(tmp_path, **explorer):
+    agents = {
+        "assistant": AgentConfig(available=["time"], delegates_to=["explorer"]),
+        "explorer": AgentConfig(description="Explores.", available=ALL_TOOLSETS, resident=["time"], **explorer),
+    }
+    config = _config(tmp_path, agents=agents, default_confirm=[], default_review=[])
+    _write_digest_skill(config)
+    return config
+
+
+async def test_an_all_worker_spec_holds_its_resident_tools_and_loads_the_rest(tmp_path):
+    from aimu import aio
+
+    from kokua.core.agents import available_for
+
+    config = _all_worker_config(tmp_path)
+    spec = _specs(config)["explorer"]
+    expanded = available_for(config, build_registry(config), "explorer")
+
+    assert [fn.__name__ for fn in spec["tools"]] == ["get_current_date_and_time", "convert_time"]
+    groups = spec["tool_groups"]
+    assert [group.name for group in groups] == ["time", *[name for name in expanded if name != "time"]]
+    assert groups[0].resident and not any(group.resident for group in groups[1:])
+    assert "skills" not in [group.name for group in groups]
+    worker = aio.Agent(MockAsyncModelClient([]), tools=spec["tools"], tool_groups=groups)
+    assert {"get_current_date_and_time", "convert_time"} | LOADER_TOOLS == {
+        fn.__name__ for fn in worker._effective_tools(None)
+    }
+
+
+async def test_an_all_entry_agent_holds_skills_and_lists_no_skill_twice(tmp_path):
+    from kokua.core.build import entry_agent_system_message
+
+    agents = {"assistant": AgentConfig(available=ALL_TOOLSETS, resident=["time", "skills"])}
+    config = _config(tmp_path, agents=agents, default_confirm=[], default_review=[])
+    _write_digest_skill(config)
+    agent, state = _wired(config)
+
+    names_line = entry_agent_system_message(config, state).split("Also available, load before use:")[1]
+    assert "weekly-digest" not in names_line
+    assert "author_skill" in _tool_names(agent)
+    assert state.skill_manager is state.all_skills
+
+
+async def test_all_grants_no_core_tool_and_never_reads_as_lean(tmp_path):
+    from kokua.core.agents import DELEGATION_GUIDANCE, LEAN_DELEGATION_GUIDANCE
+
+    alone = _specs(_all_worker_config(tmp_path / "alone"))["explorer"]
+    assert "spawn_subagent" not in [fn.__name__ for fn in alone["tools"]]
+
+    config = _all_worker_config(tmp_path / "delegating", delegates_to=["helper"])
+    config.agents["helper"] = AgentConfig(description="Helps.", available=["time"])
+    message = _specs(config)["explorer"]["system_message"]
+    assert DELEGATION_GUIDANCE in message
+    assert LEAN_DELEGATION_GUIDANCE not in message

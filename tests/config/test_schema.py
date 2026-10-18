@@ -151,20 +151,6 @@ def test_approval_entries_for_a_declared_agent_and_the_default():
     assert config.approval_entries_for("composed:x") == (["fs_write"], ["compute.run_command"], "[assistant.tools]")
 
 
-def test_resident_absent_means_everything_resident():
-    config = AssistantConfig(agents={"a": AgentConfig(available=["memory", "web"])})
-    assert config.resident_for("a") == ["memory", "web"]
-    assert config.deferred_for("a") == []
-
-
-def test_resident_order_never_reorders_tools():
-    config = AssistantConfig(
-        agents={"a": AgentConfig(available=["memory", "web", "time"], resident=["time", "memory"])}
-    )
-    assert config.resident_for("a") == ["memory", "time"]
-    assert config.deferred_for("a") == ["web"]
-
-
 def test_the_sentinel_refuses_iteration():
     with pytest.raises(TypeError, match="available_for"):
         list(ALL_TOOLSETS)
@@ -172,3 +158,13 @@ def test_the_sentinel_refuses_iteration():
 
 def test_the_sentinel_reprs_as_all():
     assert repr(ALL_TOOLSETS) == "all"
+
+
+def test_copying_or_pickling_a_config_keeps_the_sentinel_identical():
+    import copy
+    import pickle
+
+    agent = AgentConfig(available=ALL_TOOLSETS, resident=["time"])
+    assert copy.copy(agent).available is ALL_TOOLSETS
+    assert copy.deepcopy(agent).available is ALL_TOOLSETS
+    assert pickle.loads(pickle.dumps(agent)).available is ALL_TOOLSETS

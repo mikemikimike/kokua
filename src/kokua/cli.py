@@ -38,7 +38,7 @@ from kokua.config.store import disambiguate_name, name_from_url
 
 # Safe at module level, unlike kokua.core.agents below: `from . import plugins` above already imports
 # kokua.toolsets, and registry.py itself imports no AIMU surface the preflight checks.
-from kokua.registry.registry import ToolsetError
+from kokua.registry.registry import ToolsetError, ToolsetRegistry
 from .logging_setup import configure_logging
 
 
@@ -372,7 +372,7 @@ def _print_toolsets(config: AssistantConfig) -> None:
         print()
 
 
-def format_agent_access(config: AssistantConfig) -> list[str]:
+def format_agent_access(config: AssistantConfig, registry: ToolsetRegistry) -> list[str]:
     """The lines ``kokua agents`` prints: per agent, what it may use, what is in context, what asks first.
 
     Reads declarations only. Nothing is built, so this runs with the model server down and shows what the
@@ -380,13 +380,18 @@ def format_agent_access(config: AssistantConfig) -> list[str]:
     available toolset from its first turn, and the line says that instead of repeating the list.
     """
 
+    # Deferred for the reason `_print_toolsets` defers its import.
+    from kokua.core.agents import resident_for
+
     def entries(names: list[str]) -> str:
         return ", ".join(names) if names else "(none)"
 
     lines: list[str] = []
     for name, agent in config.agents.items():
         confirm, review, source = config.approval_entries_for(name)
-        resident = entries(config.resident_for(name)) if agent.resident is not None else "every available toolset"
+        resident = (
+            entries(resident_for(config, registry, name)) if agent.resident is not None else "every available toolset"
+        )
         lines += [
             name,
             f"  available: {entries(agent.available)}",
@@ -400,15 +405,18 @@ def format_agent_access(config: AssistantConfig) -> list[str]:
     return lines
 
 
-def access_summary_lines(config: AssistantConfig) -> list[str]:
+def access_summary_lines(config: AssistantConfig, registry: ToolsetRegistry) -> list[str]:
     """One line per declared agent, in entries rather than resolved tool names.
 
     Runs at startup before anything is built, so it can only count what the config declares.
     """
+    # Deferred for the reason `_print_toolsets` defers its import.
+    from kokua.core.agents import resident_for
+
     lines = []
     for name, agent in config.agents.items():
         confirm, review, source = config.approval_entries_for(name)
-        available, resident = len(agent.available), len(config.resident_for(name))
+        available, resident = len(agent.available), len(resident_for(config, registry, name))
         line = f"{name}: {available} available, {resident} resident, {len(confirm)} confirm, {len(review)} review"
         line += f" (from {source})"
         lines.append(line)
@@ -416,8 +424,18 @@ def access_summary_lines(config: AssistantConfig) -> list[str]:
 
 
 def print_access_summary(config: AssistantConfig) -> None:
-    """Write the summary to stderr, so a front end's stdout (and a piped ``kokua``) stays clean."""
-    for line in access_summary_lines(config):
+    """Write the summary to stderr, so a front end's stdout (and a piped ``kokua``) stays clean.
+
+    Prints nothing when the registry will not assemble (two toolsets claiming one name): startup reports
+    that error itself a moment later, where the front end catches it.
+    """
+    from kokua.core.agents import build_registry
+
+    try:
+        registry = build_registry(config)
+    except ToolsetError:
+        return
+    for line in access_summary_lines(config, registry):
         print(line, file=sys.stderr)
 
 
@@ -427,11 +445,12 @@ def _print_agents(config: AssistantConfig) -> None:
     from kokua.core.agents import build_registry, validate_agents
 
     try:
-        validate_agents(config, build_registry(config))
+        registry = build_registry(config)
+        validate_agents(config, registry)
     except (ConfigError, ToolsetError) as e:
         print(e, file=sys.stderr)
         raise SystemExit(2) from None
-    print("\n".join(format_agent_access(config)))
+    print("\n".join(format_agent_access(config, registry)))
 
 
 def _resolve_export_session(args: argparse.Namespace, config: AssistantConfig) -> tuple[Optional[Session], int]:

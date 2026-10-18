@@ -325,15 +325,21 @@ _AGENT_TOOLS_KEYS = ("available", "confirm", "review", "resident")
 def check_resident_within_available(
     name: str, resident: Optional[list[str]], available: Union[list[str], AllToolsets]
 ) -> None:
-    """Refuse a ``resident`` entry that ``available`` does not hold.
+    """Refuse a ``resident`` entry that ``available`` does not hold, and ``available = "all"`` with no
+    ``resident`` at all.
 
-    Shared by the file parser and ``update_config``'s dry run, which builds its candidate without going
-    through the parser, so both orderings (a bad resident write, and an available write that strands an
-    existing resident) get the same refusal instead of a file the next startup rejects. An
-    ``available = "all"`` declaration is not checked here: config cannot see the registry that says
-    what "all" holds, so that check happens where the expansion does.
+    Shared by the file parser, ``update_config``'s dry run, and ``core.agents.validate_agents``, since the
+    last two see configs built without the parser, so both orderings (a bad resident write, and an
+    available write that strands an existing resident) get the same refusal instead of a file the next
+    startup rejects. Which names an ``available = "all"`` declaration holds is not checked here: config
+    cannot see the registry that says what "all" holds, so that check happens where the expansion does.
     """
     if available is ALL_TOOLSETS:
+        if resident is None:
+            raise ConfigError(
+                f'[agents.{name}.tools].available = "all" needs a resident list: with every installed toolset '
+                "available, resident says which ones are in the agent's tools from its first turn."
+            )
         return
     for entry in resident or []:
         if entry not in available:
@@ -341,6 +347,27 @@ def check_resident_within_available(
                 f"[agents.{name}.tools].resident names {entry!r}, which is not in available. A resident "
                 "toolset is one this agent already holds; add it to available or drop it here."
             )
+
+
+def _available_shape_error(section: str) -> ConfigError:
+    return ConfigError(
+        f'[{section}].available must be a list of toolset names, or the string "all" (lowercase, '
+        "not in a list) for every installed toolset."
+    )
+
+
+def _available_value(section: str, key: str, value: list) -> Union[list[str], str]:
+    """An ``update_config`` write to ``available``: a list of names, or the string ``"all"``.
+
+    The tool hands every value over as a string and a list key splits it on commas, so ``"all"`` arrives
+    as ``["all"]`` and is read back as the string it was written as. ``"all"`` beside other names is the
+    near-miss the file parser refuses, and it is refused here in the same words.
+    """
+    if value == ["all"]:
+        return "all"
+    if "all" in value:
+        raise _available_shape_error(section)
+    return _str_list(section, key, value)
 
 
 def _parse_agent_tools(name: str, value: Any) -> dict:
@@ -365,17 +392,8 @@ def _parse_agent_tools(name: str, value: Any) -> dict:
     section = f"agents.{name}.tools"
     fields: dict = {}
     declared_available = value["available"]
-    if declared_available == "all":
-        if "resident" not in value:
-            raise ConfigError(
-                f'[{section}].available = "all" needs a resident list: with every installed toolset '
-                "available, resident says which ones are in the agent's tools from its first turn."
-            )
-    elif not isinstance(declared_available, list) or "all" in declared_available:
-        raise ConfigError(
-            f'[{section}].available must be a list of toolset names, or the string "all" (lowercase, '
-            "not in a list) for every installed toolset."
-        )
+    if declared_available != "all" and (not isinstance(declared_available, list) or "all" in declared_available):
+        raise _available_shape_error(section)
     for key in _AGENT_TOOLS_KEYS:
         if key == "available" and declared_available == "all":
             fields[key] = ALL_TOOLSETS
@@ -712,7 +730,12 @@ AGENT_SCHEMA: dict[tuple[str, str], tuple] = {
     ("agents.*", "thinking"): ("thinking", (bool, str), "true, false, or low/medium/high", _thinking),
     ("agents.*", "delegates_to"): ("delegates_to", (list,), "a list of strings", _str_list),
     ("agents.*", "max_iterations"): ("max_iterations", (int,), "an integer >= 1", _positive_int),
-    **{("agents.*.tools", key): (key, (list,), "a list of strings", _str_list) for key in _AGENT_TOOLS_KEYS},
+    **{
+        ("agents.*.tools", key): (key, (list,), "a list of strings", _str_list)
+        for key in _AGENT_TOOLS_KEYS
+        if key != "available"
+    },
+    ("agents.*.tools", "available"): ("available", (list,), 'a list of strings, or "all"', _available_value),
     **{
         ("agents.*.generation", key): ("generation", types, label, _generation_value)
         for key, (types, label, _) in _GENERATION_KEYS.items()

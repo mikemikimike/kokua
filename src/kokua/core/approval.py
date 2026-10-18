@@ -26,8 +26,10 @@ from kokua.config import ConfigError
 from kokua.config.schema import DEFAULT_POLICY_SOURCE
 from kokua.core.agents import (
     _resolve_gate_entry,
+    available_for,
     built_toolsets,
     certain_overlap,
+    deferred_for,
     gateable_tools,
     pending_gate_entries,
     resolve_gate_entries,
@@ -145,7 +147,7 @@ def _vocabulary_for(
     The entry agent also reaches every skill's toolset, because its ``SkillAgent`` holds every skill
     whether or not it declares one.
     """
-    reachable = set(config.agents[name].available) | {RESERVED_GATE_NAMESPACE}
+    reachable = set(available_for(config, state.registry, name)) | {RESERVED_GATE_NAMESPACE}
     if name == config.entry_agent:
         reachable |= {skill.name for skill in state.skill_manager.skills.values()}
     return {toolset: tools for toolset, tools in full.items() if toolset in reachable}
@@ -210,7 +212,7 @@ def resolve_approval_policies(config: AssistantConfig, state: LiveState, entry_a
     the agent does not hold.
     """
     full = gateable_tools(state, entry_agent)
-    any_deferred = {toolset for name in config.agents for toolset in config.deferred_for(name)}
+    any_deferred = {toolset for name in config.agents for toolset in deferred_for(config, state.registry, name)}
     default = _resolve_pair(
         DEFAULT_POLICY, DEFAULT_POLICY, config.default_confirm, config.default_review, full, full, state, any_deferred
     )
@@ -221,6 +223,6 @@ def resolve_approval_policies(config: AssistantConfig, state: LiveState, entry_a
         confirm, review, source = config.approval_entries_for(name)
         vocabulary = _vocabulary_for(name, config, state, full)
         by_agent[name] = _resolve_pair(
-            name, source, confirm, review, vocabulary, full, state, set(config.deferred_for(name))
+            name, source, confirm, review, vocabulary, full, state, set(deferred_for(config, state.registry, name))
         )
     return ApprovalPolicies(by_agent=by_agent, default=default)

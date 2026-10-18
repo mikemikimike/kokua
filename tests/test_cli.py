@@ -564,6 +564,7 @@ def _write_example_config(monkeypatch, tmp_path, transform=lambda text: text):
 
 def test_summary_line_per_agent():
     from kokua.cli import access_summary_lines
+    from kokua.registry.registry import register
     from kokua.config.schema import AgentConfig
 
     config = _config(
@@ -576,7 +577,7 @@ def test_summary_line_per_agent():
         default_review=["p", "q", "r"],
     )
 
-    assert access_summary_lines(config) == [
+    assert access_summary_lines(config, register([])) == [
         "assistant: 12 available, 7 resident, 3 confirm, 3 review (from [assistant.tools])",
         "coder: 5 available, 5 resident, 1 confirm, 0 review (from [agents.coder.tools])",
     ]

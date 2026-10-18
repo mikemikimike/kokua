@@ -339,7 +339,7 @@ class Assistant:
         await reconnect_mcp_servers(
             state.for_each_agent, state.connections, config, notify=state.notify, oauth=state.oauth
         )
-        for name in configured_but_undeclared(config):
+        for name in configured_but_undeclared(config, state.registry):
             logger.warning(
                 "config.toml has a [%s] section, but no agent declares the %r toolset, so its settings are "
                 "read only if a composed worker builds it, and any command it offers does not exist. "

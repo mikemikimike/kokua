@@ -837,6 +837,37 @@ async def test_a_worker_deferring_a_skill_the_entry_agent_holds_does_not_park_it
         assistant._state.close()
 
 
+async def test_approval_entries_resolve_against_the_expansion(tmp_path):
+    """An "all" worker reaches every toolset it could load, so its own entry on a deferred one is
+    pending rather than refused as out of reach, and resolves when the worker builds it."""
+    from kokua.config.schema import ALL_TOOLSETS
+    from kokua.registry.context import ToolsetContext
+    from kokua.registry.registry import build_tools
+
+    agents = {
+        "assistant": AgentConfig(available=["time"], delegates_to=["explorer"]),
+        "explorer": AgentConfig(
+            description="Explores.",
+            available=ALL_TOOLSETS,
+            resident=["time"],
+            confirm=["compute.run_command"],
+            review=[],
+        ),
+    }
+    config = _config(tmp_path, agents=agents, default_confirm=[], default_review=[])
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        await assistant.start()
+        state = assistant._state
+        assert assistant._human.policies.by_agent["explorer"].pending_confirm == {"compute.run_command"}
+        build_tools([state.registry["compute"]], ToolsetContext(state=state, agent=None, agent_name="explorer"))
+        explorer = assistant._human.policies.by_agent["explorer"]
+        assert explorer.pending_confirm == frozenset()
+        assert explorer.confirm == {"run_command"}
+    finally:
+        assistant._state.close()
+
+
 async def test_a_workers_own_pair_on_a_skill_it_defers_waits_for_its_build(tmp_path):
     """Nothing holds the skill at startup here (the entry agent neither names it nor authors skills), so
     the worker's own entry waits, and resolves when the worker's build of the skill reports its tools."""

@@ -122,13 +122,13 @@ def entry_agent_system_message(config: AssistantConfig, state: LiveState) -> str
     drifting apart.
     """
     name = config.entry_agent
-    from kokua.core.agents import split_by_residency, without_skill_names
+    from kokua.core.agents import available_for, split_by_residency, without_skill_names
 
     # Skills are held back exactly as `wire_agent` holds them back: the entry agent is a SkillAgent, which
     # already advertises them, so naming them here would offer to load what is not a toolset to load.
-    resolvable = without_skill_names(config.agents[name].available, state.registry)
+    resolvable = without_skill_names(available_for(config, state.registry, name), state.registry)
     toolsets = select(resolvable, state.registry, agent=name, entry_point=name)
-    resident, deferred = split_by_residency(config, name, toolsets)
+    resident, deferred = split_by_residency(config, state.registry, name, toolsets)
     return resolve_system_message(config, name, resident, deferred)
 
 
@@ -185,11 +185,11 @@ def wire_agent(
     """
     # Imported here, not at module level: see the comment in resolve_system_message -- the same cycle
     # runs through kokua.core.agents.
-    from kokua.core.agents import split_by_residency, without_skill_names
+    from kokua.core.agents import available_for, split_by_residency, without_skill_names
 
-    resolvable = without_skill_names(config.agents[agent_name].available, state.registry)
+    resolvable = without_skill_names(available_for(config, state.registry, agent_name), state.registry)
     toolsets = select(resolvable, state.registry, agent=agent_name, entry_point=config.entry_agent)
-    resident, deferred = split_by_residency(config, agent_name, toolsets)
+    resident, deferred = split_by_residency(config, state.registry, agent_name, toolsets)
     resolved_client = client
     if resolved_client is None:
         resolved_client = build_model_client(

@@ -26,7 +26,7 @@ from aimu.tools import tool
 
 from kokua.config import file as settings
 from kokua.config import store as config_store
-from kokua.config.schema import AgentConfig
+from kokua.config.schema import ALL_TOOLSETS, AgentConfig
 from kokua.config.settings_sources import startup_schema
 from kokua.registry.registry import Toolset
 
@@ -181,7 +181,8 @@ def _validated_agent_write(config, registry, table) -> Callable[[str, str, Any],
             entry_agent = persisted.get("entry_agent", config.entry_agent)
             candidate.mcp_servers = persisted.get("mcp_servers", config.mcp_servers)
         agent = baseline.get(name, AgentConfig())
-        changes = {key: value}
+        # The file gets the string; the candidate gets what the parser would read it back as.
+        changes = {key: ALL_TOOLSETS if key == "available" and value == "all" else value}
         # The approval pair is declared whole (see _parse_agent_tools): writing one list of it leaves the
         # other `[]` on the next load, so the dry run must see the same agent, not a half-declared one.
         for pair_key in ("confirm", "review"):

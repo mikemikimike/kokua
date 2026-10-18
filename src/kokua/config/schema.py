@@ -57,6 +57,17 @@ class AllToolsets:
     def __repr__(self) -> str:
         return "all"
 
+    # Copying or pickling a config must hand back this same instance, since every reader asks
+    # `is ALL_TOOLSETS`.
+    def __copy__(self) -> AllToolsets:
+        return self
+
+    def __deepcopy__(self, memo: dict) -> AllToolsets:
+        return self
+
+    def __reduce__(self) -> str:
+        return "ALL_TOOLSETS"
+
 
 ALL_TOOLSETS = AllToolsets()
 
@@ -97,7 +108,8 @@ class AgentConfig:
     confirm: Optional[list[str]] = None
     review: Optional[list[str]] = None
     # The subset of `available` whose tool schemas are sent from the first turn. None means every
-    # available toolset is resident; the parser guarantees a declared list is within `available`.
+    # available toolset is resident. The parser checks a declared list against a declared `available`
+    # list; against "all", which only the registry can expand, `core.agents.validate_agents` checks it.
     resident: Optional[list[str]] = None
     delegates_to: list[str] = field(default_factory=list)
     # This agent's tool-loop cap, overriding [assistant].max_iterations for it alone (see
@@ -405,28 +417,6 @@ class AssistantConfig:
         if agent is not None and agent.confirm is not None and agent.review is not None:
             return agent.confirm, agent.review, f"[agents.{agent_name}.tools]"
         return self.default_confirm, self.default_review, DEFAULT_POLICY_SOURCE
-
-    def resident_for(self, agent_name: str) -> list[str]:
-        """The toolsets ``agent_name`` holds from its first turn: its declared ``resident`` list, else all
-        of ``available``.
-
-        Always in ``available`` order, by filtering ``available`` rather than returning the declared list,
-        so the order a user wrote ``resident`` in never changes the order tools are presented in.
-        """
-        agent = self.agents.get(agent_name)
-        if agent is None:
-            return []
-        if agent.resident is None:
-            return list(agent.available)
-        return [entry for entry in agent.available if entry in agent.resident]
-
-    def deferred_for(self, agent_name: str) -> list[str]:
-        """The toolsets ``agent_name`` can load but does not hold yet: ``available`` minus resident, in order."""
-        agent = self.agents.get(agent_name)
-        if agent is None:
-            return []
-        resident = set(self.resident_for(agent_name))
-        return [entry for entry in agent.available if entry not in resident]
 
     def generation_for(self, agent_name: str) -> dict:
         """The generation parameters ``agent_name`` runs with: ``[assistant.generation]``, per-key

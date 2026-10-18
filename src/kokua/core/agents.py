@@ -1,7 +1,9 @@
 """Assembling the registry from every provider, and resolving one agent's declared names.
 
-Provider order fixes which label a collision message blames first and is otherwise arbitrary: a
-collision is an error, not a precedence rule, so nothing here depends on one provider winning.
+Registration order fixes which label a collision message blames first and is otherwise arbitrary: a
+collision is an error, not a precedence rule, so no registered toolset ever loses to another by name.
+Tool names are a different matter (``build_tools`` keeps the first of two same-named tools), which is
+why ``available = "all"`` expands in :data:`TRUST_ORDER` rather than in registration order.
 """
 
 from __future__ import annotations
@@ -14,8 +16,8 @@ from aimu import trim_messages
 from aimu.aio.tools.builtin import SubagentObserver, make_async_subagent_tool
 from aimu.tools.groups import CORE_TOOL_NAMES
 
-from kokua.config.file import ConfigError
-from kokua.config.schema import DEFAULT_SYSTEM_MESSAGE, AssistantConfig
+from kokua.config.file import ConfigError, check_resident_within_available
+from kokua.config.schema import ALL_TOOLSETS, DEFAULT_SYSTEM_MESSAGE, AssistantConfig
 from kokua.core import conversation_commands
 from kokua.core.messaging import EVERYONE, USER, WORKER_SOURCE
 from kokua.core.metrics import record_event
@@ -27,6 +29,7 @@ from kokua.registry.registry import (
     ToolsetError,
     ToolsetRegistry,
     build_tools,
+    entry_point_only_reason,
     register,
     select,
     workflows_of,
@@ -36,15 +39,20 @@ from kokua.workflows import Workflow
 
 # Provider labels `build_registry` hands to `register`. These are what `--list-toolsets` groups by, and
 # what a collision message names, so they are the words a user reads rather than an internal taxonomy.
-# One of them still decides behavior: `_SKILL_PROVIDER` is how `without_skill_names` tells a skill's
-# registry entry from every other kind, which is a question no name inspection could answer. The rest
-# are presentational, which is why nothing here computes a set of them any more: the startup warning
-# about a provisioned-but-unnamed toolset is gone, since a toolset nobody declares costs nothing at
-# runtime, and warning about one on every start taught people to ignore the log.
+# They decide behavior in two places, each a question no name inspection could answer:
+# `without_skill_names` tells a skill's registry entry from every other kind by `_SKILL_PROVIDER`, and
+# `available_for` orders an "all" declaration by `TRUST_ORDER`.
 _BUILTIN_PLUGIN_PROVIDER = "built-in toolset"
 _PLUGIN_PROVIDER = "plugin"
 _MCP_PROVIDER = "MCP server"
 _SKILL_PROVIDER = "skill"
+
+#: The order ``available = "all"`` lists toolsets in, most trusted first. It matters because
+#: ``build_tools`` keeps the first of two same-named tools: registration order would put MCP servers
+#: first and let a remote server's ``read_file`` shadow the ``fs`` toolset's. Kokua's own code comes
+#: first, then a third party's installed code, then skills (prose and scripts a person approved), then
+#: MCP servers, whose tools and descriptions are whatever a remote host sends.
+TRUST_ORDER: tuple[str, ...] = (_BUILTIN_PLUGIN_PROVIDER, _PLUGIN_PROVIDER, _SKILL_PROVIDER, _MCP_PROVIDER)
 
 
 def _server_tools(url: str, state: LiveState) -> list:
@@ -111,16 +119,67 @@ def without_skill_names(names: Sequence[str], registry: ToolsetRegistry) -> list
     return [name for name in names if registry.providers.get(name) != _SKILL_PROVIDER]
 
 
+def available_for(config: AssistantConfig, registry: ToolsetRegistry, agent_name: str) -> list[str]:
+    """The toolset names ``agent_name`` may use: its declared list as written, or ``"all"`` expanded.
+
+    ``"all"`` is every registered toolset in :data:`TRUST_ORDER`, registration order kept within one
+    provider, so where two toolsets offer one tool name the more trusted one's tool is the one an agent
+    gets. An ``entry_point_only`` toolset is left out on any agent but the entry agent, rather than listed
+    and then refused by validation for a name the declaration never wrote. A provider label outside
+    ``TRUST_ORDER`` ranks last; only a registry assembled by hand, as a test does, can carry one.
+
+    Every reader of an agent's availability goes through this, because the declaration alone cannot be
+    iterated: ``ALL_TOOLSETS`` raises rather than pretending to be a list.
+    """
+    declared = config.agents[agent_name].available
+    if declared is not ALL_TOOLSETS:
+        return list(declared)
+
+    def rank(name: str) -> int:
+        provider = registry.providers.get(name)
+        return TRUST_ORDER.index(provider) if provider in TRUST_ORDER else len(TRUST_ORDER)
+
+    is_entry = agent_name == config.entry_agent
+    return sorted(
+        (name for name, toolset in registry.items() if is_entry or not toolset.entry_point_only),
+        key=rank,
+    )
+
+
+def resident_for(config: AssistantConfig, registry: ToolsetRegistry, agent_name: str) -> list[str]:
+    """The toolsets ``agent_name`` holds from its first turn: its declared ``resident`` list, else all of
+    its availability.
+
+    Always in availability order, by filtering :func:`available_for` rather than returning the declared
+    list, so the order a user wrote ``resident`` in never changes the order tools are presented in.
+    """
+    agent = config.agents.get(agent_name)
+    if agent is None:
+        return []
+    available = available_for(config, registry, agent_name)
+    if agent.resident is None:
+        return available
+    return [entry for entry in available if entry in agent.resident]
+
+
+def deferred_for(config: AssistantConfig, registry: ToolsetRegistry, agent_name: str) -> list[str]:
+    """The toolsets ``agent_name`` can load but does not hold yet: its availability minus resident, in order."""
+    if agent_name not in config.agents:
+        return []
+    resident = set(resident_for(config, registry, agent_name))
+    return [entry for entry in available_for(config, registry, agent_name) if entry not in resident]
+
+
 def loadable_toolsets(config: AssistantConfig, registry: ToolsetRegistry, agent_name: str) -> list[str]:
     """The toolsets ``agent_name`` loads on demand, divided exactly as wiring divides them.
 
-    ``AssistantConfig.deferred_for`` reads the declaration alone, so it counts a skill the entry agent
-    names outside ``resident``. Wiring does not: the entry agent is a ``SkillAgent`` that already holds
-    every skill, so ``wire_agent`` holds skill names back before the residency split. This is what
-    decides whether an agent carries the loader tools at all. Whether an approval entry waits for a
-    build is a different question, answered by :func:`built_toolsets`.
+    :func:`deferred_for` counts a skill the entry agent names outside ``resident``. Wiring does not: the
+    entry agent is a ``SkillAgent`` that already holds every skill, so ``wire_agent`` holds skill names
+    back before the residency split. This is what decides whether an agent carries the loader tools at
+    all. Whether an approval entry waits for a build is a different question, answered by
+    :func:`built_toolsets`.
     """
-    deferred = config.deferred_for(agent_name)
+    deferred = deferred_for(config, registry, agent_name)
     if agent_name == config.entry_agent:
         return without_skill_names(deferred, registry)
     return deferred
@@ -173,7 +232,7 @@ RESERVED_AGENT_NAMES = frozenset({USER, EVERYONE})
 RESERVED_GATE_NAME_CHARACTERS = (":", "[")
 
 
-def validate_agents(config: AssistantConfig, registry: Mapping[str, Toolset]) -> None:
+def validate_agents(config: AssistantConfig, registry: ToolsetRegistry) -> None:
     """Reject a config whose agents cannot be built, before anything is built.
 
     Acyclicity is not a style rule. An agent's delegate is constructed by recursing into its targets'
@@ -207,8 +266,10 @@ def validate_agents(config: AssistantConfig, registry: Mapping[str, Toolset]) ->
                 f"the address a message is sent to, and {name!r} already means something there: "
                 f"{USER!r} is the user's own address and {EVERYONE!r} reaches every run. Rename the agent."
             )
+        if agent.available is ALL_TOOLSETS:
+            _check_resident_within_all(config, registry, name)
         try:
-            select(agent.available, registry, agent=name, entry_point=config.entry_agent)
+            select(available_for(config, registry, name), registry, agent=name, entry_point=config.entry_agent)
         except ToolsetError as e:
             raise ConfigError(str(e)) from e
         _check_model(f"agents.{name}", agent.model)
@@ -217,6 +278,35 @@ def validate_agents(config: AssistantConfig, registry: Mapping[str, Toolset]) ->
                 known = ", ".join(sorted(config.agents))
                 raise ConfigError(f"agent {name!r} delegates to unknown agent {target!r}. Configured agents: {known}.")
     _reject_cycles(config)
+
+
+def _check_resident_within_all(config: AssistantConfig, registry: ToolsetRegistry, name: str) -> None:
+    """Refuse a ``resident`` entry an ``available = "all"`` agent does not hold, saying why it does not.
+
+    The config parser checks ``resident`` against a declared ``available`` list, but it cannot see the
+    registry that says what ``"all"`` holds, so this half of the check waits for the expansion. An entry
+    is outside it for one of two reasons, and each gets its own sentence: nothing installs it, or it is
+    an ``entry_point_only`` toolset that ``"all"`` leaves out on a worker.
+    """
+    agent = config.agents[name]
+    # The parser refuses "all" with no resident list, but a config built without it (update_config's dry
+    # run) arrives here unrefused, and would otherwise make every installed toolset resident.
+    check_resident_within_available(name, agent.resident, agent.available)
+    expanded = available_for(config, registry, name)
+    for entry in agent.resident:
+        if entry in expanded:
+            continue
+        section = f"[agents.{name}.tools].resident"
+        if entry in registry:
+            raise ConfigError(
+                f"{section} names {entry!r}, {entry_point_only_reason(config.entry_agent)} "
+                'available = "all" leaves it out here, so drop it from resident.'
+            )
+        installed = ", ".join(sorted(registry)) or "(none)"
+        raise ConfigError(
+            f'{section} names {entry!r}, which is not an installed toolset, so available = "all" does not '
+            f"hold it. Installed toolsets: {installed}."
+        )
 
 
 def validate_reviewers(config: AssistantConfig) -> None:
@@ -296,8 +386,8 @@ def build_command_map(config: AssistantConfig, registry: ToolsetRegistry) -> dic
     never runs" failure mode this function otherwise guards against, just caused by the command's own
     shape instead of a collision with another one.
     """
-    entry = config.agents[config.entry_agent]
-    toolsets = select(entry.available, registry, agent=config.entry_agent, entry_point=config.entry_agent)
+    available = available_for(config, registry, config.entry_agent)
+    toolsets = select(available, registry, agent=config.entry_agent, entry_point=config.entry_agent)
     commands: dict[str, Workflow] = {}
     claimed_by: dict[str, str] = {}
     for toolset_name, workflow in workflows_of(toolsets):
@@ -344,7 +434,7 @@ def undeclared_workflow_commands(config: AssistantConfig, registry: ToolsetRegis
     that one checks every agent's tools (a toolset a worker holds is still declared) and looks at config
     sections rather than commands, and fires once at startup rather than on an incoming channel message.
     """
-    declared = set(config.agents[config.entry_agent].available)
+    declared = set(available_for(config, registry, config.entry_agent))
     return {
         workflow.command: toolset_name
         for toolset_name, workflow in workflows_of(list(registry.values()))
@@ -352,7 +442,7 @@ def undeclared_workflow_commands(config: AssistantConfig, registry: ToolsetRegis
     }
 
 
-def configured_but_undeclared(config: AssistantConfig) -> list[str]:
+def configured_but_undeclared(config: AssistantConfig, registry: ToolsetRegistry) -> list[str]:
     """Every ``config.toml`` section a toolset owns that no agent's ``tools`` names, for a startup
     warning about the config file rather than about anything typed at the channel.
 
@@ -374,7 +464,7 @@ def configured_but_undeclared(config: AssistantConfig) -> list[str]:
     cannot tell "the user wrote this" from "Kokua defaulted it" -- exactly the distinction this warning
     needs, since a defaulted section nobody wrote is not a mistake worth reporting.
     """
-    declared = {name for agent in config.agents.values() for name in agent.available}
+    declared = {toolset for name in config.agents for toolset in available_for(config, registry, name)}
     return sorted(name for name in config.configured_sections if name not in declared)
 
 
@@ -446,7 +536,7 @@ LEAN_DELEGATION_GUIDANCE = (
 
 
 def split_by_residency(
-    config: AssistantConfig, agent_name: str, toolsets: Sequence[Toolset]
+    config: AssistantConfig, registry: ToolsetRegistry, agent_name: str, toolsets: Sequence[Toolset]
 ) -> tuple[list[Toolset], list[Toolset]]:
     """``toolsets`` divided into what ``agent_name`` holds from its first turn and what it loads on demand.
 
@@ -454,7 +544,7 @@ def split_by_residency(
     (the entry agent's skill names are held back before this runs), so membership is decided by name
     against ``resident_for`` rather than by position.
     """
-    resident_names = set(config.resident_for(agent_name))
+    resident_names = set(resident_for(config, registry, agent_name))
     resident = [toolset for toolset in toolsets if toolset.name in resident_names]
     deferred = [toolset for toolset in toolsets if toolset.name not in resident_names]
     return resident, deferred
@@ -579,8 +669,9 @@ def build_agent_specs(config: AssistantConfig, state: LiveState, delegator: str)
     specs: dict[str, dict] = {}
     for name in config.agents[delegator].delegates_to:
         agent = config.agents[name]
-        toolsets = select(agent.available, state.registry, agent=name, entry_point=config.entry_agent)
-        resident, deferred = split_by_residency(config, name, toolsets)
+        available = available_for(config, state.registry, name)
+        toolsets = select(available, state.registry, agent=name, entry_point=config.entry_agent)
+        resident, deferred = split_by_residency(config, state.registry, name, toolsets)
         # A spawned worker is a plain AIMU Agent, so `agent=None`: the one toolset needing the live
         # agent object is entry-point-only and validation has already rejected it here. The name is
         # carried regardless, so a toolset scoping itself to its holder (`benchmark`) resolves this

@@ -567,6 +567,35 @@ async def test_an_agent_resident_write_round_trips_through_the_loader(tmp_path):
     assert loaded["agents"]["coder"].resident == ["time"]
 
 
+async def test_update_config_dry_run_accepts_all_with_resident_and_refuses_it_without(tmp_path):
+    from kokua.registry.registry import register
+
+    config = _unlocked(tmp_path, agents={"coder": AgentConfig(available=["time", "memory"])}, entry_agent="coder")
+    registry = register([("built-in toolset", [_stub_toolset("time"), _stub_toolset("memory")])])
+    path, _, update_config = _tools(tmp_path, config=config, registry=registry)
+
+    refused = await update_config("agents.coder.tools", "available", "all")
+    assert refused.startswith("Rejected:")
+    assert 'available = "all" needs a resident list' in refused
+    assert not path.exists()
+
+    await update_config("agents.coder.tools", "available", "time,memory")
+    await update_config("agents.coder.tools", "resident", "time")
+    accepted = await update_config("agents.coder.tools", "available", "all")
+    assert not accepted.startswith("Rejected:"), accepted
+    assert _read(path)["agents"]["coder"]["tools"]["available"] == "all"
+    assert settings.load(str(path), table=core_table())["agents"]["coder"].available is schema.ALL_TOOLSETS
+
+
+async def test_update_config_refuses_all_inside_a_list(tmp_path):
+    config = _unlocked(tmp_path, agents={"coder": AgentConfig(available=["time"])}, entry_agent="coder")
+    path, _, update_config = _tools(tmp_path, config=config, registry={"time": _stub_toolset("time")})
+    result = await update_config("agents.coder.tools", "available", "time,all")
+    assert result.startswith("Rejected:")
+    assert 'or the string "all" (lowercase, not in a list)' in result
+    assert not path.exists()
+
+
 _MEMBERSHIP = r"resident names '(web|memory)', which is not in available"
 
 

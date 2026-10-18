@@ -12,6 +12,7 @@ import pytest
 
 from kokua.config import MCPServerConfig
 from kokua.config.schema import AgentConfig
+from kokua.core.agents import deferred_for
 from kokua.core.assistant import Assistant
 from tests.channels import AlertCapturingChannel, FakeChannel, _config
 from tests.fakes import _FakeMCP, _await_value, _fake_mcp_tool, _offline_until_connected
@@ -37,7 +38,7 @@ def _using(name: str, url: str) -> dict:
 async def _mcp_tools(assistant) -> list:
     """The entry agent's tools with the `mcp` toolset in them: the shipped entry agent defers it, so a
     test reaching for `add_mcp_server` loads it the way the model would."""
-    if "mcp" in assistant._config.deferred_for("assistant"):
+    if "mcp" in deferred_for(assistant._config, assistant._state.registry, "assistant"):
         result = await assistant._agent.load_tool_group("mcp")
         assert result.startswith(("Loaded 'mcp':", "'mcp' is already loaded")), result
     return assistant._agent._effective_tools(None)

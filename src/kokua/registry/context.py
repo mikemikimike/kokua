@@ -20,7 +20,7 @@ from aimu.aio import Scheduler
 from aimu.memory import DocumentStore, SemanticMemoryStore
 from aimu.skills import SkillManager
 
-from kokua.config.schema import AssistantConfig
+from kokua.config.schema import ALL_TOOLSETS, AssistantConfig
 from kokua.mcp.auth import OAuthSettings
 from kokua.config.table import SettingsTable
 from kokua.registry.registry import ToolsetRegistry
@@ -159,7 +159,8 @@ class LiveState:
             # usable on its own, which is how the unit tests exercise the accessors above.
             return self.all_skills
         declared = entry.available
-        if _AUTHORING_TOOLSET in declared:
+        # "all" on the entry agent always holds the authoring toolset, so it is unscoped for that reason.
+        if declared is ALL_TOOLSETS or _AUTHORING_TOOLSET in declared:
             return self.all_skills
         known = self.all_skills.skills
         return SkillManager(
