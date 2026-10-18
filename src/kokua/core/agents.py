@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import difflib
 import functools
-from typing import Callable, Mapping, Optional, Sequence
+from typing import Callable, Collection, Mapping, Optional, Sequence
 
 from aimu import trim_messages
 from aimu.aio.tools.builtin import SubagentObserver, make_async_subagent_tool
@@ -116,10 +116,9 @@ def loadable_toolsets(config: AssistantConfig, registry: ToolsetRegistry, agent_
 
     ``AssistantConfig.deferred_for`` reads the declaration alone, so it counts a skill the entry agent
     names outside ``resident``. Wiring does not: the entry agent is a ``SkillAgent`` that already holds
-    every skill, so ``wire_agent`` holds skill names back before the residency split and no build ever
-    reports one. Anything asking which toolsets wait for a build (approval's pending entries, whether an
-    agent holds the loader tools) asks this, or a gate on such a skill would wait forever while the
-    skill's scripts ran ungated.
+    every skill, so ``wire_agent`` holds skill names back before the residency split. This is what
+    decides whether an agent carries the loader tools at all. Whether an approval entry waits for a
+    build is a different question, answered by :func:`built_toolsets`.
     """
     deferred = config.deferred_for(agent_name)
     if agent_name == config.entry_agent:
@@ -836,8 +835,20 @@ def gate_entry_grammar_fault(entry: str) -> str:
     return ""
 
 
-def pending_gate_entries(entries: Sequence[str], deferred: set[str], built: Mapping[str, object]) -> set[str]:
-    """The well-formed entries naming a deferred toolset nobody has built yet.
+def built_toolsets(state: LiveState) -> set[str]:
+    """The toolsets whose tool names already exist: the one answer to "is this toolset built yet?".
+
+    Every toolset a ``build_tools`` call has recorded, plus every skill the entry agent's ``SkillAgent``
+    holds. The second half matters because that agent's skills server is built by AIMU rather than
+    through ``build_tools``, so no build ever records it, yet its tools exist from the first turn. Without
+    it, a gate on such a skill would wait for a build whenever any agent could load the skill later, and
+    the entry agent would run the skill's scripts ungated meanwhile.
+    """
+    return set(state.tools_by_toolset) | {skill.name for skill in state.skill_manager.skills.values()}
+
+
+def pending_gate_entries(entries: Sequence[str], deferred: set[str], built: Collection[str]) -> set[str]:
+    """The well-formed entries naming a deferred toolset that is not built yet (see :func:`built_toolsets`).
 
     These wait for the build instead of resolving at startup. A malformed entry is never parked, so it
     still reaches the resolver and fails startup with its own sentence.

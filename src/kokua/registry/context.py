@@ -23,6 +23,7 @@ from aimu.skills import SkillManager
 from kokua.config.schema import AssistantConfig
 from kokua.mcp.auth import OAuthSettings
 from kokua.config.table import SettingsTable
+from kokua.registry.registry import ToolsetRegistry
 
 # The toolset that grants author_skill / add_skill_script. Declaring it opts an agent out of catalogue
 # scoping, since an author has to see the skill it just wrote (see `skill_manager`).
@@ -79,7 +80,9 @@ class LiveState:
     # looks them up at call time.
     gate_for: Optional[Callable[[str], Callable[[str, dict], Awaitable[bool]]]] = None
     observer: Optional[SubagentObserver] = None
-    registry: dict = field(default_factory=dict)
+    # A ToolsetRegistry rather than a bare dict: wiring and approval read its `providers` to tell a skill
+    # from any other toolset. Empty by default so a LiveState built on its own (as unit tests do) works.
+    registry: ToolsetRegistry = field(default_factory=lambda: ToolsetRegistry({}, {}))
     # Every tool name `registry.build_tools` has produced so far, under the toolset that produced it,
     # accumulated as agents are wired. It is the vocabulary the approval-entry startup check
     # matches against, and that check reads a `toolset.tool` grammar, so provenance is the point rather

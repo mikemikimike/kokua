@@ -807,6 +807,67 @@ async def test_a_skill_alone_outside_resident_earns_no_loaders(tmp_path):
         assistant._state.close()
 
 
+# A worker deferring a skill must not re-park a gate on that skill when the entry agent's SkillAgent
+# already holds it: those tools exist from the first turn, whoever else could load them later.
+
+
+def _worker_defers_skill(config: AssistantConfig) -> AssistantConfig:
+    worker = config.agents["researcher"]
+    config.agents["researcher"] = dataclasses.replace(
+        worker, available=[*worker.available, "weekly-digest"], resident=list(worker.available)
+    )
+    return config
+
+
+@pytest.mark.parametrize("entry_names_skill", [False, True], ids=["entry-does-not-name", "entry-names"])
+async def test_a_worker_deferring_a_skill_the_entry_agent_holds_does_not_park_its_gate(tmp_path, entry_names_skill):
+    config = _worker_defers_skill(_config(tmp_path, default_confirm=["weekly-digest"]))
+    if entry_names_skill:
+        entry = config.agents["assistant"]
+        config.agents["assistant"] = dataclasses.replace(entry, available=[*entry.available, "weekly-digest"])
+    _write_skill(config)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        await assistant.start()
+        assert "weekly-digest" in {skill.name for skill in assistant._state.skill_manager.skills.values()}
+        policy = assistant._human.policies.default
+        assert policy.pending_confirm == frozenset()
+        assert _skill_tool_names(assistant) <= policy.confirm
+    finally:
+        assistant._state.close()
+
+
+async def test_a_workers_own_pair_on_a_skill_it_defers_waits_for_its_build(tmp_path):
+    """Nothing holds the skill at startup here (the entry agent neither names it nor authors skills), so
+    the worker's own entry waits, and resolves when the worker's build of the skill reports its tools."""
+    from kokua.registry.context import ToolsetContext
+    from kokua.registry.registry import build_tools
+
+    agents = {
+        "assistant": AgentConfig(available=["time"], delegates_to=["helper"]),
+        "helper": AgentConfig(
+            description="Helps.",
+            available=["time", "weekly-digest"],
+            resident=["time"],
+            confirm=["weekly-digest"],
+            review=[],
+        ),
+    }
+    config = _config(tmp_path, agents=agents, default_confirm=[], default_review=[])
+    _write_skill(config)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        await assistant.start()
+        state = assistant._state
+        assert assistant._human.policies.by_agent["helper"].pending_confirm == {"weekly-digest"}
+        build_tools([state.registry["weekly-digest"]], ToolsetContext(state=state, agent=None, agent_name="helper"))
+        helper = assistant._human.policies.by_agent["helper"]
+        assert helper.pending_confirm == frozenset()
+        assert set(state.all_skills.skills["weekly-digest"].script_tool_names()) <= helper.confirm
+    finally:
+        assistant._state.close()
+
+
 # --- every agent's calls are judged by its own policy -------------------------------------------------
 
 

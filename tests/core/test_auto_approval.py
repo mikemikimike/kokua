@@ -857,6 +857,30 @@ async def test_a_review_entry_on_an_entry_agent_skill_resolves_at_startup(tmp_pa
     assert reviewed and reviewed <= policies.default.review
 
 
+async def test_a_floor_entry_on_a_skill_a_worker_defers_is_checked_at_startup_when_the_entry_agent_holds_it(
+    tmp_path,
+):
+    """The entry agent's SkillAgent holds the skill from the first turn, so a worker that could load it
+    later does not make its floor entry wait: a review reaching it is refused at startup."""
+    from tests.core.test_approval import _write_skill
+
+    agents = example_agents()
+    worker = agents["researcher"]
+    agents["researcher"] = dataclasses.replace(
+        worker, available=[*worker.available, "weekly-digest"], resident=list(worker.available)
+    )
+    config = _config(
+        tmp_path, **_auto(agents=agents, default_review=["weekly-digest"], never_auto_approve=["weekly-digest"])
+    )
+    _write_skill(config)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        with pytest.raises(ConfigError, match="never_auto_approve holds back"):
+            await assistant.start()
+    finally:
+        assistant._state.close()
+
+
 async def test_a_floor_entry_on_an_entry_agent_skill_refuses_a_review_reaching_it_at_startup(tmp_path):
     with pytest.raises(ConfigError, match="never_auto_approve holds back"):
         await _started_with_skill(tmp_path, default_review=["weekly-digest"], never_auto_approve=["weekly-digest"])
