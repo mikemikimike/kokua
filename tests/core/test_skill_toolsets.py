@@ -174,3 +174,35 @@ def _ctx(state: LiveState):
     from kokua.registry.context import ToolsetContext
 
     return ToolsetContext(state=state, agent=None, agent_name="assistant")
+
+
+def test_a_skill_tools_refresh_retires_its_client_until_close(tmp_path, monkeypatch):
+    """A worker spawned before a refresh may still call the old client's tools, so the old client stays
+    open until the state closes, and closing releases every client ever built."""
+    closed: list[int] = []
+
+    class FakeClient:
+        def __init__(self, server):
+            self.number = len(built)
+            built.append(self)
+
+        def as_tools(self):
+            return []
+
+        def close(self):
+            closed.append(self.number)
+
+    built: list[FakeClient] = []
+    monkeypatch.setattr("aimu.tools.MCPClient", FakeClient)
+    config = _config(tmp_path)
+    write_skill(config, "citation-check", "Verify a claim.")
+    state = _state(config)
+
+    assert "citation-check" in state.skill_tools
+    write_skill(config, "weekly-digest", "Digest the week.")
+    state.refresh_skill_tools()
+
+    assert "weekly-digest" in state.skill_tools
+    assert closed == []
+    state.close()
+    assert closed == [0, 1]

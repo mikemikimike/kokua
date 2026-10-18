@@ -8,6 +8,12 @@ stayed as written. Note what this toolset does *not* add. Kokua builds its entry
 agent the skill catalogue, ``activate_skill``, and one tool per skill script whether or not this toolset
 is declared. Declaring it adds the two authoring tools, and nothing else.
 
+Each tool is wrapped in two ways and keeps AIMU's name and schema. Every write is followed by
+``LiveState.refresh_skills``, which is what lets a skill written mid-session reach an ``available = "all"``
+worker on its next spawn and ``compose_subagent`` on its next call: AIMU refreshes only the entry agent's
+own catalogue, and a worker resolves skills through Kokua's registry instead. And ``author_skill``
+refuses a name another toolset already holds, since skills share the one namespace every toolset does.
+
 ``entry_point_only`` is not a policy choice here, unlike anywhere else it could be used, and the reason
 it has to be enforced at *declaration* is worth knowing. A spawned worker is a plain ``aio.Agent`` and
 reaches ``build`` with ``ctx.agent`` as ``None``. That builds fine: ``make_skill_script_tool`` uses its
@@ -30,9 +36,16 @@ would buy a prompt and no boundary. Add either by hand if you want the prompt.
 
 from __future__ import annotations
 
+import functools
+from typing import TYPE_CHECKING, Callable, Optional
+
 from aimu.skills import make_skill_authoring_tool, make_skill_script_tool, make_skill_update_tool
 
 from kokua.registry import Toolset
+from kokua.registry.registry import ALL_DECLARATION, RESERVED_GATE_NAMESPACE, ToolsetError
+
+if TYPE_CHECKING:
+    from kokua.registry.context import LiveState, ToolsetContext
 
 GUIDANCE = (
     " When the user teaches you a repeatable procedure worth remembering, call `author_skill` to save "
@@ -47,14 +60,81 @@ GUIDANCE = (
     "machine, so only automate what the user asked for."
 )
 
+
+def _claimed_by(name: str, state: "LiveState") -> Optional[str]:
+    """What already holds ``name`` as a toolset, or None when a skill may take it.
+
+    A name that is already a skill is left to AIMU, which refuses to clobber one with a message of its own.
+    """
+    # Function-scope for the reason capabilities.py gives: core/build.py reaches toolsets/, so a module-scope
+    # import of core.agents would close that cycle.
+    from kokua.core.agents import is_skill
+
+    if name in (RESERVED_GATE_NAMESPACE, ALL_DECLARATION):
+        return "reserved"
+    if name in state.registry and not is_skill(name, state.registry):
+        return state.registry.providers[name]
+    return None
+
+
+def _refusing_toolset_names(author_skill: Callable, state: "LiveState") -> Callable:
+    """``author_skill``, refusing a name some other toolset already holds before anything is written.
+
+    AIMU cannot know Kokua's namespace, so without this a skill named ``web`` is written to disk and then
+    refused by the registry at the next start, as a collision that stops Kokua from starting at all.
+    """
+
+    @functools.wraps(author_skill)
+    async def guarded(name: str, description: str, body: str) -> str:
+        provider = _claimed_by(name, state)
+        if provider is not None:
+            return (
+                f"Nothing was written: {name!r} is already a toolset name ({provider}). "
+                "Choose another name for the skill."
+            )
+        return await author_skill(name=name, description=description, body=body)
+
+    return guarded
+
+
+def _refreshing(tool_fn: Callable, state: "LiveState") -> Callable:
+    """``tool_fn``, followed by ``state.refresh_skills`` so workers resolve the skills now on disk.
+
+    It refreshes whatever the tool answered, since a refresh after a write that did not happen costs one
+    directory scan and changes nothing. A refresh that fails names a collision the name check could not
+    see (a skill directory made by hand, say), and that goes back to the model with the result rather
+    than raising, because the write it follows has already happened and the model can act on the reason.
+    ``functools.wraps`` copies the ``__tool_spec__`` AIMU reads, so the model sees AIMU's own schema.
+    """
+
+    @functools.wraps(tool_fn)
+    async def refreshed(*args, **kwargs) -> str:
+        result = await tool_fn(*args, **kwargs)
+        if state.refresh_skills is None:
+            return result
+        try:
+            state.refresh_skills()
+        except ToolsetError as error:
+            return f"{result}\n\nWorkers were not given the change, and the next start will refuse it too: {error}"
+        return result
+
+    return refreshed
+
+
+def _build(ctx: "ToolsetContext") -> list:
+    state = ctx.state
+    author = make_skill_authoring_tool(state.skill_manager, ctx.config.skills_dir)
+    return [
+        _refreshing(_refusing_toolset_names(author, state), state),
+        _refreshing(make_skill_update_tool(state.skill_manager, ctx.config.skills_dir), state),
+        _refreshing(make_skill_script_tool(ctx.agent, state.skill_manager, ctx.config.skills_dir), state),
+    ]
+
+
 TOOLSET = Toolset(
     name="skills",
     description="Author skills, revise them, and attach runnable scripts to them.",
-    build=lambda ctx: [
-        make_skill_authoring_tool(ctx.state.skill_manager, ctx.config.skills_dir),
-        make_skill_update_tool(ctx.state.skill_manager, ctx.config.skills_dir),
-        make_skill_script_tool(ctx.agent, ctx.state.skill_manager, ctx.config.skills_dir),
-    ],
+    build=_build,
     guidance=GUIDANCE,
     cross_cutting=True,
     entry_point_only=True,

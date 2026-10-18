@@ -1788,3 +1788,69 @@ async def test_all_grants_no_core_tool_and_never_reads_as_lean(tmp_path):
     message = _specs(config)["explorer"]["system_message"]
     assert DELEGATION_GUIDANCE in message
     assert LEAN_DELEGATION_GUIDANCE not in message
+
+
+# --- a skill written mid-session reaches "all" workers on their next spawn ----------------------------
+
+
+def _authoring_all_worker_config(tmp_path):
+    agents = {
+        "assistant": AgentConfig(available=["mcp", "skills", "time"], delegates_to=["explorer", "clock"]),
+        "explorer": AgentConfig(description="Explores.", available=ALL_TOOLSETS, resident=["time"]),
+        "clock": AgentConfig(description="Tells the time.", available=["time"]),
+    }
+    return _config(tmp_path, agents=agents, default_confirm=[], default_review=[])
+
+
+def _group_names(spec) -> list[str]:
+    return [group.name for group in spec["tool_groups"]]
+
+
+def _entry_tool(assistant, name):
+    return next(fn for fn in assistant._agent.tools if getattr(fn, "__name__", "") == name)
+
+
+async def test_a_skill_written_mid_session_reaches_an_all_worker_next_spawn(tmp_path, monkeypatch):
+    import kokua.core.agents as agents_mod
+
+    captured: list = []
+    monkeypatch.setattr(agents_mod, "make_async_subagent_tool", _capturing_subagent_factory(captured))
+    config = _authoring_all_worker_config(tmp_path)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    await assistant.start()
+    clock_before = _group_names(captured[-1]["clock"])
+    assert "weekly-digest" not in _group_names(captured[-1]["explorer"])
+
+    result = await _entry_tool(assistant, "author_skill")(
+        name="weekly-digest", description="Digest the week.", body="Do the thing."
+    )
+
+    assert result.startswith("Created skill 'weekly-digest'")
+    assert "weekly-digest" in _group_names(captured[-1]["explorer"])
+    assert _group_names(captured[-1]["clock"]) == clock_before
+    assistant._state.close()
+
+
+async def test_a_server_added_at_runtime_does_not_reach_an_all_worker(tmp_path, monkeypatch):
+    """The registry's MCP entries come from the config read at startup, so a skill refresh keeps them as
+    they were: a server added since waits for a restart, while a skill written after it does not."""
+    import kokua.core.agents as agents_mod
+
+    async def fake_connect(url, **kwargs):
+        return _FakeMCP([_fake_mcp_tool("get_quote")]), "none"
+
+    monkeypatch.setattr("kokua.mcp.servers.connect_mcp", fake_connect)
+    captured: list = []
+    monkeypatch.setattr(agents_mod, "make_async_subagent_tool", _capturing_subagent_factory(captured))
+    config = _authoring_all_worker_config(tmp_path)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    await assistant.start()
+
+    await _entry_tool(assistant, "add_mcp_server")(url="https://broker.example/mcp")
+    assert "broker-example" not in _group_names(captured[-1]["explorer"])
+
+    await _entry_tool(assistant, "author_skill")(name="weekly-digest", description="Digest the week.", body="Do it.")
+
+    assert "weekly-digest" in _group_names(captured[-1]["explorer"])
+    assert "broker-example" not in _group_names(captured[-1]["explorer"])
+    assistant._state.close()

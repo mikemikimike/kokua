@@ -42,9 +42,10 @@ logger = logging.getLogger(__name__)
 
 # Provider labels `build_registry` hands to `register`. These are what `--list-toolsets` groups by, and
 # what a collision message names, so they are the words a user reads rather than an internal taxonomy.
-# They decide behavior in two places, each a question no name inspection could answer:
-# `without_skill_names` tells a skill's registry entry from every other kind by `_SKILL_PROVIDER`, and
-# `available_for` orders an "all" declaration by `TRUST_ORDER`.
+# They decide behavior in two places, each a question no name inspection could answer: `is_skill` tells
+# a skill's registry entry from every other kind by `_SKILL_PROVIDER` (which is also how
+# `with_skill_toolsets` knows which entries to replace), and `available_for` orders an "all"
+# declaration by `TRUST_ORDER`.
 _BUILTIN_PLUGIN_PROVIDER = "built-in toolset"
 _PLUGIN_PROVIDER = "plugin"
 _MCP_PROVIDER = "MCP server"
@@ -116,6 +117,30 @@ def skill_toolsets(config: AssistantConfig) -> list[Toolset]:
     ]
 
 
+def with_skill_toolsets(registry: ToolsetRegistry, toolsets: Sequence[Toolset]) -> ToolsetRegistry:
+    """``registry`` with every skill entry replaced by ``toolsets`` and every other entry kept as it is.
+
+    Skills are the one source that changes mid-session through a tool the assistant holds, so they are
+    the one source re-read. Every other entry is carried over untouched rather than re-discovered: the MCP
+    entries in particular stay the ones read from config at startup, so a server added at runtime still
+    reaches an ``"all"`` agent only after a restart, exactly as it did before skills could refresh.
+
+    Raises ``ToolsetError`` (from ``register``) when a skill now on disk collides with another toolset's
+    name, leaving the caller's registry as it was.
+    """
+    kept: dict[str, list[Toolset]] = {}
+    for name, toolset in registry.items():
+        label = registry.providers[name]
+        if label != _SKILL_PROVIDER:
+            kept.setdefault(label, []).append(toolset)
+    return register([*kept.items(), (_SKILL_PROVIDER, list(toolsets))])
+
+
+def is_skill(name: str, registry: ToolsetRegistry) -> bool:
+    """Whether ``name`` is registered as a skill, as opposed to any other kind of toolset or nothing."""
+    return registry.providers.get(name) == _SKILL_PROVIDER
+
+
 def without_skill_names(names: Sequence[str], registry: ToolsetRegistry) -> list[str]:
     """``names`` with the skills removed, in order.
 
@@ -123,7 +148,7 @@ def without_skill_names(names: Sequence[str], registry: ToolsetRegistry) -> list
     skill in its manager, so resolving those names as toolsets as well would duplicate the catalogue in
     its prompt. A plain agent has no such machinery and resolves them normally.
     """
-    return [name for name in names if registry.providers.get(name) != _SKILL_PROVIDER]
+    return [name for name in names if not is_skill(name, registry)]
 
 
 def available_for(config: AssistantConfig, registry: ToolsetRegistry, agent_name: str) -> list[str]:

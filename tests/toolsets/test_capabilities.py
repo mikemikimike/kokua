@@ -667,3 +667,29 @@ def test_a_composed_sub_agents_toolsets_are_built_under_its_own_label(tmp_path):
     _spec(state, name="quote-checker", tools=("probe",))
 
     assert holders == ["quote-checker"]
+
+
+async def test_compose_subagent_sees_a_skill_written_mid_session(tmp_path, monkeypatch):
+    """Discovery and composition read the registry once per call, so a skill authored after startup is
+    listable and composable on the very next call, with no restart."""
+    from kokua.core.assistant import Assistant
+    from tests.channels import FakeChannel, _config
+    from tests.helpers import MockAsyncModelClient
+
+    agents = {"assistant": AgentConfig(available=["capabilities", "skills", "time"])}
+    config = _config(tmp_path, agents=agents, default_confirm=[], default_review=[])
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    await assistant.start()
+    tools = {getattr(fn, "__name__", ""): fn for fn in assistant._agent.tools}
+    spawn = _recording(monkeypatch)
+
+    await tools["author_skill"](name="weekly-digest", description="Digest the week.", body="Do the thing.")
+    listing = await tools["list_capabilities"]()
+    result = await tools["compose_subagent"](
+        name="digester", task="Digest this week.", tools=["weekly-digest"], instructions="Digest."
+    )
+
+    assert "weekly-digest [skill]: Digest the week." in listing
+    assert result == "digester ran: Digest this week."
+    assert "weekly-digest" in spawn.calls[-1]["agent_types"]["digester"]["system_message"]
+    assistant._state.close()
