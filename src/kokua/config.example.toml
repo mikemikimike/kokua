@@ -153,7 +153,7 @@ timeout_seconds = 10
 max_per_turn = 5
 
 # Every agent, declared whole, and locked by default (see [security].locked_config_keys below). An
-# agent's `available` list, in its [agents.<name>.tools] table, IS its capability: nothing is added in
+# agent's `available` list (or the string "all", which requires `resident`), in its [agents.<name>.tools] table, IS its capability: nothing is added in
 # code, and nothing is implicit, including the clock (declare "time" to get it). The same table may
 # carry the agent's own `confirm` and `review` lists, replacing [assistant.tools] as a pair; leave both
 # out to inherit it. An optional `resident` list, a subset of `available`, is what is in the agent's
@@ -317,10 +317,10 @@ cost them their data."""
 
 # Remote MCP servers to connect at startup, one [[mcp.server]] table each. `url` and `name` are
 # required; `name` is how the server enters the toolset namespace, so an agent's `available` list must name it
-# for the server to reach anything. `token_env` names an env var holding a bearer token (omit it when
+# (or the agent declares available = "all") for the server to reach anything. `token_env` names an env var holding a bearer token (omit it when
 # unauthenticated, or for OAuth, which triggers on an auth challenge). `description` is the line an agent
 # reads when deciding whether to load the server. The add_mcp_server tool appends
-# servers here with a host-derived name; that name reaches no agent until you add it above and restart.
+# servers here with a host-derived name; nothing can use it until a restart, and then only an agent naming it above or declaring available = "all".
 # [[mcp.server]]
 # url = "https://api.githubcopilot.com/mcp/"
 # name = "github"

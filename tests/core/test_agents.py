@@ -30,7 +30,7 @@ def test_registry_contains_every_provider():
 def test_kokuas_own_plugins_are_labeled_built_in_not_plugin():
     """The toolsets Kokua's own distribution registers under `kokua.toolsets` are told apart from a
     third party's by provenance (which distribution registered the entry point), not a hand-maintained
-    name list, so unreferenced_toolsets can exempt them without knowing their names in advance."""
+    name list, so `TRUST_ORDER` can rank them ahead of a third party's without knowing their names."""
     registry = build_registry(AssistantConfig())
     for name in ("aimu_agents", "image"):
         assert registry.providers[name] == "built-in toolset", name

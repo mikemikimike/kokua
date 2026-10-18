@@ -781,10 +781,12 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer
 - **A shadowed resident tool raises an alert at startup.** `build_tools` keeps the first of two
   same-named tools among toolsets built together and used to say nothing of the other. Once every startup
   build is done, each declared agent's resident toolsets are checked, and each hidden tool raises
-  `{agent}: {tool} from {shadowed!r} is shadowed by {kept!r} (trust order keeps the first).` An agent
-  nothing delegates to is not built at startup, so it is skipped and logged at INFO rather than reported
-  as clean. A deferred toolset loaded later keeps whichever tool arrived first, and AIMU's load result
-  names the skipped tool and its holder.
+  `{agent}: {tool} from {shadowed!r} is shadowed by {kept!r} (trust order keeps the first).` Startup
+  builds the entry agent and every worker reachable from it by `delegates_to`, so an agent is skipped,
+  and logged at INFO rather than reported as clean, when any of its resident toolsets was built by no
+  agent. A deferred toolset loaded later keeps whichever tool arrived first, and AIMU's load result names
+  the skipped tool and its holder (a group only when the holder was loaded; a resident holder reads
+  `a tool given to this agent directly`).
 - **A skill written mid-session reaches workers.** After each `author_skill`, `add_skill_script`, or
   `update_skill`, the registry's skill toolsets are rescanned from disk (every other entry kept as startup
   registered it) and every live agent's `spawn_subagent` is rebuilt, so the skill reaches an
@@ -792,9 +794,10 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer
   still gets it immediately through its `SkillAgent`. A worker declaring a list gains no new skill, but a
   skill it already names reaches its next spawn as now written, new scripts included. MCP servers added at
   runtime still wait for a restart: a new server is a new trust path, a remote host's tools arriving after
-  a person approved only its URL, where a skill's prose and its approved scripts are not. A script-changing
-  write retires the skills MCP server workers use rather than closing it, since a worker spawned before
-  may still be calling it, and `update_skill` changes no tools and so retires nothing.
+  a person approved only its URL, where a skill's prose and its approved scripts are not. `author_skill`
+  and `add_skill_script` both rebuild the skill tools workers use, retiring the previous skills MCP server
+  rather than closing it, since a worker spawned before may still be calling it; `update_skill` changes no
+  tools and so retires nothing.
 - **`author_skill` refuses a name already taken, before writing anything.** A toolset's name, an MCP
   server's `name` on file in `config.toml` (including one `add_mcp_server` wrote this session, which the
   running registry has not seen), `core`, and `all` are refused with a sentence the model can act on.

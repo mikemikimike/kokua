@@ -6,7 +6,8 @@ Defines no tools of its own: it hands an agent AIMU's ``author_skill``, ``update
 agent could fix a skill's scripts forever while the instructions a first attempt most often gets wrong
 stayed as written. Note what this toolset does *not* add. Kokua builds its entry agent as an ``aio.SkillAgent``, so AIMU already gives that
 agent the skill catalogue, ``activate_skill``, and one tool per skill script whether or not this toolset
-is declared. Declaring it adds the two authoring tools, and nothing else.
+is declared. Declaring it adds the three authoring tools (``author_skill``, ``update_skill``,
+``add_skill_script``), and nothing else.
 
 Each tool is wrapped in two ways and keeps AIMU's name and schema. Every write is followed by
 ``LiveState.refresh_skills``, which is what lets a skill written mid-session reach an ``available = "all"``

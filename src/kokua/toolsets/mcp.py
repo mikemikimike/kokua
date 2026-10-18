@@ -9,16 +9,16 @@ Two separate things bound when a change takes effect. Distinguish the cases, bec
 is reachable in-process:
 
 * **A server already declared in ``[[mcp.server]]`` at startup** (possibly unreachable then, or removed
-  earlier this session) has a name in the toolset registry, so an agent's ``tools`` may already
-  reference it. Connecting or disconnecting it reaches the *next* sub-agent spawned by such an agent,
+  earlier this session) has a name in the toolset registry, so an agent's ``available`` may already
+  reference it, and an ``available = "all"`` agent already holds it. Connecting or disconnecting it reaches the *next* sub-agent spawned by such an agent,
   because ``refresh_workers`` rebuilds that agent's ``spawn_subagent`` and the specs re-resolve against
   the live connections. It does not reach a live agent's *own* tool list, which ``wire_agent`` built
   once; that waits for the agent to be rebuilt (a new conversation, an LRU eviction, a restart).
 * **A genuinely new server reaches nothing at all until a restart,** and then only an agent that
   declares ``available = "all"`` holds it without being told its name; a list agent needs a human to name
   it too. ``build_registry`` runs once, in
-  ``Assistant.create``, over ``config.mcp_servers`` as loaded at startup, and nothing mutates the
-  registry afterwards, so a new server's name is not a key in it. An ``[agents.*]`` edit *may* name the
+  ``Assistant.create``, over ``config.mcp_servers`` as loaded at startup, and the one mid-session refresh
+  (``core.build.refresh_skills``) re-reads skills only, so a new server's name is not a key in it. An ``[agents.*]`` edit *may* name the
   server, because ``update_config``'s dry run rereads the file and so sees the ``[[mcp.server]]`` entry
   written here, but that declaration resolves against no live registry either: it, too, is for the next
   start. ``add_mcp_server`` therefore persists the server for the *next* start and connects it for
@@ -46,15 +46,20 @@ logger = logging.getLogger(__name__)
 # Assistant.create from the config as loaded then, so a server that was not already a [[mcp.server]]
 # entry at startup has no name in it. An [agents.*] edit may declare the new server, since
 # update_config's dry run rereads the file, but nothing in this process resolves that declaration.
-# Only a restart makes a new server referable, and only a persisted one comes back at all.
+# Only a restart makes a new server referable, and only a persisted one comes back at all. The one
+# exception is a server config.toml declared at startup that was unreachable then (or removed since): its
+# name is still in the registry, so this connection reaches a worker naming it, or declaring "all", on
+# its next spawn. This result cannot tell the two apart, so it states both.
 _REACH = (
-    "You cannot call these yourself. A sub-agent you spawn can, but only if config.toml already "
-    "declared this server at startup and names it in that agent's tools, or that agent declares "
-    'available = "all" and Kokua restarts; otherwise the user must name the server in that agent\'s '
-    "available list and restart Kokua. Nothing you do in this session will make them usable."
+    "You cannot call these yourself. If this server was already in config.toml when Kokua started, a "
+    'sub-agent you spawn that names it in its available list, or declares available = "all", can use '
+    "them from its next spawn. Otherwise nothing can use them this session: after Kokua restarts, an agent "
+    'declaring available = "all" can, and any other agent once the user names the server in its available '
+    "list."
 )
-# A bearer-token server is in no registry and never written to config.toml, so no agent can name it
-# this session, and a restart drops it. A startup-declared URL is already connected, so it never gets here.
+# A bearer-token server is never written to config.toml, so a restart drops it, and a server new to this
+# session has no name in the registry, so nothing can name it. (A startup-declared server whose token_env
+# was unset at startup, then added here with a bearer token, is the rare exception: its name is registered.)
 _REACH_SESSION_ONLY = (
     "You cannot call these yourself, and no agent can name a server added at runtime, so nothing can use "
     "it. The connection lasts this session only, and its token is not saved, so no restart brings it back."
@@ -85,9 +90,10 @@ def make_mcp_tools(
         starts; a bearer-token one lasts only this session, since its secret is never written to disk.
         Returns the tool names the server exposes and the rule for which agent can call them. You cannot
         call them yourself. A sub-agent can, but only if this server was already declared in config.toml
-        at startup and named in that agent's tools; a server new to this session is usable only after a
-        restart, and only if it was remembered (see above): by an agent declaring available = "all" or one
-        the user edits config.toml to name. Do not promise to use it in this conversation.
+        at startup and that agent names it or declares available = "all"; a server new to this session is
+        usable only after a restart, and only if it was remembered (see above): by an agent declaring
+        available = "all" or one the user edits config.toml to name. Do not promise to use it in this
+        conversation.
 
         Authentication is handled for you: just pass the URL. If the server is unprotected it
         connects directly. If it requires OAuth, you post an authorization link into the chat and

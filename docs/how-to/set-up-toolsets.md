@@ -135,8 +135,9 @@ available = ["markdown-to-pdf", "email-report", "fs", "time"]
 
 Two agents declaring the same toolset share the state behind it: one memory store, one set of live MCP
 connections, one skill directory. If two resident toolsets an agent declares contribute the same tool
-name, the one declared **first** wins, so declared order is meaningful, and startup raises an alert naming
-the tool and both toolsets. An agent declaring `available = "all"` has no written order, so it uses trust
+name, the one declared **first** wins, so declared order is meaningful, and for an agent startup builds
+(the entry agent and every worker it reaches by `delegates_to`) startup raises an alert naming the tool
+and both toolsets. An agent declaring `available = "all"` has no written order, so it uses trust
 order instead (Kokua's own toolsets, then plugins, then skills, then MCP servers), which keeps a remote
 server's tool from shadowing one Kokua ships. See [Tool
 access](../explanation/tool-access.md#which-of-two-same-named-tools-wins).
@@ -186,20 +187,17 @@ session store or connects to anything, so a bad config fails with nothing writte
 | Unknown name in an agent's `available` list | **Startup fails**, naming the agent, the name, and every available toolset. |
 | `skills` on any agent but the entry agent | **Startup fails.** Spawned workers are plain AIMU agents and cannot host it. |
 | Unknown key in an `[agents.*]` table | **Startup fails**, naming the key. Only `description`, `system_message`, `tools`, `delegates_to`, `model`, `thinking`, `generation`, and `max_iterations` are accepted. |
-| An old per-role key (`groups`, `tool_packs`, `mcp_servers`) | **Startup fails**, telling you to list it in `tools` instead. |
+| An old per-role key (`groups`, `tool_packs`, `mcp_servers`) | **Startup fails**, telling you to list it in `[agents.<name>.tools].available` instead. |
 | `[assistant].agent` naming no table | **Startup fails**, listing the agents you did configure. |
 | `delegates_to` naming an unknown agent | **Startup fails**, listing the agents you did configure. |
 | A delegation cycle | **Startup fails**, printing the cycle as a path. |
 | No `[agents.*]` tables at all | **Startup fails**, pointing at `config.example.toml` to copy from, or `kokua config init --force` to overwrite this file with it. |
 | Two providers claiming one toolset name | **Startup fails**, naming both providers and their descriptions. |
-| A third-party plugin toolset or MCP server no agent names | Starts fine. One warning line in the log: it reaches no agent. Kokua's own built-in toolsets and your installed skills are exempt: they ship, or sit on disk, regardless of what any agent declares. |
+| A third-party plugin toolset or MCP server no agent names | Starts fine, silently. `kokua --list-toolsets` lists it, and `kokua agents` shows no agent holding it. |
 | A toolset that fails to import, or whose `build` raises | **Startup fails**, naming the module. No source is exempt: a build failure is a bug in whoever wrote the toolset, and a log line nobody reads is not how you should find out an agent lost a capability. |
-| Two resident toolsets sharing a tool name | The one declared first (for `"all"`, first in trust order) wins, and startup raises an alert naming both. A deferred toolset loaded later keeps the tool the agent already holds, and the load result says so. |
+| Two resident toolsets sharing a tool name | The one declared first (for `"all"`, first in trust order) wins, and for an agent startup builds, startup raises an alert naming both. A deferred toolset loaded later keeps the tool the agent already holds, and the load result says so. |
 | `available = "all"` without `resident`, or written as `["all"]` or `"All"` | **Startup fails**, saying how to write it. |
 | An `"all"` agent's `resident` naming a toolset outside the expansion | **Startup fails**, saying whether nothing installs it or it is `skills` on a worker. |
-
-One of those is quiet by design, and it lands in `$KOKUA_HOME/data/logs/kokua.log`. There is no
-console log handler, so it does not appear in your terminal.
 
 The most direct check that an agent got what you meant is to ask the assistant to delegate to it and
 report its tools.

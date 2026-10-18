@@ -175,7 +175,7 @@ from a different place:
 
 | Agent | When a skill written with `author_skill`, `update_skill`, or `add_skill_script` reaches it |
 | --- | --- |
-| The entry agent | Immediately, through its `SkillAgent` |
+| The entry agent | Immediately, through its `SkillAgent`; a new description reaches its catalogue only in a fresh conversation, since its prompt is not rewritten mid-run |
 | A worker declaring `available = "all"` | Its next spawn |
 | A worker declaring a list | Never as a new skill, since its list names its skills; a skill it already names reaches its next spawn as now written, new scripts included |
 | A composed worker | Its next `compose_subagent` |

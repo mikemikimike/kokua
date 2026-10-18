@@ -100,6 +100,18 @@ async def test_a_persisted_result_says_an_all_agent_gets_it_after_a_restart(monk
     assert "restart" in message.lower()
 
 
+async def test_a_persisted_result_names_both_cases_it_cannot_tell_apart(monkeypatch, tmp_path):
+    """A server already in config.toml at startup but unreachable then is in the registry, so a worker
+    naming it (or declaring "all") reaches it on its next spawn; a server new to this session reaches
+    nothing until a restart. The tool cannot tell which it has, so the result states both, and never the
+    old hedge that read as if a worker could use a new server this session."""
+    message = await _added(monkeypatch, tmp_path, "none")
+
+    assert "If this server was already in config.toml when Kokua started" in message
+    assert "Otherwise nothing can use them this session" in message
+    assert "A sub-agent you spawn can, but only if" not in message
+
+
 async def test_a_bearer_result_promises_no_reach_and_says_no_restart_brings_it_back(monkeypatch, tmp_path):
     message = await _added(monkeypatch, tmp_path, "bearer")
 

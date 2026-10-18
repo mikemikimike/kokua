@@ -234,8 +234,8 @@ talk to.
 list. It is every registered toolset, in **trust order**, most trusted first:
 
 1. Kokua's own toolsets: everything Kokua's distribution registers, wrappers over AIMU's groups included,
-   and so also `aimu_agents`, `benchmark`, `github_backup`, and `image`, which the configuration reference
-   lists as plugins because each is optional;
+   which is the `built-in toolset` group `kokua --list-toolsets` prints (`aimu_agents`, `benchmark`,
+   `github_backup`, and `image` among them);
 2. third-party plugin toolsets;
 3. skills, one toolset per skill on disk;
 4. MCP servers, one toolset per `[[mcp.server]]`.
@@ -287,8 +287,9 @@ Registration order would have put MCP servers first, letting a remote host's `re
 
 Built together means the resident build and a delegated worker's resident tools. A deferred toolset is
 settled by load order instead: AIMU keeps whichever tool the agent already holds, and the load result
-names what it skipped, `Not loaded, because the name is already taken: read_file (by 'fs').`, so a
-later load never replaces a held tool.
+names what it skipped and what holds it, so a later load never replaces a held tool. The holder is named
+as a group only when it was itself loaded (`Not loaded, because the name is already taken: read_file
+(by 'files').`); a resident holder reads `read_file (by a tool given to this agent directly)`.
 
 A resident tool that loses is reported, never dropped in silence. After every startup build, Kokua checks
 each agent's resident toolsets and raises one alert per hidden tool:
@@ -298,8 +299,10 @@ researcher: read_file from 'files' is shadowed by 'fs' (trust order keeps the fi
 ```
 
 The check runs on every declared agent, with a list or with `"all"`; on a list agent the order it
-reports against is the list's own. It needs what each toolset built, so an agent nothing delegates to,
-which startup never builds, is skipped and logged at INFO rather than reported as clean.
+reports against is the list's own. It reads what each toolset built, and startup builds only the entry
+agent and every worker reachable from it by `delegates_to`. So an agent is skipped, and logged at INFO
+rather than reported as clean, when any of its resident toolsets was built by no agent, which is the case
+for an agent nothing delegates to unless every toolset it holds resident is one another agent built.
 
 ### What arrives mid-session
 
@@ -308,7 +311,7 @@ next spawn; MCP servers arrive at the next restart:
 
 | | Skill written (`author_skill`, `add_skill_script`, `update_skill`) | MCP server added, persisted (unauthenticated or OAuth) | MCP server added, bearer token |
 | --- | --- | --- | --- |
-| Entry agent | Immediately, through its `SkillAgent` | As its `available` says (rows below) | Never |
+| Entry agent | Immediately, through its `SkillAgent` | As a list or `"all"` agent, below | Never |
 | Agent with a list | No new skill. A skill it already names reaches its next spawn as now written, new scripts included | Once named in `available`, after a restart | Never |
 | Agent with `"all"` | Its next spawn | Next restart | Never |
 | Composed worker | Its next compose | Next restart | Never |
@@ -325,12 +328,15 @@ The rule behind the two columns is whether the new capability opens a new trust 
 not.** Its prose adds nothing the entry agent could not already write into a delegated task, and its
 scripts are code a person read while approving `add_skill_script`: the code is that call's `content`
 argument, the shipped config gates the tool, and `[security].never_auto_approve` keeps a reviewer from
-answering for you. **A new MCP server does.** Its tools and their descriptions arrive from a remote host
+answering for you. (A script put into the skills folder some other way, such as a `write_file` call,
+arrives under that tool's gate instead, which for `fs_write` in the shipped config is `review`.) **A new MCP server does.** Its tools and their descriptions arrive from a remote host
 after a person approved only its URL. Keeping servers at restart preserves `add_mcp_server`'s guarantee
 that it cannot grant a capability in the session that added it, which is what blocks the attack where
 injected text persuades you to approve a malicious server and the agent calls its tools the same turn.
 A bearer-token server's token is never written to disk, so no restart brings it back, and nothing can
-name it this session.
+name it this session. The flip side is worth stating plainly: for an `"all"` agent, approving
+`add_mcp_server` for a persisted server *is* the grant, effective at the next restart with no edit of
+yours in between, so approve it as one.
 
 Prior art agrees on both halves. Live skills are the norm: Claude Code hot-reloads skill directories and
 has `/reload-skills`, OpenClaw refreshes when a `SKILL.md` changes, and Hermes treats a dropped-in skill
@@ -350,9 +356,16 @@ it.
 
 An agent holding everything still pays context only for what it loads, and each load is a decision the
 model makes. If you want to watch those decisions while you find out what an `"all"` agent reaches for,
-put `core.load_tools` in its `confirm` list: that is the control for "ask me before you expand your
-context". Every load then stops for your answer and names the toolset, and the `N tools` count on each
-model call in the web UI shows what the agent's context holds as the turn goes on.
+put `core.load_tools` in the `confirm` list of the policy that agent uses: that is the control for "ask
+me before you expand your context". Every load then stops for your answer and names the toolset, and the
+`N tools` count on each model call in the web UI shows what the agent's context holds as the turn goes on.
+
+Where you write it matters. In `[assistant.tools]`, every agent without its own pair asks before each
+load. In the agent's own `[agents.<name>.tools]`, the entry declares that agent's whole policy, so the
+pair must repeat every default entry you still want: a declared pair replaces `[assistant.tools]` whole,
+and a `review` it leaves out is empty (see [the pair is inherited whole](#the-pair-is-inherited-whole)).
+Writing only `confirm = ["core.load_tools"]` there would drop every other gate the default carries for
+that agent, `run_command`, `execute_python`, and `fs_write` included.
 
 `compose_subagent` changes meaning on an `"all"` agent too. Its guidance gives two reasons to compose: a
 capability you do not hold, or tool output that would flood your context. An agent holding everything

@@ -171,7 +171,8 @@ class MCPServerConfig:
     """A remote MCP server to connect at startup.
 
     ``name`` is how the server enters the toolset namespace, so an agent declares it exactly as it
-    declares any other capability. It is required: a server no agent can name reaches no agent.
+    declares any other capability. It is required: a server no agent can name reaches no agent, not even
+    one declaring ``available = "all"``, which holds every server registered by name at startup.
 
     ``token_env`` names an environment variable holding a bearer token, resolved at connect time so
     the secret stays out of the config file. It is unset for an unauthenticated server, or one using

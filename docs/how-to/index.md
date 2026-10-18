@@ -13,8 +13,8 @@ capability is declared, never defaulted.** Every capability an agent can hold is
 namespace, and a built-in tool group, an installed plugin toolset, and a connected MCP server all reach an
 agent by exactly one route: an `[agents.<name>.tools]` table in `config.toml` whose `available` list names it
 (or whose `available = "all"` declares every installed toolset at once).
-For an agent with a list, installing or connecting something is never the last step, and for any agent,
-no code path adds a tool its table did not declare. The one exception is reached by declaration too: an agent whose table names `capabilities` can
+Installing or connecting something is never the last step: an agent with a list needs its name written,
+and every agent needs a restart. No code path adds a tool an agent's table did not declare. The one exception is reached by declaration too: an agent whose table names `capabilities` can
 compose a sub-agent out of anything installed, for the length of one task. Two names are out of
 reach even there: `skills`, which only the entry agent may hold, and `capabilities` itself, which
 would hand a worker a fresh composition budget.

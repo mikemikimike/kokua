@@ -437,7 +437,8 @@ approval gate, attach its delegate if it has targets), so a conversation's agent
 sibling's by accident, and there is no mode to branch on.
 
 - **A declaration is the only way capability is granted.** A built-in group, an installed plugin toolset,
-  and a connected MCP server all reach nothing until some agent's `available` names them, and nothing warns
+  and a connected MCP server all reach nothing until some agent's `available` names them (or an agent
+  declares `available = "all"`), and nothing warns
   about a name nothing references (the one startup warning is for a toolset whose own config section
   was written while no agent declares it, whose settings nobody then reads). Startup used to, for names the user had provisioned specifically to
   be reachable, but telling those from the ones that merely ship meant a provenance rule over the whole
@@ -545,10 +546,12 @@ and step 6 its *approval* axis:
 5. **Build.** `registry.build_tools(toolsets, ctx)` calls each `Toolset.build(ctx)` and concatenates,
    deduplicating by `__name__` and keeping the first, so availability order (trust order, for `"all"`)
    decides a collision among toolsets built together. A deferred toolset loaded later is settled by AIMU
-   instead, which keeps the tool the agent already holds and names the one it skipped in the load result.
-   A resident collision is reported: once every startup build is done, `agents.shadowed_tools` reads
-   `LiveState.tools_by_toolset` and `Assistant.start` raises one alert per hidden tool, skipping (and
-   logging at INFO) an agent nothing delegates to, since startup never built it. `ctx` is a
+   instead, which keeps the tool the agent already holds and names the one it skipped in the load result
+   (with its holder: a group's name when the holder was loaded, `a tool given to this agent directly`
+   when it is resident). A resident collision is reported: once every startup build is done,
+   `agents.shadowed_tools` reads `LiveState.tools_by_toolset` and `Assistant.start` raises one alert per
+   hidden tool. Startup builds the entry agent and every worker reachable from it by `delegates_to`, so an
+   agent is skipped (and logged at INFO) when any of its resident toolsets was built by no agent. `ctx` is a
    `ToolsetContext`: the one process-wide `LiveState`, this agent's live object (`None` for a spawned
    worker), and its `agent_name`, which unlike the object is known at every construction site and is how
    a toolset scopes itself to its own holder (`benchmark` asks the config what `agent_name` runs on).
@@ -1005,7 +1008,7 @@ the history replay, because the page is still displaying what it was already dis
 ## Plugins
 
 Two entry-point groups: `kokua.frontends` (a `FrontEnd` with `run(config, args)`) and `kokua.toolsets`
-(a `Toolset` with `build(ctx)`). The built-in `cli`/`web` front ends and the three plugin toolsets are
+(a `Toolset` with `build(ctx)`). The built-in `cli`/`web` front ends and every toolset Kokua ships are
 registered in Kokua's own `pyproject.toml` exactly as a third party would register theirs;
 `plugins.py` discovers them at runtime, and `kokua.plugins` re-exports `Toolset` and `ToolsetContext`
 as the public surface a third party imports. Add a transport or new tools as a plugin, not by editing

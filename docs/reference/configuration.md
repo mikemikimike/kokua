@@ -782,7 +782,9 @@ There is one namespace for every capability, so a name may be an AIMU built-in t
 `fs_write`, `compute`, `time`, `misc`, `audio`, `speech`, `transcription`), one of Kokua's own (`memory`,
 `documents`, `skills`, `capabilities`, `config`, `conversations`, `mcp`, `messaging`, `planning`,
 `scheduling`),
-an installed plugin toolset (`aimu_agents`, `benchmark`, `github_backup`, `image`), a skill in your skills folder
+one of Kokua's optional toolsets (`aimu_agents`, `benchmark`, `github_backup`, `image`, which
+`--list-toolsets` groups with the rest of Kokua's as built-in toolsets), a third-party plugin toolset, a
+skill in your skills folder
 named by its own name, or an MCP server configured under `[[mcp.server]]`, named by its `name`. The list
 does not say which kind a name is. Run `kokua --list-toolsets` for every name this install accepts,
 grouped by what provides it, and `kokua agents` for what each declared agent holds.
@@ -812,8 +814,10 @@ resident = ["web", "misc", "time", "messaging"]
 
 - **It expands in trust order:** Kokua's own toolsets, then third-party plugins, then skills, then MCP
   servers, each kind in the order it registered. Where two resident toolsets offer one tool name, the
-  earlier one's is kept and startup raises an alert naming both; a deferred toolset loaded later keeps
-  whichever tool the agent already holds, and the load result names the one it skipped.
+  earlier one's is kept, and for an agent startup builds (the entry agent and every worker it reaches by
+  `delegates_to`) startup raises an alert naming both. A deferred toolset loaded later keeps whichever
+  tool the agent already holds, and the load result names the one it skipped and its holder: a group's
+  name when the holder was itself loaded, `a tool given to this agent directly` when it is resident.
 - **It leaves out `skills` on any agent but the entry agent,** since a spawned worker cannot host it,
   and it never covers the `core` tools: `spawn_subagent` is still earned by `delegates_to`.
 - **`resident` is required,** and each entry must be within the expansion: an entry nothing installs, or
