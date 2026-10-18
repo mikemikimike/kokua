@@ -1359,13 +1359,15 @@ async def test_a_preloaded_toolsets_approval_entry_is_resolved_before_its_tools_
     config = _preload_config(tmp_path, default_confirm=["web.get_web_content"])
 
     assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
-    await assistant.start()
-    assert "get_web_content" not in assistant._human.policies.for_agent("assistant").confirm
+    try:
+        await assistant.start()
+        assert "get_web_content" not in assistant._human.policies.for_agent("assistant").confirm
 
-    _preloaded(config, ["web"], state=assistant._state)
+        _preloaded(config, ["web"], state=assistant._state)
 
-    assert "get_web_content" in assistant._human.policies.for_agent("assistant").confirm
-    assistant._state.close()
+        assert "get_web_content" in assistant._human.policies.for_agent("assistant").confirm
+    finally:
+        assistant._state.close()
 
 
 def test_a_preload_that_fails_is_skipped_logged_and_still_loadable(tmp_path, caplog):
@@ -1434,3 +1436,108 @@ def test_the_agent_builder_restores_what_the_stored_conversation_loaded(tmp_path
 
     assert names.index("read_document") < names.index("get_web_content")
     assert "get_web_content" not in _tool_names(build("a-conversation-with-no-session"))
+
+
+def test_the_restored_prompt_through_the_production_client_path_names_what_is_still_loadable(tmp_path, monkeypatch):
+    from aimu.sessions import Session, TinyDBSessionStore
+    from kokua.core.agents import build_registry
+    from kokua.core.build import entry_agent_system_message, make_agent_builder
+
+    monkeypatch.setattr("kokua.core.build.build_model_client", _prompted_client)
+    config = _preload_config(tmp_path)
+    config.agents["assistant"].available.append("weekly-review")
+    skill_dir = config.skills_dir / "weekly-review"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: weekly-review\ndescription: Review the week.\n---\nDo it.\n")
+    store = TinyDBSessionStore(str(config.sessions_path))
+    store.save(
+        Session(key="c1", metadata={}, messages=[{"role": "user", "content": "hi"}, _load_call({"name": "web"})])
+    )
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=build_registry(config))
+    build = make_agent_builder(
+        config,
+        state,
+        client_factory=lambda cid: _prompted_client(config, entry_agent_system_message(config, state), "assistant"),
+        store=store,
+        images_path=config.images_path,
+    )
+
+    message = build("c1").model_client.system_message
+
+    assert _WEB_GUIDANCE_SNIPPET in message
+    assert "web" not in message.split("Also available, load before use:")[1]
+    assert "weekly-review" not in message.split("Also available, load before use:")[1]
+
+
+def test_the_entry_agents_own_prompt_does_not_list_skills_as_loadable(tmp_path):
+    from kokua.core.agents import build_registry
+    from kokua.core.build import entry_agent_system_message
+
+    config = _preload_config(tmp_path)
+    config.agents["assistant"].available.append("weekly-review")
+    skill_dir = config.skills_dir / "weekly-review"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: weekly-review\ndescription: Review the week.\n---\nDo it.\n")
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=build_registry(config))
+
+    assert "weekly-review" not in entry_agent_system_message(config, state)
+
+
+def _registry_with_clock_toolset(config):
+    from kokua.core.agents import build_registry
+    from kokua.registry.registry import Toolset
+
+    def convert_time():
+        return "shadow"
+
+    registry = build_registry(config)
+    registry["clock"] = Toolset(name="clock", description="a second clock", build=lambda ctx: [convert_time])
+    return registry
+
+
+def test_a_preload_never_duplicates_a_tool_name_the_agent_already_holds(tmp_path, caplog):
+    config = _residency_config(tmp_path, available=("time", "clock"), resident=("time",))
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=_registry_with_clock_toolset(config))
+
+    with caplog.at_level("WARNING", logger="kokua.core.build"):
+        agent, _ = _preloaded(config, ["clock"], state=state)
+
+    assert _tool_names(agent).count("convert_time") == 1
+    assert "convert_time" in caplog.text and "clock" in caplog.text
+
+
+def test_a_failed_preload_does_not_alert_the_user(tmp_path):
+    config = _residency_config(tmp_path, available=("time", "broken"), resident=("time",))
+    alerts: list[str] = []
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=_registry_with_broken_toolset(config, []))
+    state.alert_soon = alerts.append
+
+    _preloaded(config, ["broken"], state=state)
+
+    assert alerts == []
+
+
+async def test_a_model_driven_load_that_fails_still_alerts_the_user(tmp_path):
+    config = _residency_config(tmp_path, available=("time", "broken"), resident=("time",))
+    alerts: list[str] = []
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=_registry_with_broken_toolset(config, []))
+    state.alert_soon = alerts.append
+    agent, _ = _preloaded(config, [], state=state)
+
+    await agent.load_tool_group("broken")
+
+    assert alerts == ["Loading broken for assistant failed: store locked"]
+
+
+def test_preloads_keep_the_order_they_were_loaded_in_not_the_declared_order(tmp_path):
+    agent, _ = _preloaded(_preload_config(tmp_path), ["web", "documents"])
+
+    names = _tool_names(agent)
+
+    assert names.index("get_web_content") < names.index("read_document")
+
+
+def test_loaded_toolsets_in_strips_the_name_as_the_load_does():
+    from kokua.core.build import loaded_toolsets_in
+
+    assert loaded_toolsets_in([_load_call({"name": " web "})]) == ["web"]

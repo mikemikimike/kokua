@@ -15,6 +15,7 @@ from typing import Callable, Sequence
 
 from aimu import aio
 from aimu.tools import ToolGroup
+from aimu.tools.groups import CORE_TOOL_NAMES
 
 from kokua.config.schema import AssistantConfig
 from kokua.core.transcripts import SPAWN_SUBAGENT_TOOL_NAME
@@ -121,9 +122,12 @@ def entry_agent_system_message(config: AssistantConfig, state: LiveState) -> str
     drifting apart.
     """
     name = config.entry_agent
-    from kokua.core.agents import split_by_residency
+    from kokua.core.agents import split_by_residency, without_skill_names
 
-    toolsets = select(config.agents[name].available, state.registry, agent=name, entry_point=name)
+    # Skills are held back exactly as `wire_agent` holds them back: the entry agent is a SkillAgent, which
+    # already advertises them, so naming them here would offer to load what is not a toolset to load.
+    resolvable = without_skill_names(config.agents[name].available, state.registry)
+    toolsets = select(resolvable, state.registry, agent=name, entry_point=name)
     resident, deferred = split_by_residency(config, name, toolsets)
     return resolve_system_message(config, name, resident, deferred)
 
@@ -198,7 +202,6 @@ def wire_agent(
         return ToolsetContext(state=state, agent=agent, agent_name=agent_name)
 
     while True:
-        still_deferred = [toolset for toolset in deferred if toolset not in loaded]
         agent = aio.SkillAgent(
             resolved_client,
             tools=[],
@@ -208,29 +211,54 @@ def wire_agent(
             concurrent_tool_calls=config.concurrent_tools,
             thinking=config.thinking_for(agent_name),
             max_iterations=config.max_iterations_for(agent_name),
-            tool_groups=tool_groups_for(config, state, agent_name, [*resident, *loaded], still_deferred, context),
+            tool_groups=tool_groups_for(
+                config,
+                state,
+                agent_name,
+                [*resident, *loaded],
+                [toolset for toolset in deferred if toolset not in loaded],
+                context,
+            ),
         )
         agent.tools = build_tools(resident, context())
+        taken = {getattr(fn, "__name__", None) for fn in agent.tools} | set(CORE_TOOL_NAMES)
         failed = []
         for toolset in loaded:
             try:
-                agent.tools.extend(build_deferred(config, state, agent_name, toolset, context))
+                built = build_deferred(config, state, toolset, context)
             except Exception as error:
                 logger.warning("Could not restore the %r toolset for %s: %s", toolset.name, agent_name, error)
                 failed.append(toolset)
+                continue
+            # A name the agent already holds is skipped, as AIMU does for a model-driven load: providers
+            # reject a request carrying two tools of one name.
+            for fn in built:
+                name = getattr(fn, "__name__", None)
+                if name in taken:
+                    logger.warning(
+                        "Restoring %r for %s skipped %r: the agent already has a tool by that name",
+                        toolset.name,
+                        agent_name,
+                        name,
+                    )
+                    continue
+                taken.add(name)
+                agent.tools.append(fn)
         if not failed:
             break
         # A group's residency is fixed when the agent is constructed, so a failure means constructing again
         # with it deferred. What built is built again too, since a toolset like `skills` holds its agent.
         loaded = [toolset for toolset in loaded if toolset not in failed]
 
-    if loaded and getattr(resolved_client, "system_message", None) == resolve_system_message(
-        config, agent_name, resident, deferred
-    ):
-        # Only a message Kokua itself assembled is rewritten: an injected client's own is left alone. The
-        # restored toolsets leave the line naming what is still loadable.
+    if loaded:
+        # Assigned unconditionally: this function owns the final message, since only it knows which
+        # preloads built. The restored toolsets carry their guidance and leave the line naming what is
+        # still loadable.
         resolved_client.system_message = resolve_system_message(
-            config, agent_name, [*resident, *loaded], still_deferred
+            config,
+            agent_name,
+            [*resident, *loaded],
+            [toolset for toolset in deferred if toolset not in loaded],
         )
     agent.tool_approval = state.gate_for(agent_name)
     rebuild_delegation_tool(agent, state)
@@ -271,7 +299,12 @@ def tool_groups_for(
 
     def group(toolset: Toolset, *, is_deferred: bool) -> ToolGroup:
         def build(toolset: Toolset = toolset) -> list:
-            return build_deferred(config, state, agent_name, toolset, context)
+            try:
+                return build_deferred(config, state, toolset, context)
+            except Exception as error:
+                if state.alert_soon is not None:
+                    state.alert_soon(f"Loading {toolset.name} for {agent_name} failed: {error}")
+                raise
 
         return ToolGroup(
             toolset.name,
@@ -287,29 +320,27 @@ def tool_groups_for(
 
 
 def build_deferred(
-    config: AssistantConfig, state: LiveState, agent_name: str, toolset: Toolset, context: Callable[[], ToolsetContext]
+    config: AssistantConfig, state: LiveState, toolset: Toolset, context: Callable[[], ToolsetContext]
 ) -> list:
-    """The tools of one deferred toolset, built for ``agent_name`` and reported to the user if that fails.
+    """The tools of one deferred toolset, through the build every late arrival shares.
 
-    The one build every late arrival goes through, whether the model asked for it with ``load_tools`` or a
-    rebuilt agent is restoring it, so the connected-server check, the approval hook, and the alert are the
-    same either way. The error is raised again after the alert: the caller decides what the reader of the
-    failure is.
+    Whether the model asked for it with ``load_tools`` or a rebuilt agent is restoring it, the
+    connected-server check and the approval hook are the same. Who is told of a failure is the caller's
+    call: a load the model asked for alerts the user, while a restore stays in the log, since a rebuild
+    happens on restart or when a conversation is switched back to and nobody asked for anything.
     """
     server_urls = {server.name: server.url for server in config.mcp_servers}
-    try:
-        url = server_urls.get(toolset.name)
-        if url is not None and not any(getattr(c, "url", None) == url for c in state.connections):
-            raise ConnectionError(f"the MCP server {toolset.name!r} ({url}) is not connected")
-        return build_tools([toolset], context())
-    except Exception as error:
-        if state.alert_soon is not None:
-            state.alert_soon(f"Loading {toolset.name} for {agent_name} failed: {error}")
-        raise
+    url = server_urls.get(toolset.name)
+    if url is not None and not any(getattr(c, "url", None) == url for c in state.connections):
+        raise ConnectionError(f"the MCP server {toolset.name!r} ({url}) is not connected")
+    return build_tools([toolset], context())
 
 
 def loaded_toolsets_in(messages: list[dict]) -> list[str]:
-    """The toolsets a conversation's model loaded, by name, in the order it first loaded each.
+    """The toolsets a conversation's model asked to load, by name, in the order it first asked for each.
+
+    A request that failed or named nothing real is harmless to replay: restoring skips what is not
+    deferred and logs what will not build.
 
     Read from the stored assistant tool calls rather than kept separately, so there is no second record to
     drift from the transcript. A call's arguments are a dict or a JSON string depending on the provider;
@@ -330,7 +361,8 @@ def loaded_toolsets_in(messages: list[dict]) -> list[str]:
                 except ValueError:
                     continue
             name = arguments.get("name") if isinstance(arguments, dict) else None
-            if isinstance(name, str) and name not in names:
+            name = name.strip() if isinstance(name, str) else None
+            if name and name not in names:
                 names.append(name)
     return names
 
