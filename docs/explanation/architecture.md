@@ -556,10 +556,13 @@ and step 6 its *approval* axis:
    `load_tools`, a composed worker, or a rebuilt agent's preload. An entry that still matches nothing, or
    (with auto-approval enabled) a `review` list that now reaches the floor, raises there and refuses the
    build, every time, so a misnamed gate fails closed. Both objects are swapped under one lock, since a
-   deferred build runs in a worker thread. Which toolsets count as deferred here is
-   `agents.loadable_toolsets`, not the bare declaration: wiring holds the entry agent's skill names back
-   before the split (its `SkillAgent` already holds every skill), so a gate on one of those skills
-   resolves at startup instead of waiting for a build that never comes.
+   deferred build runs in a worker thread. Whether an entry waits is decided in one place,
+   `agents.built_toolsets`: every toolset a `build_tools` call has recorded, plus every skill the entry
+   agent's `SkillAgent` holds (every skill when it declares `skills`, otherwise the skills it names). AIMU builds that skills server itself, so no build ever records
+   it, yet its tools exist from the first turn; counting it as built is what keeps a gate on such a
+   skill from waiting forever, whichever agents could also load it later. (Whether an agent carries the
+   loaders at all is a separate question, `agents.loadable_toolsets`, which follows wiring in leaving
+   the entry agent's skills out of its deferred set.)
    `HumanGate.approve(agent, name, arguments)` then looks the calling agent's policy up at call time. The
    gate is bound to each agent's name through `LiveState.gate_for`: the entry agent gets its own, a delegated worker gets its own through the spawn
    spec's `"tool_approval"` key (AIMU 0.37.0), and a composed worker is bound to `composed:<label>` and

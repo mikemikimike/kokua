@@ -138,8 +138,10 @@ of the conversation even after it came back.
 
 ### What a load checks: approval, before any tool is callable
 
-An approval entry naming a deferred toolset that no agent holds resident cannot be resolved at startup,
-because a tool name exists only once its toolset has built it. So startup checks the entry's shape and
+An approval entry naming a deferred toolset that is not built yet cannot be resolved at startup,
+because a tool name exists only once its toolset has built it. A toolset some agent holds resident is
+built at startup, and so is every skill the entry agent's `SkillAgent` holds (every skill when it declares `skills`, otherwise the skills it names); an entry on
+either resolves there like any other. So startup checks the entry's shape and
 holds it as *pending*, and the build resolves it: `build_tools` reports each toolset it builds to a
 hook, and the hook resolves the waiting entries before a single tool is returned. That holds whoever builds the toolset: the model's
 `load_tools`, a [composed worker](architecture.md#agents-and-delegation), or a rebuilt agent restoring

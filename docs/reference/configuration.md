@@ -810,12 +810,12 @@ every available toolset is resident. Why the axis exists, and what a load costs 
   unlocked. Order does not matter: tools are presented in `available` order.
 - **An empty list is legal** and defers everything `available` names.
 - **A skill name on the entry agent is unaffected.** The entry agent is a `SkillAgent`, which advertises
-  every skill in its catalogue whatever this list says, so a skill there is never deferred, and an
-  approval entry naming it resolves at startup like any other. A skill named by a worker defers like any
-  other toolset.
+  every skill in its catalogue whatever this list says, so a skill there is never deferred. A skill
+  named by a worker defers like any other toolset.
 - **An approval entry naming a deferred toolset is checked when the toolset is built,** not at startup,
-  since its tool names do not exist until then (unless some other agent holds it resident, which builds
-  it at startup). An entry that matches nothing then refuses the build, so the toolset will not load
+  since its tool names do not exist until then. Two cases are built at startup and so resolve there:
+  a toolset some other agent holds resident, and a skill the entry agent's `SkillAgent` holds (every skill when it declares `skills`, otherwise the skills it names),
+  even when a worker could also load that skill later. An entry that matches nothing then refuses the build, so the toolset will not load
   until you fix the entry and restart.
 - **A deferred MCP server that is not connected refuses to load**, and stays loadable for a retry once it
   is, where a resident one builds empty.
