@@ -614,6 +614,65 @@ def test_agents_command_shows_a_declared_pair_source(monkeypatch, tmp_path, caps
     assert "  confirm:   compute.run_command  (from [agents.coder.tools])" in capsys.readouterr().out
 
 
+_CODER_AVAILABLE = 'available = ["fs", "fs_write", "compute", "time", "messaging"]'
+
+
+def _declare_coder_all(text):
+    assert _CODER_AVAILABLE in text
+    return text.replace(_CODER_AVAILABLE, 'available = "all"\nresident = ["time"]')
+
+
+def _coder_config_and_registry():
+    from kokua.core.agents import build_registry
+
+    config = resolve_config(build_arg_parser().parse_args([]))
+    return config, build_registry(config)
+
+
+def test_agents_command_expands_all_in_trust_order(monkeypatch, tmp_path, capsys):
+    from kokua.core.agents import available_for
+
+    _write_example_config(monkeypatch, tmp_path, _declare_coder_all)
+    config, registry = _coder_config_and_registry()
+    expanded = available_for(config, registry, "coder")
+
+    _run_main(monkeypatch, ["agents"])
+
+    out = capsys.readouterr().out
+    assert f"  available: all ({len(expanded)}): {', '.join(expanded)}" in out
+    assert "  resident:  time" in out
+
+
+def test_summary_counts_an_all_agent(monkeypatch, tmp_path):
+    from kokua.cli import access_summary_lines
+    from kokua.core.agents import available_for
+
+    _write_example_config(monkeypatch, tmp_path, _declare_coder_all)
+    config, registry = _coder_config_and_registry()
+    expanded = available_for(config, registry, "coder")
+
+    lines = access_summary_lines(config, registry)
+
+    coder = next(line for line in lines if line.startswith("coder:"))
+    assert coder.startswith(f"coder: all ({len(expanded)}) available, 1 resident, ")
+
+
+def test_summary_is_skipped_when_the_registry_cannot_assemble(monkeypatch, tmp_path, capsys):
+    from kokua.cli import print_access_summary
+    from kokua.registry.registry import ToolsetError
+
+    def collide(config):
+        raise ToolsetError("two toolsets claim the name 'dup'")
+
+    _write_example_config(monkeypatch, tmp_path)
+    config, _ = _coder_config_and_registry()
+    monkeypatch.setattr("kokua.core.agents.build_registry", collide)
+
+    print_access_summary(config)
+
+    assert capsys.readouterr().err == ""
+
+
 def test_agents_command_reports_a_bad_config_and_exits_2(monkeypatch, tmp_path, capsys):
     def break_coder(text):
         broken = text.replace(

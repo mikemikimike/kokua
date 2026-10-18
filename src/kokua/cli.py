@@ -33,7 +33,7 @@ from .aimu_compat import AimuVersionError, require_aimu
 from kokua.config import file as settings
 from kokua.config import AssistantConfig, ConfigError, MCPServerConfig
 from kokua.config import settings_sources
-from kokua.config.schema import DEFAULT_POLICY_SOURCE
+from kokua.config.schema import ALL_TOOLSETS, DEFAULT_POLICY_SOURCE
 from kokua.config.store import disambiguate_name, name_from_url
 
 # Safe at module level, unlike kokua.core.agents below: `from . import plugins` above already imports
@@ -381,7 +381,7 @@ def format_agent_access(config: AssistantConfig, registry: ToolsetRegistry) -> l
     """
 
     # Deferred for the reason `_print_toolsets` defers its import.
-    from kokua.core.agents import resident_for
+    from kokua.core.agents import available_for, resident_for
 
     def entries(names: list[str]) -> str:
         return ", ".join(names) if names else "(none)"
@@ -392,9 +392,13 @@ def format_agent_access(config: AssistantConfig, registry: ToolsetRegistry) -> l
         resident = (
             entries(resident_for(config, registry, name)) if agent.resident is not None else "every available toolset"
         )
+        toolsets = available_for(config, registry, name)
+        available = entries(toolsets)
+        if agent.available is ALL_TOOLSETS:
+            available = f"all ({len(toolsets)}): {available}"
         lines += [
             name,
-            f"  available: {entries(agent.available)}",
+            f"  available: {available}",
             f"  resident:  {resident}",
             f"  confirm:   {entries(confirm)}  (from {source})",
             f"  review:    {entries(review)}  (from {source})",
@@ -408,15 +412,19 @@ def format_agent_access(config: AssistantConfig, registry: ToolsetRegistry) -> l
 def access_summary_lines(config: AssistantConfig, registry: ToolsetRegistry) -> list[str]:
     """One line per declared agent, in entries rather than resolved tool names.
 
-    Runs at startup before anything is built, so it can only count what the config declares.
+    Runs at startup before anything is built, so it counts declarations, with an ``"all"`` agent expanded
+    against the registry and its count shown beside the word.
     """
     # Deferred for the reason `_print_toolsets` defers its import.
-    from kokua.core.agents import resident_for
+    from kokua.core.agents import available_for, resident_for
 
     lines = []
     for name, agent in config.agents.items():
         confirm, review, source = config.approval_entries_for(name)
-        available, resident = len(agent.available), len(resident_for(config, registry, name))
+        available = str(len(available_for(config, registry, name)))
+        if agent.available is ALL_TOOLSETS:
+            available = f"all ({available})"
+        resident = len(resident_for(config, registry, name))
         line = f"{name}: {available} available, {resident} resident, {len(confirm)} confirm, {len(review)} review"
         line += f" (from {source})"
         lines.append(line)
