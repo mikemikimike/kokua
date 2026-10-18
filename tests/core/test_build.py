@@ -381,8 +381,15 @@ async def test_undeclaring_the_store_toolsets_drops_exactly_their_tools(tmp_path
     loses exactly their tools, with nothing else disturbed."""
     config = _config(tmp_path, agents=_without("memory", "documents"))
     assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    # Undeclared, not merely deferred: `documents` is in neither list, so no load can bring it back.
+    assert "documents" not in assistant._config.resident_for("assistant")
+    assert "documents" not in assistant._config.deferred_for("assistant")
+    for toolset in assistant._config.deferred_for("assistant"):
+        await assistant._agent.load_tool_group(toolset)
     names = {fn.__name__ for fn in assistant._agent._effective_tools(None)}
-    assert names == _resident_expected() - _expected({"memory": STORE_TOOLS["aimu make_memory_tools"]})
+    inventory = {**ENTRY_AGENT_TOOLS, **STORE_TOOLS}
+    without_stores = {source: tools for source, tools in inventory.items() if source not in STORE_TOOLS}
+    assert names == _expected(without_stores) | LOADER_TOOLS
     assistant._state.close()
 
 
@@ -625,8 +632,12 @@ def test_memory_stores_are_not_built_until_a_toolset_asks(tmp_path):
 async def test_no_store_declaration_omits_the_tools_and_the_stores(tmp_path):
     config = _config(tmp_path, agents=_without("memory", "documents"))
     assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
-    names = {fn.__name__ for fn in assistant._agent.tools}
+    names = {fn.__name__ for fn in assistant._agent._effective_tools(None)}
     assert _MEMORY_TOOL_NAMES.isdisjoint(names)
+    # Deferred would also leave the tools and stores unbuilt, so undeclared is asserted separately.
+    assert "documents" not in assistant._config.agents["assistant"].available
+    assert "load_tools" in names
+    assert (await assistant._agent.load_tool_group("documents")).startswith("No tool group named 'documents'")
     assert assistant._memory_store is None
     assert assistant._document_store is None
 

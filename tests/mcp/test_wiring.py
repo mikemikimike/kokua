@@ -38,7 +38,8 @@ async def _mcp_tools(assistant) -> list:
     """The entry agent's tools with the `mcp` toolset in them: the shipped entry agent defers it, so a
     test reaching for `add_mcp_server` loads it the way the model would."""
     if "mcp" in assistant._config.deferred_for("assistant"):
-        await assistant._agent.load_tool_group("mcp")
+        result = await assistant._agent.load_tool_group("mcp")
+        assert result.startswith(("Loaded 'mcp':", "'mcp' is already loaded")), result
     return assistant._agent._effective_tools(None)
 
 

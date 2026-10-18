@@ -9,7 +9,7 @@ import pytest
 from aimu.aio.channels.base import Channel, ChannelMessage
 
 from kokua.config import ConfigError
-from kokua.config.schema import AssistantConfig, ReviewerConfig
+from kokua.config.schema import AgentConfig, AssistantConfig, ReviewerConfig
 from kokua.core.assistant import Assistant
 from tests.channels import AlertCapturingChannel, FakeChannel, _config
 from tests.fakes import _RequestsToolOnce
@@ -399,7 +399,7 @@ async def test_the_delegation_tool_is_gateable(tmp_path):
     assert await _gated(tmp_path, ["core.spawn_subagent"]) == {"spawn_subagent"}
 
 
-async def test_the_reserved_namespace_gates_both_of_its_members(tmp_path):
+async def test_the_reserved_namespace_also_gates_the_loaders_when_something_is_deferred(tmp_path):
     config = _config(tmp_path, default_confirm=["core"])
     _write_skill(config)
     assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
@@ -729,6 +729,9 @@ async def test_the_shipped_example_resolves_to_todays_gate(tmp_path):
     # calls are held: two of them resolve on load instead of at startup.
     after_load = assistant._human.policies.default
     assert after_load.pending_confirm == frozenset()
+    # A pending confirm entry must land in confirm, not review: review is the half a model can approve.
+    assert after_load.confirm == {"add_skill_script", "add_mcp_server", "update_config"}
+    assert after_load.review == {"execute_python", "run_command", "write_file", "edit_file"}
     assert after_load.gated == {
         "add_skill_script",
         "add_mcp_server",
@@ -738,6 +741,19 @@ async def test_the_shipped_example_resolves_to_todays_gate(tmp_path):
         "edit_file",
         "update_config",
     }
+    assistant._state.close()
+
+
+async def test_the_reserved_namespace_has_no_loaders_without_a_deferred_toolset(tmp_path):
+    agents = {
+        "assistant": AgentConfig(available=["time", "weekly-digest"], delegates_to=["helper"]),
+        "helper": AgentConfig(description="Helps.", available=["time"]),
+    }
+    config = _config(tmp_path, agents=agents, default_confirm=["core"])
+    _write_skill(config)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    await assistant.start()
+    assert assistant._human.policies.default.gated == {"spawn_subagent", "activate_skill"}
     assistant._state.close()
 
 
