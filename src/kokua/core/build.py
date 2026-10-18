@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from aimu import aio
+from aimu.tools import ToolGroup
 
 from kokua.config.schema import AssistantConfig
 from kokua.core.transcripts import SPAWN_SUBAGENT_TOOL_NAME
@@ -25,18 +26,21 @@ class ModelClientError(RuntimeError):
     front end can present it instead of a traceback."""
 
 
-def resolve_system_message(config: AssistantConfig, agent_name: str, toolsets: Sequence[Toolset]) -> str:
+def resolve_system_message(
+    config: AssistantConfig, agent_name: str, toolsets: Sequence[Toolset], deferred: Sequence[Toolset] = ()
+) -> str:
     """One agent's system prompt: its declared opener plus the guidance its toolsets and delegation earn.
 
     Shared by every path that builds a client for an agent, so each one gives it the same message the
-    agent's toolsets and delegation earn rather than recomputing a possibly different one.
+    agent's toolsets and delegation earn rather than recomputing a possibly different one. ``toolsets``
+    are the resident ones; ``deferred`` are named in the prompt and bring their guidance when loaded.
     """
     # Imported here, not at module level: kokua.core.agents pulls in kokua.toolsets.core, which pulls
     # in kokua.core.transcripts -- a submodule of this package -- and importing it triggers kokua/core/__init__
     # to run, which imports this module. A top-level import here would close that cycle.
     from kokua.core.agents import assemble_system_message
 
-    return assemble_system_message(config, agent_name, toolsets)
+    return assemble_system_message(config, agent_name, toolsets, deferred)
 
 
 def build_model_client(config: AssistantConfig, system_message: str, agent_name: str):
@@ -112,8 +116,11 @@ def entry_agent_system_message(config: AssistantConfig, state: LiveState) -> str
     drifting apart.
     """
     name = config.entry_agent
+    from kokua.core.agents import split_by_residency
+
     toolsets = select(config.agents[name].available, state.registry, agent=name, entry_point=name)
-    return resolve_system_message(config, name, toolsets)
+    resident, deferred = split_by_residency(config, name, toolsets)
+    return resolve_system_message(config, name, resident, deferred)
 
 
 def wire_agent(config: AssistantConfig, state: LiveState, agent_name: str, *, client=None) -> aio.SkillAgent:
@@ -150,14 +157,22 @@ def wire_agent(config: AssistantConfig, state: LiveState, agent_name: str, *, cl
     """
     # Imported here, not at module level: see the comment in resolve_system_message -- the same cycle
     # runs through kokua.core.agents.
-    from kokua.core.agents import without_skill_names
+    from kokua.core.agents import split_by_residency, without_skill_names
 
     resolvable = without_skill_names(config.agents[agent_name].available, state.registry)
     toolsets = select(resolvable, state.registry, agent=agent_name, entry_point=config.entry_agent)
+    resident, deferred = split_by_residency(config, agent_name, toolsets)
     resolved_client = client
     if resolved_client is None:
-        resolved_client = build_model_client(config, resolve_system_message(config, agent_name, toolsets), agent_name)
+        resolved_client = build_model_client(
+            config, resolve_system_message(config, agent_name, resident, deferred), agent_name
+        )
 
+    # The context is made before the agent because the agent is constructed with the groups that hold it
+    # (a group's build closes over this context), and the agent is filled in just after. A deferred
+    # `skills` toolset needs the live agent at build time (`add_skill_script` reloads it), and a load can
+    # only happen once the agent exists, so nothing reads the field while it is still empty.
+    context = ToolsetContext(state=state, agent=None, agent_name=agent_name)
     agent = aio.SkillAgent(
         resolved_client,
         tools=[],
@@ -167,11 +182,59 @@ def wire_agent(config: AssistantConfig, state: LiveState, agent_name: str, *, cl
         concurrent_tool_calls=config.concurrent_tools,
         thinking=config.thinking_for(agent_name),
         max_iterations=config.max_iterations_for(agent_name),
+        tool_groups=tool_groups_for(config, state, agent_name, resident, deferred, context),
     )
-    agent.tools = build_tools(toolsets, ToolsetContext(state=state, agent=agent, agent_name=agent_name))
+    object.__setattr__(context, "agent", agent)
+    agent.tools = build_tools(resident, context)
     agent.tool_approval = state.gate_for(agent_name)
     rebuild_delegation_tool(agent, state)
     return agent
+
+
+def tool_groups_for(
+    config: AssistantConfig,
+    state: LiveState,
+    agent_name: str,
+    resident: Sequence[Toolset],
+    deferred: Sequence[Toolset],
+    ctx: ToolsetContext,
+) -> list[ToolGroup]:
+    """The tool groups one agent carries: its resident toolsets listed, its deferred ones loadable.
+
+    A resident group has no ``build``, since its tools are already in the agent's own list and it exists
+    so ``available_tools`` shows the whole picture. A deferred group's ``build`` is ``build_tools`` over
+    that one toolset, the same call a resident toolset goes through at wiring, which is what keeps tool
+    recording and the approval gate identical however late a toolset arrives. Its guidance rides the
+    group and reaches the model when it loads, instead of sitting in the prompt from the first turn.
+
+    A build failure is raised again after the user is told: AIMU turns the exception into the text the
+    model reads, and nothing else would tell the person that a capability they expected did not arrive.
+    """
+    # Imported here, not at module level: see the comment in resolve_system_message.
+    from kokua.core.agents import approval_note
+
+    confirm, review, _ = config.approval_entries_for(agent_name)
+
+    def group(toolset: Toolset, *, is_deferred: bool) -> ToolGroup:
+        def build(toolset: Toolset = toolset) -> list:
+            try:
+                return build_tools([toolset], ctx)
+            except Exception as error:
+                if state.alert_soon is not None:
+                    state.alert_soon(f"Loading {toolset.name} for {agent_name} failed: {error}")
+                raise
+
+        return ToolGroup(
+            toolset.name,
+            toolset.description,
+            build=build if is_deferred else None,
+            guidance=toolset.guidance if is_deferred else "",
+            note=approval_note(confirm, review, toolset.name),
+        )
+
+    return [group(toolset, is_deferred=False) for toolset in resident] + [
+        group(toolset, is_deferred=True) for toolset in deferred
+    ]
 
 
 def make_agent_builder(

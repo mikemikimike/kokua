@@ -998,3 +998,42 @@ async def test_assistant_hook_is_a_no_op_before_policies_exist_and_replaces_them
     assistant._on_toolset_built("mcp", frozenset({"add_mcp_server"}))
     assert assistant._human.policies is not before  # replaced, never mutated
     assistant._state.close()
+
+
+async def test_a_worker_composed_with_a_deferred_toolset_is_gated_by_the_pending_entry(tmp_path, monkeypatch):
+    """The only declared holder of ``mcp`` defers it, so it is unbuilt at startup and its approval entry is
+    pending. Composing a worker with ``mcp`` builds it through ``build_tools``, which resolves the entry
+    before any tool reaches the worker, so the worker's own policy gates ``add_mcp_server``."""
+    import kokua.core.agents  # noqa: F401  (bind the real spawn factory before the patch below)
+    from kokua.config.schema import AgentConfig
+    from kokua.registry.context import ToolsetContext
+    from kokua.toolsets.capabilities import make_capability_tools
+
+    class _Spawn:
+        def __call__(self, model, **kwargs):
+            async def spawn_subagent(agent_type: str, task: str, ctx=None) -> str:
+                return "ran"
+
+            return spawn_subagent
+
+    monkeypatch.setattr("aimu.aio.tools.builtin.make_async_subagent_tool", _Spawn())
+    config = _config(
+        tmp_path,
+        agents={"assistant": AgentConfig(available=["time", "mcp", "capabilities"], resident=["time", "capabilities"])},
+        default_confirm=["mcp.add_mcp_server"],
+    )
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    await assistant.start()
+    assert "mcp" not in assistant._state.tools_by_toolset or not assistant._state.tools_by_toolset["mcp"]
+
+    compose = next(
+        fn
+        for fn in make_capability_tools(ToolsetContext(state=assistant._state, agent=object(), agent_name="assistant"))
+        if fn.__name__ == "compose_subagent"
+    )
+    label = "composed:registrar"
+    assert "add_mcp_server" not in assistant._human.policies.for_agent(label).confirm  # still pending
+
+    await compose("registrar", "Add a server.", ["mcp"], "Manage servers.")
+
+    assert "add_mcp_server" in assistant._human.policies.for_agent(label).confirm

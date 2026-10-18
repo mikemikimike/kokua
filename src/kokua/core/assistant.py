@@ -176,6 +176,11 @@ class Assistant:
         # end them: a task that outlives `self._store.close()` writes to a closed file, out of a task
         # nobody is watching -- the same failure invariant 7 in `core/turns.py` describes for turns.
         self._title_tasks: set[asyncio.Task] = set()
+        # The event loop `start()` ran on, and the alerts scheduled onto it from worker threads (see
+        # `_alert_soon`). Held for the same reason as the title tasks: an unreferenced task can be
+        # collected before it runs.
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._alert_tasks: set[asyncio.Task] = set()
         # Whether `start()` has run. Set before its body rather than after, so a failed start is
         # terminal for this assistant instead of leaving a retry that would connect every MCP server
         # a second time. Both front ends abort on that failure, which is what makes terminal the
@@ -281,6 +286,7 @@ class Assistant:
         # Assigned after construction because it closes over assistant._registry, which is built below it.
         state.for_each_agent = for_each_agent
         state.toolset_built = assistant._on_toolset_built
+        state.alert_soon = assistant._alert_soon
         assistant._state = state
         assistant._tasks = state.tasks
         # The workflow context needs the shared toolset state, which does not exist until here.
@@ -320,6 +326,7 @@ class Assistant:
         if self._started:
             return
         self._started = True
+        self._loop = asyncio.get_running_loop()
         # Imported here, not at module level, for the cycle `create` documents above.
         from kokua.core.agents import configured_but_undeclared
         from kokua.core.approval import resolve_approval_policies
@@ -978,6 +985,25 @@ class Assistant:
         whose policy it is judged by.
         """
         return functools.partial(self._human.approve, agent_name)
+
+    def _alert_soon(self, text: str) -> None:
+        """Raise ``text`` as an alert from any thread, doing nothing until ``start`` has captured the loop.
+
+        A deferred toolset builds in a worker thread, where ``ChannelUI.alert`` (a coroutine) cannot be
+        awaited, so the call is handed to the loop that owns the channel. Dropping the alert before
+        ``start`` is deliberate: nothing can load a toolset before an agent exists, so only a caller
+        outside the serve path reaches that state, and it has no one to alert.
+        """
+        loop = self._loop
+        if loop is None:
+            return
+
+        def schedule() -> None:
+            task = loop.create_task(self._ui.alert(text))
+            self._alert_tasks.add(task)
+            task.add_done_callback(self._alert_tasks.discard)
+
+        loop.call_soon_threadsafe(schedule)
 
     def _on_toolset_built(self, toolset: str, tool_names: frozenset[str]) -> None:
         """Resolve the approval entries waiting on ``toolset``, now that it has built its tools.

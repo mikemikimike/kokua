@@ -11,8 +11,8 @@ from kokua.config.schema import AgentConfig, ReviewerConfig
 from kokua.core.assistant import Assistant
 from kokua.registry.context import LiveState
 from kokua.mcp.auth import OAuthSettings
-from tests.channels import FakeChannel, _config, example_agents
-from tests.fakes import _FakeMCP, _await_value, _fake_mcp_tool, _offline_until_connected
+from tests.channels import AlertCapturingChannel, FakeChannel, _config, example_agents, planning_settings
+from tests.fakes import _RequestsToolOnce, _FakeMCP, _await_value, _fake_mcp_tool, _offline_until_connected
 from tests.helpers import MockAsyncModelClient, allow_all_gates
 
 
@@ -988,3 +988,143 @@ def test_a_toolset_is_told_which_agent_it_is_building_for(tmp_path):
     wire_agent(cfg, state, cfg.entry_agent, client=MockAsyncModelClient([]))
 
     assert holders == [cfg.entry_agent]
+
+
+# --- Residency: a deferred toolset is built when the model loads it, a resident one at wiring ----------
+
+_WEB_GUIDANCE_SNIPPET = "training cutoff"
+
+
+def _residency_config(tmp_path, *, available=("memory", "time", "web"), resident=("memory", "time"), **overrides):
+    # No default gate: the shipped one names toolsets this small agent does not declare, which startup
+    # refuses, and these tests are about residency rather than approval.
+    overrides.setdefault("default_confirm", [])
+    return _config(
+        tmp_path,
+        agents={"assistant": AgentConfig(available=list(available), resident=list(resident))},
+        **overrides,
+    )
+
+
+def _wired(config, state=None):
+    from kokua.core.agents import build_registry
+    from kokua.core.build import wire_agent
+
+    if state is None:
+        state = LiveState(gate_for=allow_all_gates, config=config, registry=build_registry(config))
+    return wire_agent(config, state, "assistant", client=MockAsyncModelClient([])), state
+
+
+def _tool_names(agent) -> list[str]:
+    return [fn.__name__ for fn in agent._effective_tools(None)]
+
+
+async def test_a_deferred_toolset_is_not_in_the_entry_agents_tools_until_loaded(tmp_path):
+    agent, _ = _wired(_residency_config(tmp_path))
+    names = _tool_names(agent)
+    assert "get_web_content" not in names and "load_tools" in names
+    assert (await agent.load_tool_group("web")).startswith("Loaded 'web':")
+    assert "get_web_content" in _tool_names(agent)
+
+
+async def test_the_prompt_names_deferred_toolsets_and_omits_their_guidance(tmp_path):
+    from kokua.core.build import entry_agent_system_message
+
+    config = _residency_config(tmp_path)
+    _, state = _wired(config)
+    message = entry_agent_system_message(config, state)
+    assert "Also available, load before use: web." in message
+    assert _WEB_GUIDANCE_SNIPPET not in message
+
+
+async def test_the_prompt_has_no_names_line_when_nothing_is_deferred(tmp_path):
+    from kokua.core.build import entry_agent_system_message
+
+    config = _residency_config(tmp_path, resident=("memory", "time", "web"))
+    _, state = _wired(config)
+    message = entry_agent_system_message(config, state)
+    assert "load before use" not in message
+    assert _WEB_GUIDANCE_SNIPPET in message
+
+
+async def test_loading_returns_the_toolsets_guidance(tmp_path):
+    agent, _ = _wired(_residency_config(tmp_path))
+    assert _WEB_GUIDANCE_SNIPPET in await agent.load_tool_group("web")
+
+
+async def test_calling_a_deferred_tool_before_loading_points_at_loading(tmp_path):
+    config = _residency_config(tmp_path)
+    client = _RequestsToolOnce("get_web_content", {"url": "https://example.com"})
+    assistant = await Assistant.create(config, FakeChannel(), client=client)
+    await assistant.start()
+
+    await assistant._agent.run("go")
+
+    results = [m["content"] for m in client.messages if m.get("role") == "tool"]
+    assert results and "call available_tools to see what you can load, then load_tools" in results[-1]
+    assert "get_web_content" not in _tool_names(assistant._agent)
+
+
+async def test_two_conversations_load_independently(tmp_path):
+    from kokua.core.build import wire_agent
+
+    config = _residency_config(tmp_path)
+    first, state = _wired(config)
+    second = wire_agent(config, state, "assistant", client=MockAsyncModelClient([]))
+    await first.load_tool_group("web")
+    assert "get_web_content" in _tool_names(first)
+    assert "get_web_content" not in _tool_names(second)
+
+
+def _registry_with_broken_toolset(config, builds: list):
+    from kokua.core.agents import build_registry
+    from kokua.registry.registry import Toolset
+
+    def explode(ctx):
+        builds.append(1)
+        raise RuntimeError("store locked")
+
+    registry = build_registry(config)
+    registry["broken"] = Toolset(name="broken", description="always fails", build=explode)
+    return registry
+
+
+async def test_a_failing_deferred_build_reports_to_the_model_and_the_user(tmp_path, monkeypatch):
+    import asyncio
+
+    config = _residency_config(tmp_path, available=("time", "broken"), resident=("time",))
+    builds: list = []
+    monkeypatch.setattr("kokua.core.agents.validated_registry", lambda cfg: _registry_with_broken_toolset(cfg, builds))
+    channel = AlertCapturingChannel()
+    assistant = await Assistant.create(config, channel, client=MockAsyncModelClient([]))
+    await assistant.start()
+
+    assert (await assistant._agent.load_tool_group("broken")) == "Could not load 'broken': store locked"
+    for _ in range(20):
+        if channel.alerts:
+            break
+        await asyncio.sleep(0.01)
+    assert [text for text, *_ in channel.alerts] == ["Loading broken for assistant failed: store locked"]
+
+    await assistant._agent.load_tool_group("broken")
+    assert len(builds) == 2  # the group stays loadable, so a second load retries the build
+
+
+async def test_alert_soon_is_a_no_op_before_the_assistant_has_started(tmp_path):
+    assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
+    assistant._state.alert_soon("nobody is listening yet")  # must not raise
+
+
+def test_a_deferred_toolset_carrying_a_workflow_still_offers_its_command(tmp_path):
+    from kokua.core.agents import build_command_map, build_registry
+
+    config = _residency_config(
+        tmp_path, available=("time", "planning"), resident=("time",), toolset_settings=planning_settings()
+    )
+    commands = build_command_map(config, build_registry(config))
+    assert "plan" in commands
+
+
+def test_the_shipped_entry_agent_has_no_deferred_group(tmp_path):
+    agent, _ = _wired(_config(tmp_path))
+    assert "load_tools" not in _tool_names(agent)

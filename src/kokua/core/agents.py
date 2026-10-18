@@ -429,8 +429,55 @@ LEAN_DELEGATION_GUIDANCE = (
 )
 
 
-def assemble_system_message(config: AssistantConfig, agent_name: str, toolsets: Sequence[Toolset]) -> str:
+def split_by_residency(
+    config: AssistantConfig, agent_name: str, toolsets: Sequence[Toolset]
+) -> tuple[list[Toolset], list[Toolset]]:
+    """``toolsets`` divided into what ``agent_name`` holds from its first turn and what it loads on demand.
+
+    Both halves keep the order they arrived in. ``toolsets`` may be a subset of the agent's declaration
+    (the entry agent's skill names are held back before this runs), so membership is decided by name
+    against ``resident_for`` rather than by position.
+    """
+    resident_names = set(config.resident_for(agent_name))
+    resident = [toolset for toolset in toolsets if toolset.name in resident_names]
+    deferred = [toolset for toolset in toolsets if toolset.name not in resident_names]
+    return resident, deferred
+
+
+def approval_note(confirm: list[str], review: list[str], toolset: str) -> str:
+    """What the model is told about which of ``toolset``'s tools ask before they run, or "" for none.
+
+    Shown beside a toolset in ``available_tools``, so a model choosing what to load knows a gated tool
+    will stop for an answer before it plans around the tool. Entries speak the gate's own vocabulary
+    (``toolset``, ``toolset.*``, ``toolset.tool``) and both lists count, since a reviewed call is a
+    gated call that a person may still be asked about.
+    """
+    tools: set[str] = set()
+    for entry in [*confirm, *review]:
+        name, _, tool = entry.partition(_GATE_SEPARATOR)
+        if name != toolset:
+            continue
+        if tool in ("", _GATE_WILDCARD):
+            return "Asks first: every tool."
+        tools.add(tool)
+    if not tools:
+        return ""
+    return f"Asks first: {', '.join(sorted(tools))}."
+
+
+def assemble_system_message(
+    config: AssistantConfig,
+    agent_name: str,
+    toolsets: Sequence[Toolset],
+    deferred: Sequence[Toolset] = (),
+) -> str:
     """One agent's full system message: its opener plus the guidance it earned.
+
+    ``toolsets`` are the ones the agent holds from its first turn, and only their guidance is written
+    in: a deferred toolset's guidance arrives with the tools themselves, when the model loads them, so
+    the prompt pays for nothing the agent is not yet using. The deferred ones are named in one line, so
+    the model knows there is something to load, and they still count toward whether the agent is a lean
+    supervisor: an agent that can load a domain toolset is not short on tools.
 
     Guidance travels with the capability that needs it, so installing a toolset brings the instructions
     that make the model use it and removing one takes them away. Nothing here is conditional on a
@@ -450,9 +497,11 @@ def assemble_system_message(config: AssistantConfig, agent_name: str, toolsets: 
         opener = agent.system_message or config.system_message or DEFAULT_SYSTEM_MESSAGE
     parts = [opener]
     parts.extend(toolset.guidance for toolset in toolsets if toolset.guidance)
+    if deferred:
+        parts.append(f" Also available, load before use: {', '.join(toolset.name for toolset in deferred)}.")
     if agent.delegates_to:
         parts.append(DELEGATION_GUIDANCE)
-        if all(toolset.cross_cutting for toolset in toolsets):
+        if all(toolset.cross_cutting for toolset in [*toolsets, *deferred]):
             parts.append(LEAN_DELEGATION_GUIDANCE)
     return "".join(parts)
 
@@ -507,15 +556,24 @@ def build_agent_specs(config: AssistantConfig, state: LiveState, delegator: str)
     terminate: every recursive call moves to a target strictly further from ``delegator`` along a path
     with no repeated agent, and the graph has finitely many agents.
     """
+    # Imported here, not at module level: kokua.core.build imports this module lazily for the same cycle
+    # resolve_system_message documents, so neither side may import the other at module scope.
+    from kokua.core.build import tool_groups_for
+
     specs: dict[str, dict] = {}
     for name in config.agents[delegator].delegates_to:
         agent = config.agents[name]
         toolsets = select(agent.available, state.registry, agent=name, entry_point=config.entry_agent)
+        resident, deferred = split_by_residency(config, name, toolsets)
         # A spawned worker is a plain AIMU Agent, so `agent=None`: the one toolset needing the live
         # agent object is entry-point-only and validation has already rejected it here. The name is
         # carried regardless, so a toolset scoping itself to its holder (`benchmark`) resolves this
         # worker's own model rather than the delegator's.
-        tools = build_tools(toolsets, ToolsetContext(state=state, agent=None, agent_name=name))
+        context = ToolsetContext(state=state, agent=None, agent_name=name)
+        # Only the resident toolsets are built here. A deferred one is built by its group, when the
+        # worker loads it, and that build goes through `build_tools` too, so recording and approval
+        # cover it exactly as they cover a toolset built now.
+        tools = build_tools(resident, context)
         if agent.delegates_to:
             tools = tools + [_spawn_tool(config, state, name)]
         # AIMU reads the first line of a spec's system_message as that agent_type's menu label (see
@@ -523,10 +581,11 @@ def build_agent_specs(config: AssistantConfig, state: LiveState, delegator: str)
         # line break, which would make a useless label, so the description leads on its own line;
         # falling back to the agent's own name means an agent that skips `description` still gets a
         # label instead of a blank one.
-        message = assemble_system_message(config, name, toolsets)
+        message = assemble_system_message(config, name, resident, deferred)
         specs[name] = {
             "system_message": f"{agent.description or name}\n\n{message}",
             "tools": tools,
+            "tool_groups": tool_groups_for(config, state, name, resident, deferred, context),
             # Bound to this worker's own name, so its calls are judged by its own policy rather than
             # its delegator's.
             "tool_approval": state.gate_for(name),

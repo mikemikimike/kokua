@@ -102,6 +102,11 @@ class LiveState:
     # resolve here, so a gate holds however late or by whomever the toolset is built. It may raise,
     # which refuses the build.
     toolset_built: Optional[Callable[[str, frozenset[str]], None]] = None
+    # Raises a user-facing alert from any thread. A deferred toolset builds in a worker thread, off the
+    # event loop the channel lives on, so its failure cannot call ``notify`` (a coroutine) directly: the
+    # composition root schedules the alert onto its loop instead. Unset, or called before the loop is
+    # known, it does nothing, because a failure still reaches the model as the load's result.
+    alert_soon: Optional[Callable[[str], None]] = None
 
     @cached_property
     def memory_store(self) -> SemanticMemoryStore:
