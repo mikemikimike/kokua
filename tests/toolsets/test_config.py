@@ -605,6 +605,15 @@ async def test_update_config_refuses_a_case_variant_of_all_as_the_parser_does(tm
     assert not path.exists()
 
 
+async def test_update_config_refuses_a_case_variant_of_all_inside_a_list(tmp_path):
+    config = _unlocked(tmp_path, agents={"coder": AgentConfig(available=["time"])}, entry_agent="coder")
+    path, _, update_config = _tools(tmp_path, config=config, registry={"time": _stub_toolset("time")})
+    result = await update_config("agents.coder.tools", "available", "time,All")
+    assert result.startswith("Rejected:")
+    assert 'or the string "all" (lowercase, not in a list)' in result
+    assert not path.exists()
+
+
 _MEMBERSHIP = r"resident names '(web|memory)', which is not in available"
 
 

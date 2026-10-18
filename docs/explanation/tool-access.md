@@ -259,7 +259,7 @@ Within each kind, toolsets keep the order they registered in. Three things are n
 
 `kokua agents` prints the expansion with its count, `available: all (22): aimu_agents, audio, ...`, and
 the startup summary line reads `researcher: all (22) available, 4 resident, ...`. The value is exactly
-the lowercase string: `["all"]`, `"All"`, or `"all"` beside other names fails startup with a message
+the lowercase string: `["all"]`, `"All"`, or `"all"` in any casing inside a list fails startup with a message
 saying how to write it. `update_config` can write it too, once you unlock `[agents.*]`, and its dry run
 applies the same checks the next startup would.
 

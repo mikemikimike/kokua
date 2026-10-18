@@ -1267,7 +1267,7 @@ def test_available_all_without_resident_is_refused():
         settings._parse_agent("explorer", {"tools": {"available": "all"}})
 
 
-@pytest.mark.parametrize("value", [["all"], "All", "everything", ["web", "all"]])
+@pytest.mark.parametrize("value", [["all"], "All", "everything", ["web", "all"], ["All"], ["web", "ALL"]])
 def test_available_near_misses_name_the_fix(value):
     with pytest.raises(settings.ConfigError, match=r'or the string "all" \(lowercase'):
         settings._parse_agent("explorer", {"tools": {"available": value, "resident": []}})

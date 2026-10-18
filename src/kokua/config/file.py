@@ -356,17 +356,25 @@ def _available_shape_error(section: str) -> ConfigError:
     )
 
 
+def _lists_all(names: list) -> bool:
+    """Whether a list of names holds ``"all"`` in any casing, which only the bare string may mean.
+
+    Case-insensitive because a near miss deserves the sentence naming the fix: ``["All"]`` would otherwise
+    pass this check and fail later as an unknown toolset, which says nothing about the spelling that works.
+    """
+    return any(isinstance(name, str) and name.lower() == "all" for name in names)
+
+
 def _available_value(section: str, key: str, value: list) -> Union[list[str], str]:
     """An ``update_config`` write to ``available``: a list of names, or the string ``"all"``.
 
     The tool hands every value over as a string and a list key splits it on commas, so ``"all"`` arrives
-    as ``["all"]`` and is read back as the string it was written as. A lone value is the TOML string the
-    parser would see, so any other casing of it (``"ALL"``) is refused in the parser's words, and so is
-    ``"all"`` beside other names.
+    as ``["all"]`` and is read back as the string it was written as. Anything else naming ``"all"``, in
+    another casing (``"ALL"``) or beside other names, is refused in the parser's words.
     """
     if value == ["all"]:
         return "all"
-    if "all" in value or (len(value) == 1 and value[0].lower() == "all"):
+    if _lists_all(value):
         raise _available_shape_error(section)
     return _str_list(section, key, value)
 
@@ -393,7 +401,7 @@ def _parse_agent_tools(name: str, value: Any) -> dict:
     section = f"agents.{name}.tools"
     fields: dict = {}
     declared_available = value["available"]
-    if declared_available != "all" and (not isinstance(declared_available, list) or "all" in declared_available):
+    if declared_available != "all" and (not isinstance(declared_available, list) or _lists_all(declared_available)):
         raise _available_shape_error(section)
     for key in _AGENT_TOOLS_KEYS:
         if key == "available" and declared_available == "all":

@@ -772,9 +772,10 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer
   ships. It leaves out `entry_point_only` toolsets (`skills`) on any agent but the entry agent, never
   covers the `core` tools (`spawn_subagent` is still earned by `delegates_to`), and requires a `resident`
   list, each entry within the expansion; an entry nothing installs, or `skills` on a worker, fails startup
-  saying which. `["all"]`, `"All"`, and `"all"` inside a list fail startup with the fix, `all` is a
-  reserved toolset name, and `update_config` writes the string (with `[agents.*]` unlocked) and refuses the
-  same near misses. `kokua agents` prints `available: all (N): ...` and the startup summary
+  saying which. `["all"]`, `"All"`, and `"all"` in any casing inside a list fail startup with the fix, `all`
+  is a reserved toolset name, and `update_config` writes the string (with `[agents.*]` unlocked) and refuses
+  the same near misses. **Upgrading:** an existing skill, plugin, or MCP server named `all` now fails
+  startup, since the name is reserved; rename it. `kokua agents` prints `available: all (N): ...` and the startup summary
   `name: all (N) available, ...`. The shipped config keeps every agent on a list, with a commented
   `# available = "all"` line in `[agents.assistant.tools]`. See
   [Tool access](https://saxman.info/kokua/explanation/tool-access/#available-all-every-installed-toolset-still-declared).

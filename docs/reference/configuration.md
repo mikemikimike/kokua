@@ -822,7 +822,7 @@ resident = ["web", "misc", "time", "messaging"]
   and it never covers the `core` tools: `spawn_subagent` is still earned by `delegates_to`.
 - **`resident` is required,** and each entry must be within the expansion: an entry nothing installs, or
   `skills` on a worker, is a startup error saying which.
-- **Write it exactly.** `["all"]`, `"All"`, and `"all"` inside a list fail startup with the fix, and
+- **Write it exactly.** `["all"]`, `"All"`, and `"all"` in any casing inside a list fail startup with the fix, and
   `all` is a reserved toolset name, so no toolset can take it. `update_config` writes the same string
   when `[agents.*]` is unlocked, and refuses the same near misses.
 - **Skills written mid-session reach it; servers wait for a restart.** A skill written with

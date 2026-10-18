@@ -10,19 +10,20 @@ is reachable in-process:
 
 * **A server already declared in ``[[mcp.server]]`` at startup** (possibly unreachable then, or removed
   earlier this session) has a name in the toolset registry, so an agent's ``available`` may already
-  reference it, and an ``available = "all"`` agent already holds it. Connecting or disconnecting it reaches the *next* sub-agent spawned by such an agent,
-  because ``refresh_workers`` rebuilds that agent's ``spawn_subagent`` and the specs re-resolve against
-  the live connections. It does not reach a live agent's *own* tool list, which ``wire_agent`` built
-  once; that waits for the agent to be rebuilt (a new conversation, an LRU eviction, a restart).
+  reference it, and an ``available = "all"`` agent already holds it. Connecting or disconnecting it
+  reaches the *next* sub-agent spawned by such an agent, because ``refresh_workers`` rebuilds that
+  agent's ``spawn_subagent`` and the specs re-resolve against the live connections. It does not reach a
+  live agent's *own* tool list, which ``wire_agent`` built once; that waits for the agent to be rebuilt
+  (a new conversation, an LRU eviction, a restart).
 * **A genuinely new server reaches nothing at all until a restart,** and then only an agent that
-  declares ``available = "all"`` holds it without being told its name; a list agent needs a human to name
-  it too. ``build_registry`` runs once, in
-  ``Assistant.create``, over ``config.mcp_servers`` as loaded at startup, and the one mid-session refresh
-  (``core.build.refresh_skills``) re-reads skills only, so a new server's name is not a key in it. An ``[agents.*]`` edit *may* name the
-  server, because ``update_config``'s dry run rereads the file and so sees the ``[[mcp.server]]`` entry
-  written here, but that declaration resolves against no live registry either: it, too, is for the next
-  start. ``add_mcp_server`` therefore persists the server for the *next* start and connects it for
-  nothing else. This is the dominant flow, and both tool results say so.
+  declares ``available = "all"`` holds it without being told its name; a list agent needs a human to
+  name it too. ``build_registry`` runs once, in ``Assistant.create``, over ``config.mcp_servers`` as
+  loaded at startup, and the one mid-session refresh (``core.build.refresh_skills``) re-reads skills
+  only, so a new server's name is not a key in it. An ``[agents.*]`` edit *may* name the server, because
+  ``update_config``'s dry run rereads the file and so sees the ``[[mcp.server]]`` entry written here, but
+  that declaration resolves against no live registry either: it, too, is for the next start.
+  ``add_mcp_server`` therefore persists the server for the *next* start and connects it for nothing
+  else. This is the dominant flow, and both tool results say so.
 
 One consequence worth knowing for a config where a live agent declares a server directly: it holds
 callables from the connection it was built with, so a disconnect leaves that agent with stale ones until

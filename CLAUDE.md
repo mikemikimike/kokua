@@ -432,7 +432,8 @@ change. Full rationale, with the code that backs each claim, is in
    grants a capability the table did not declare, and no flag can disagree with one. **`available = "all"`
    is one value a declaration can take,** not a default: every installed toolset, expanded by
    `agents.available_for` in `TRUST_ORDER` (Kokua's own, plugins, skills, MCP servers) so a remote tool
-   never shadows a shipped one, minus `entry_point_only` toolsets on a worker, never the `core` tools, and
+   never shadows a shipped one among toolsets built together (a deferred load keeps whichever tool
+   arrived first), minus `entry_point_only` toolsets on a worker, never the `core` tools, and
    always with a `resident` list. Skills written mid-session reach an `"all"` worker on its next spawn
    (`build.refresh_skills`); MCP servers added at runtime wait for a restart, because a new server is a new
    trust path and a skill is not. The config holds it as the sentinel `ALL_TOOLSETS`, which raises if
