@@ -53,16 +53,16 @@ _REACH = (
     'available = "all" and Kokua restarts; otherwise the user must name the server in that agent\'s '
     "available list and restart Kokua. Nothing you do in this session will make them usable."
 )
-# A bearer-token server is in no registry and never written to config.toml, so nothing can name it
-# this session unless config.toml already declared its URL at startup, and a restart drops it.
+# A bearer-token server is in no registry and never written to config.toml, so no agent can name it
+# this session, and a restart drops it. A startup-declared URL is already connected, so it never gets here.
 _REACH_SESSION_ONLY = (
-    "You cannot call these yourself. A sub-agent you spawn can, but only if config.toml already "
-    "declared this server at startup and names it in that agent's tools; otherwise no agent can use "
-    "it in this session (session only). Its token is not saved, so no restart brings it back."
+    "You cannot call these yourself, and no agent can name a server added at runtime, so nothing can use "
+    "it. The connection lasts this session only, and its token is not saved, so no restart brings it back."
 )
 _KEEP_BEARER = (
-    " To keep it, the user adds an [[mcp.server]] entry with token_env naming an environment variable "
-    'that holds the token, then names the server in an agent\'s available list (or uses an "all" agent).'
+    " To keep it, the user adds an [[mcp.server]] entry with url, name and token_env (the name of an "
+    "environment variable holding the token), names that server in an agent's available list (or uses an "
+    '"all" agent), and restarts Kokua.'
 )
 
 
@@ -100,12 +100,11 @@ def make_mcp_tools(
         happens this returns a message asking for a bearer token: relay it, ask the user for a
         token, then call this tool again with that bearer_token.
 
-        When a server is recorded, its name is derived from the URL, but that name reaches
-        an agent declaring available = "all" at the next restart, if the server was remembered, and any
-        other agent only once a human adds
-        it to that agent's available list in config.toml's [agents.*.tools] table AND restarts Kokua: that
-        section is locked by default and is read only at startup, so this tool cannot grant a named
-        agent the capability it just connected.
+        When a server is recorded, its name is derived from the URL, but that name reaches an
+        agent declaring available = "all" at the next restart, if the server was remembered, and any other
+        agent only once a human adds it to that agent's available list in config.toml's [agents.*.tools]
+        table AND restarts Kokua: that section is locked by default and is read only at startup, so this
+        tool cannot grant a named agent the capability it just connected.
         """
         try:
             result = await servers.add_server(

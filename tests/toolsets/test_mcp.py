@@ -107,6 +107,9 @@ async def test_a_bearer_result_promises_no_reach_and_says_no_restart_brings_it_b
     assert "no restart brings it back" in message
     assert "[[mcp.server]]" in message and "token_env" in message
     assert "[mcp]" not in message
+    assert "no agent can name a server added at runtime, so nothing can use it" in message
+    assert "A sub-agent you spawn can" not in message
+    assert "with url, name and token_env" in message and "and restarts Kokua." in message
 
 
 async def test_remove_reports_an_unconnected_server(tmp_path):
