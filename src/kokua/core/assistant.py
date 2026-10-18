@@ -350,10 +350,12 @@ class Assistant:
         # It both validates and resolves: a policy entry names a toolset, and the gate matches a tool
         # name, so no gate can answer at all until this has run (see `HumanGate.policies`).
         with self._policies_lock:
-            self._human.policies = resolve_approval_policies(config, state, entry_agent)
-        # Resolved from the same policies, because a review entry is itself a gate: the reviewer can only
-        # be asked about tools a policy already stops.
-        self._human.auto_approval = resolve_auto_approval(config, state, entry_agent, self._human.policies)
+            policies = resolve_approval_policies(config, state, entry_agent)
+            # Resolved from the same policies, because a review entry is itself a gate: the reviewer can
+            # only be asked about tools a policy already stops. In the same lock so a deferred build
+            # never sees one assigned without the other.
+            self._human.auto_approval = resolve_auto_approval(config, state, entry_agent, policies)
+            self._human.policies = policies
 
         state.tasks.arm_all()
 
@@ -990,7 +992,13 @@ class Assistant:
             current = self._human.policies
             if current is None:
                 return
-            self._human.policies = current.with_built(toolset, tool_names)
+            updated = current.with_built(toolset, tool_names)
+            # Both are computed before either is assigned, so a build the floor refuses leaves the old
+            # policies and the old auto-approval state exactly as they were.
+            auto = self._human.auto_approval
+            updated_auto = auto.with_built(updated, toolset, tool_names) if auto is not None else None
+            self._human.policies = updated
+            self._human.auto_approval = updated_auto
 
     async def _handle(
         self, msg: ChannelMessage, *, conversation_id: str, workflow=None, tid: Optional[int] = None

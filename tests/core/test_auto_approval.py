@@ -19,6 +19,7 @@ from kokua.core.auto_approval import (
     build_packet,
     current_review_context,
     decide,
+    resolve_auto_approval,
     review_call,
 )
 from tests.channels import FakeChannel, _config, example_agents
@@ -717,3 +718,106 @@ async def test_an_approving_quorum_names_every_model(monkeypatch, auto_quorum, i
     monkeypatch.setattr("kokua.core.auto_approval._build_client", _Agreeing)
     outcome = await review_call(auto_quorum, tool="run_command", arguments={"command": "ls"})
     assert outcome == Outcome(approved=True, reason="safe enough", model="ollama:b,ollama:c")
+
+
+# Residency: review and floor entries may name a toolset nobody has built yet. Hand-built state, since
+# nothing defers at wiring yet.
+
+
+def _pending_auto(tmp_path, available=("memory", "mcp", "compute"), resident=("memory",), **overrides):
+    from types import SimpleNamespace
+
+    from kokua.config.schema import AgentConfig
+    from kokua.core.approval import resolve_approval_policies
+    from kokua.registry.context import LiveState
+
+    agents = {"assistant": AgentConfig(available=list(available), resident=list(resident))}
+    fields = dict(
+        data_dir=tmp_path,
+        agents=agents,
+        entry_agent="assistant",
+        model="ollama:a",
+        auto_approval_enabled=True,
+        auto_approval_reviewers=[_REVIEWER],
+        reviewers={_REVIEWER: ReviewerConfig(model="ollama:qwen3:8b", system_message="judge it")},
+        default_confirm=[],
+        default_review=[],
+        never_auto_approve=[],
+    )
+    fields.update(overrides)
+    config = AssistantConfig(**fields)
+    state = LiveState(config=config)
+    state.tools_by_toolset = {name: {f"{name}_tool"} for name in resident}
+    entry_agent = SimpleNamespace(tools=[])
+    policies = resolve_approval_policies(config, state, entry_agent)
+    return config, state, entry_agent, policies
+
+
+def test_every_review_entry_pending_still_starts(tmp_path):
+    config, state, entry_agent, policies = _pending_auto(tmp_path, default_review=["mcp.add_mcp_server"])
+    assert resolve_auto_approval(config, state, entry_agent, policies) is not None
+
+
+def test_a_floor_entry_naming_a_deferred_toolset_starts(tmp_path):
+    """The shipped shape: the floor names mcp.add_mcp_server and the entry agent defers mcp."""
+    config, state, entry_agent, policies = _pending_auto(
+        tmp_path,
+        available=("compute", "mcp"),
+        resident=("compute",),
+        default_review=["compute"],
+        never_auto_approve=["mcp.add_mcp_server"],
+    )
+    auto = resolve_auto_approval(config, state, entry_agent, policies)
+    assert auto.pending_floor == frozenset({"mcp.add_mcp_server"})
+
+
+def test_a_malformed_floor_entry_for_a_deferred_toolset_still_fails_startup(tmp_path):
+    config, state, entry_agent, policies = _pending_auto(
+        tmp_path, default_review=["mcp.add_mcp_server"], never_auto_approve=["mcp.add*"]
+    )
+    with pytest.raises(ConfigError, match="hold nothing back"):
+        resolve_auto_approval(config, state, entry_agent, policies)
+
+
+def test_building_a_toolset_whose_review_reaches_the_floor_is_refused(tmp_path):
+    config, state, entry_agent, policies = _pending_auto(
+        tmp_path, default_review=["mcp"], never_auto_approve=["mcp.add_mcp_server"]
+    )
+    auto = resolve_auto_approval(config, state, entry_agent, policies)
+    names = frozenset({"add_mcp_server", "remove_mcp_server"})
+    with pytest.raises(
+        ConfigError,
+        match=r"\[assistant\.tools\]\.review reaches add_mcp_server, which \[security\]\.never_auto_approve holds back",
+    ):
+        auto.with_built(policies.with_built("mcp", names), "mcp", names)
+
+
+def test_building_a_toolset_that_misses_the_floor_resolves_it_and_labels_the_tools(tmp_path):
+    config, state, entry_agent, policies = _pending_auto(
+        tmp_path, default_review=["mcp.remove_mcp_server"], never_auto_approve=["mcp.add_mcp_server"]
+    )
+    auto = resolve_auto_approval(config, state, entry_agent, policies)
+    names = frozenset({"add_mcp_server", "remove_mcp_server"})
+    updated = auto.with_built(policies.with_built("mcp", names), "mcp", names)
+    assert updated.toolset_of["remove_mcp_server"] == "mcp"
+    assert updated.pending_floor == frozenset()
+    assert updated.floor == frozenset({"add_mcp_server"})
+    assert auto.pending_floor == frozenset({"mcp.add_mcp_server"})  # the original is unchanged
+
+
+async def test_a_refused_build_leaves_the_old_policies_and_auto_approval_in_place(tmp_path):
+    config, state, entry_agent, policies = _pending_auto(
+        tmp_path, default_review=["mcp"], never_auto_approve=["mcp.add_mcp_server"]
+    )
+    auto = resolve_auto_approval(config, state, entry_agent, policies)
+    assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        await assistant.start()
+        assistant._human.policies = policies
+        assistant._human.auto_approval = auto
+        with pytest.raises(ConfigError, match="never_auto_approve holds back"):
+            assistant._on_toolset_built("mcp", frozenset({"add_mcp_server"}))
+        assert assistant._human.policies is policies
+        assert assistant._human.auto_approval is auto
+    finally:
+        assistant._state.close()

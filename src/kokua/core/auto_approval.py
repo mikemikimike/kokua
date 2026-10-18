@@ -27,6 +27,7 @@ reach for first.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -36,7 +37,7 @@ from kokua.config.file import ConfigError
 from kokua.config.schema import AssistantConfig, ResolvedReviewer
 
 if TYPE_CHECKING:
-    from kokua.core.approval import ApprovalPolicies
+    from kokua.core.approval import ApprovalPolicies, ApprovalPolicy
     from kokua.registry.context import LiveState
 
 logger = logging.getLogger(__name__)
@@ -195,11 +196,62 @@ class AutoApproval:
     reviewers: tuple[ResolvedReviewer, ...]
     timeout_seconds: float
     max_per_turn: int
+    # The ``never_auto_approve`` floor as tool names, plus the raw entries still waiting on a toolset
+    # nobody has built. A late build resolves them in ``with_built``, which is where a review list that
+    # now reaches the floor is refused.
+    floor: frozenset[str] = frozenset()
+    pending_floor: frozenset[str] = frozenset()
 
     @property
     def model_label(self) -> str:
         """The models a card names when no single reviewer is the reason for the outcome."""
         return ",".join(reviewer.model for reviewer in self.reviewers)
+
+    def with_built(self, policies: ApprovalPolicies, toolset: str, tool_names: frozenset[str]) -> AutoApproval:
+        """This gate after ``toolset`` built ``tool_names``, checked against ``policies`` (already updated).
+
+        Resolves the floor entries waiting on the toolset, refuses the build when any review list now
+        reaches the floor (a late ``review = ["mcp"]`` must not make ``add_mcp_server`` auto-approvable
+        just because the toolset arrived after startup), and labels every reviewed tool with its toolset
+        so the packet names the capability. Pure: the caller keeps the old object when this raises.
+        """
+        from kokua.core.agents import _resolve_gate_entry
+
+        floor = set(self.floor)
+        waiting = set(self.pending_floor)
+        for entry in sorted(waiting):
+            if entry.split(".")[0] != toolset:
+                continue
+            names, fault = _resolve_gate_entry(entry, {toolset: set(tool_names)}, {})
+            if fault:
+                raise ConfigError(
+                    f"[security].never_auto_approve names {entry!r}, but the {toolset!r} toolset, now built, "
+                    f"provides no such tool. Fix the entry; until then {toolset!r} cannot be loaded. {fault}."
+                )
+            floor |= names
+            waiting.discard(entry)
+        _refuse_floor_reach([policies.default, *policies.by_agent.values()], floor)
+        reviewed = frozenset().union(*(policy.review for policy in [policies.default, *policies.by_agent.values()]))
+        toolset_of = dict(self.toolset_of)
+        for tool in reviewed & tool_names:
+            labels = {label for label in toolset_of.get(tool, "").split(",") if label} | {toolset}
+            toolset_of[tool] = ",".join(sorted(labels))
+        return dataclasses.replace(
+            self, toolset_of=toolset_of, floor=frozenset(floor), pending_floor=frozenset(waiting)
+        )
+
+
+def _refuse_floor_reach(policies: Sequence[ApprovalPolicy], floor: frozenset[str] | set[str]) -> None:
+    for policy in policies:
+        forbidden = sorted(policy.review & floor)
+        if forbidden:
+            raise ConfigError(
+                f"{policy.source}.review reaches {', '.join(forbidden)}, which "
+                "[security].never_auto_approve holds back. Those tools change what may act later rather "
+                "than acting once, so approving one grants a capability and the arguments it was approved "
+                "for stop constraining anything. Drop them here, or take them out of never_auto_approve by "
+                "hand and understand that a waved update_config can widen this list."
+            )
 
 
 def resolve_auto_approval(
@@ -226,7 +278,7 @@ def resolve_auto_approval(
     # `tests/toolsets/test_registration.py`, is what would fail if this moved back to the top of the
     # file; see `toolsets/capabilities.py` for the same deferral against the same surface, and
     # `config/settings_sources.py` for the analogous deferral against its own upward-import rule.
-    from kokua.core.agents import gateable_tools, resolve_gate_entries
+    from kokua.core.agents import gateable_tools, pending_gate_entries, resolve_gate_entries
 
     if not config.auto_approval_enabled:
         return None
@@ -275,30 +327,24 @@ def resolve_auto_approval(
         reviewers.append(resolved)
     all_policies = [policies.default, *policies.by_agent.values()]
     tools = frozenset().union(*(policy.review for policy in all_policies))
-    if not tools:
+    # Pending review entries count: they name a tool that exists once its toolset is built.
+    if not tools and not any(policy.pending_review for policy in all_policies):
         raise ConfigError(
             "[security.auto_approval] is enabled but no review list names a tool, so nothing would ever be "
             "reviewed. Add entries to [assistant.tools].review or to an agent's [agents.<name>.tools].review."
         )
     vocabulary = gateable_tools(state, entry_agent)
+    deferred = {toolset for name in config.agents for toolset in config.deferred_for(name)}
+    pending_floor = pending_gate_entries(config.never_auto_approve, deferred, state.tools_by_toolset)
     floor = resolve_gate_entries(
-        config.never_auto_approve,
+        [entry for entry in config.never_auto_approve if entry not in pending_floor],
         vocabulary,
         state.registry,
         setting="[security].never_auto_approve",
         effect="hold nothing back",
         remedy="An entry matching no tool holds nothing back from a reviewer that can approve it.",
     )
-    for policy in all_policies:
-        forbidden = sorted(policy.review & floor)
-        if forbidden:
-            raise ConfigError(
-                f"{policy.source}.review reaches {', '.join(forbidden)}, which "
-                "[security].never_auto_approve holds back. Those tools change what may act later rather "
-                "than acting once, so approving one grants a capability and the arguments it was approved "
-                "for stop constraining anything. Drop them here, or take them out of never_auto_approve by "
-                "hand and understand that a waved update_config can widen this list."
-            )
+    _refuse_floor_reach(all_policies, floor)
     toolset_of = {
         tool: ",".join(sorted(name for name, provided in vocabulary.items() if tool in provided)) for tool in tools
     }
@@ -307,6 +353,8 @@ def resolve_auto_approval(
         reviewers=tuple(reviewers),
         timeout_seconds=config.auto_approval_timeout_seconds,
         max_per_turn=config.auto_approval_max_per_turn,
+        floor=floor,
+        pending_floor=frozenset(pending_floor),
     )
 
 

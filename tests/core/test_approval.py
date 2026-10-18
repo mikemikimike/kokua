@@ -934,22 +934,41 @@ def test_a_built_tool_in_both_halves_is_refused(tmp_path):
         policies.with_built("mcp", frozenset({"add_mcp_server"}))
 
 
-def test_a_build_through_build_tools_resolves_a_pending_entry(tmp_path):
+@pytest.mark.parametrize("entry", ["mcp", "mcp.*", "mcp.add_mcp_server"])
+def test_a_build_through_build_tools_resolves_a_pending_entry(tmp_path, entry):
     """The mechanism a composed worker's late build relies on: the hook set on the state reaches a
-    policies holder, so the tool is gated from the moment the build returns."""
+    policies holder, so the tool is gated from the moment the build returns. Two tools, because a hook
+    called once per tool would let a bare entry be drained by the first call and leave the second ungated."""
     from kokua.registry.context import ToolsetContext
     from kokua.registry.registry import Toolset, build_tools
 
-    _, state, policies = _deferred_setup(tmp_path, default_confirm=["mcp.add_mcp_server"])
+    _, state, policies = _deferred_setup(tmp_path, default_confirm=[entry])
     holder = [policies]
     state.toolset_built = lambda name, names: holder.__setitem__(0, holder[0].with_built(name, names))
 
     def add_mcp_server():
         pass
 
-    toolset = Toolset(name="mcp", description="mcp", build=lambda ctx: [add_mcp_server])
+    def remove_mcp_server():
+        pass
+
+    toolset = Toolset(name="mcp", description="mcp", build=lambda ctx: [add_mcp_server, remove_mcp_server])
     build_tools([toolset], ToolsetContext(state=state, agent=None, agent_name="composed:x"))
-    assert "add_mcp_server" in holder[0].for_agent("composed:x").confirm
+    confirmed = holder[0].for_agent("composed:x").confirm
+    assert "add_mcp_server" in confirmed
+    assert ("remove_mcp_server" in confirmed) == (entry != "mcp.add_mcp_server")
+
+
+@pytest.mark.parametrize("entry", ["mcp.add*", "mcp.a.b", "mc*p.add_mcp_server"])
+def test_a_malformed_entry_for_a_deferred_toolset_still_fails_startup(tmp_path, entry):
+    with pytest.raises(ConfigError, match="would gate nothing"):
+        _deferred_setup(tmp_path, default_confirm=[entry])
+
+
+def test_a_refused_build_names_the_resolvers_reason(tmp_path):
+    _, _, policies = _deferred_setup(tmp_path, default_confirm=["mcp.add_mcp_servr"])
+    with pytest.raises(ConfigError, match=r"did you mean 'add_mcp_server'"):
+        policies.with_built("mcp", frozenset({"add_mcp_server"}))
 
 
 def test_core_namespace_gains_the_group_tools_when_something_is_deferred(tmp_path):

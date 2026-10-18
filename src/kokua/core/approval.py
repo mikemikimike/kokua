@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 from kokua.config import ConfigError
 from kokua.config.schema import DEFAULT_POLICY_SOURCE
-from kokua.core.agents import _resolve_gate_entry, gateable_tools, resolve_gate_entries
+from kokua.core.agents import _resolve_gate_entry, gateable_tools, pending_gate_entries, resolve_gate_entries
 from kokua.registry.registry import RESERVED_GATE_NAMESPACE
 
 if TYPE_CHECKING:
@@ -106,7 +106,7 @@ def _with_built(policy: ApprovalPolicy, toolset: str, vocabulary: dict[str, set[
             if fault:
                 raise ConfigError(
                     f"{policy.source}.{key} names {entry!r}, but the {toolset!r} toolset, now built, "
-                    f"provides no such tool. Fix the entry; until then {toolset!r} cannot be loaded."
+                    f"provides no such tool. Fix the entry; until then {toolset!r} cannot be loaded. {fault}."
                 )
             resolved[key] |= names
             waiting[key].discard(entry)
@@ -162,11 +162,7 @@ def _resolve_pair(
     pending = {}
     for key, entries in (("confirm", confirm), ("review", review)):
         setting = f"{source}.{key}"
-        waiting = {
-            entry
-            for entry in entries
-            if entry.split(".")[0] in deferred and entry.split(".")[0] not in state.tools_by_toolset
-        }
+        waiting = pending_gate_entries(entries, deferred, state.tools_by_toolset)
         pending[key] = frozenset(waiting)
         entries = [entry for entry in entries if entry not in waiting]
         for entry in entries:

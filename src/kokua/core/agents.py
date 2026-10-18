@@ -738,6 +738,41 @@ def gateable_tools(state: LiveState, entry_agent) -> dict[str, set[str]]:
     return by_toolset
 
 
+def gate_entry_grammar_fault(entry: str) -> str:
+    """What is malformed about ``entry``'s shape, or an empty string when it is well formed.
+
+    Split out so an entry parked until its toolset is built is still checked at startup: the shape
+    needs no tool names, and a malformed entry would otherwise fail a later build with a message about
+    a missing tool while the real fault was discarded.
+    """
+    parts = entry.split(_GATE_SEPARATOR)
+    if len(parts) > 2:
+        return f"{entry!r} has more than one {_GATE_SEPARATOR!r}. {_GATE_GRAMMAR}"
+    toolset, tool = (parts[0], _GATE_WILDCARD) if len(parts) == 1 else (parts[0], parts[1])
+    if _GATE_WILDCARD in toolset or (tool != _GATE_WILDCARD and _GATE_WILDCARD in tool):
+        return (
+            f"{entry!r} uses {_GATE_WILDCARD!r} inside a name. It is legal only as the whole tool, as in "
+            f"'compute.{_GATE_WILDCARD}', because a pattern matching fewer tools than its author meant "
+            "is the same silent gap as a name matching none."
+        )
+    return ""
+
+
+def pending_gate_entries(entries: Sequence[str], deferred: set[str], built: Mapping[str, object]) -> set[str]:
+    """The well-formed entries naming a deferred toolset nobody has built yet.
+
+    These wait for the build instead of resolving at startup. A malformed entry is never parked, so it
+    still reaches the resolver and fails startup with its own sentence.
+    """
+    return {
+        entry
+        for entry in entries
+        if not gate_entry_grammar_fault(entry)
+        and entry.split(_GATE_SEPARATOR)[0] in deferred
+        and entry.split(_GATE_SEPARATOR)[0] not in built
+    }
+
+
 def _resolve_gate_entry(entry: str, vocabulary: dict[str, set[str]], registry: Mapping[str, Toolset]) -> tuple:
     """One gate entry as ``(tool names, fault)``, exactly one of which is empty.
 
@@ -746,16 +781,11 @@ def _resolve_gate_entry(entry: str, vocabulary: dict[str, set[str]], registry: M
     wrote a name meaning to hold a tool back, and the difference between the name they wrote and the
     one that works is the whole content of the error.
     """
+    grammar_fault = gate_entry_grammar_fault(entry)
+    if grammar_fault:
+        return set(), grammar_fault
     parts = entry.split(_GATE_SEPARATOR)
-    if len(parts) > 2:
-        return set(), f"{entry!r} has more than one {_GATE_SEPARATOR!r}. {_GATE_GRAMMAR}"
     toolset, tool = (parts[0], _GATE_WILDCARD) if len(parts) == 1 else (parts[0], parts[1])
-    if _GATE_WILDCARD in toolset or (tool != _GATE_WILDCARD and _GATE_WILDCARD in tool):
-        return set(), (
-            f"{entry!r} uses {_GATE_WILDCARD!r} inside a name. It is legal only as the whole tool, as in "
-            f"'compute.{_GATE_WILDCARD}', because a pattern matching fewer tools than its author meant "
-            "is the same silent gap as a name matching none."
-        )
     if toolset not in vocabulary:
         if len(parts) == 1:
             owners = sorted(name for name, tools in vocabulary.items() if toolset in tools)
