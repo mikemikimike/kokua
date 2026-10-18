@@ -1415,7 +1415,7 @@ async def test_a_real_mcp_tool_shadowed_by_fs_is_reported_at_startup(tmp_path, m
     await assistant.start()
 
     assert [text for text, *_ in channel.alerts] == [
-        "explorer: read_file from 'files' is shadowed by 'fs' (trust order keeps the first)."
+        "explorer: read_file from 'files' is shadowed by 'fs' (the earlier resident toolset keeps the name)."
     ]
     kept = [fn for fn in captured[-1]["explorer"]["tools"] if fn.__name__ == "read_file"]
     assert len(kept) == 1 and kept[0].__module__ != "tests.fakes"
@@ -1474,6 +1474,6 @@ async def test_startup_notices_each_shadowed_resident_tool(tmp_path, monkeypatch
     await assistant.start()  # idempotent: the notice is raised once
 
     assert [text for text, *_ in channel.alerts] == [
-        "explorer: read_file from 'files' is shadowed by 'fs' (trust order keeps the first)."
+        "explorer: read_file from 'files' is shadowed by 'fs' (the earlier resident toolset keeps the name)."
     ]
     assistant._state.close()

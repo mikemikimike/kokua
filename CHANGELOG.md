@@ -781,8 +781,10 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer
 - **A shadowed resident tool raises an alert at startup.** `build_tools` keeps the first of two
   same-named tools among toolsets built together and used to say nothing of the other. Once every startup
   build is done, each declared agent's resident toolsets are checked, and each hidden tool raises
-  `{agent}: {tool} from {shadowed!r} is shadowed by {kept!r} (trust order keeps the first).` Startup
-  builds the entry agent and every worker reachable from it by `delegates_to`, so an agent is skipped,
+  `{agent}: {tool} from {shadowed!r} is shadowed by {kept!r} (the earlier resident toolset keeps the
+  name).` "Earlier" is the agent's declared order for a list and trust order for `"all"`. The shared
+  `activate_skill` every skill carries is not counted, since a second skill offering it hides nothing.
+  Startup builds the entry agent and every worker reachable from it by `delegates_to`, so an agent is skipped,
   and logged at INFO rather than reported as clean, when any of its resident toolsets was built by no
   agent. A deferred toolset loaded later keeps whichever tool arrived first, and AIMU's load result names
   the skipped tool and its holder (a group only when the holder was loaded; a resident holder reads

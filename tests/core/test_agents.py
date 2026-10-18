@@ -491,3 +491,26 @@ def test_shadowed_tools_ignores_a_skill_on_the_entry_agent(monkeypatch):
     config, registry = _all_config(monkeypatch, agents)
 
     assert shadowed_tools(config, registry, {"time": {"now"}, "weekly-digest": {"now"}}) == []
+
+
+@pytest.mark.parametrize("declaration", ["list", "all"])
+def test_shadowed_tools_ignores_the_activate_skill_every_skill_carries(tmp_path, declaration):
+    """Every skill's build includes the one shared ``activate_skill``, so nothing is lost when a second
+    resident skill offers it again."""
+    from kokua.core.agents import shadowed_tools
+    from tests.core.test_skill_toolsets import write_skill
+
+    skills = ["weekly-digest", "citation-check"]
+    explorer = (
+        AgentConfig(available=skills) if declaration == "list" else AgentConfig(available=ALL_TOOLSETS, resident=skills)
+    )
+    agents = {"assistant": AgentConfig(available=["time"], delegates_to=["explorer"]), "explorer": explorer}
+    config = AssistantConfig(data_dir=tmp_path, agents=agents, entry_agent="assistant")
+    write_skill(config, "weekly-digest", "Digest the week.", script="print(1)\n")
+    write_skill(config, "citation-check", "Check a citation.", script="print(2)\n")
+    tools = {
+        "weekly-digest": {"activate_skill", "weekly_digest__run"},
+        "citation-check": {"activate_skill", "citation_check__run"},
+    }
+
+    assert shadowed_tools(config, build_registry(config), tools) == []

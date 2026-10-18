@@ -301,11 +301,12 @@ A resident tool that loses is reported, never dropped in silence. After every st
 each agent's resident toolsets and raises one alert per hidden tool:
 
 ```text
-researcher: read_file from 'files' is shadowed by 'fs' (trust order keeps the first).
+researcher: read_file from 'files' is shadowed by 'fs' (the earlier resident toolset keeps the name).
 ```
 
 The check runs on every declared agent, with a list or with `"all"`; on a list agent the order it
-reports against is the list's own. It reads what each toolset built, and startup builds only the entry
+reports against is the list's own. The `activate_skill` every skill carries is not counted: it is one
+shared tool, so a second skill offering it hides nothing. It reads what each toolset built, and startup builds only the entry
 agent and every worker reachable from it by `delegates_to`. So an agent is skipped, and logged at INFO
 rather than reported as clean, when any of its resident toolsets was built by no agent, which is the case
 for an agent nothing delegates to unless every toolset it holds resident is one another agent built.

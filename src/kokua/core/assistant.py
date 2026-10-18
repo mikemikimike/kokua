@@ -372,7 +372,7 @@ class Assistant:
             try:
                 await self._ui.alert(
                     f"{shadow.agent}: {shadow.tool} from {shadow.shadowed!r} is shadowed by {shadow.kept!r} "
-                    "(trust order keeps the first)."
+                    "(the earlier resident toolset keeps the name)."
                 )
             except Exception:
                 logger.warning("Could not raise the shadowed-tool notice for %s.", shadow, exc_info=True)

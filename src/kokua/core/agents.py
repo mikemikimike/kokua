@@ -215,6 +215,8 @@ def shadowed_tools(
     tool can silently lose to one Kokua ships. ``tools_by_toolset`` records what each toolset offered,
     which is all this needs. The entry agent's skills are held back as wiring holds them back, since its
     ``SkillAgent`` supplies those tools by another route and they are never competing for a name here.
+    Every skill's build carries the one shared ``activate_skill``, so a second resident skill offering
+    it again hides nothing, and it is left out of each skill's names, as :func:`gateable_tools` does.
 
     Startup builds the entry agent's resident toolsets and those of every worker reachable from it by
     ``delegates_to``; an agent nothing delegates to is never built, so a resident toolset absent from
@@ -233,7 +235,10 @@ def shadowed_tools(
             continue
         holder: dict[str, str] = {}
         for toolset in resident:
-            for tool in sorted(tools_by_toolset.get(toolset, ())):
+            tools = set(tools_by_toolset.get(toolset, ()))
+            if is_skill(toolset, registry):
+                tools.discard(_ACTIVATE_SKILL)
+            for tool in sorted(tools):
                 if tool in holder:
                     shadows.append(ShadowedTool(agent_name, tool, holder[tool], toolset))
                 else:
