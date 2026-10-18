@@ -24,7 +24,13 @@ from typing import TYPE_CHECKING
 
 from kokua.config import ConfigError
 from kokua.config.schema import DEFAULT_POLICY_SOURCE
-from kokua.core.agents import _resolve_gate_entry, gateable_tools, pending_gate_entries, resolve_gate_entries
+from kokua.core.agents import (
+    _resolve_gate_entry,
+    gateable_tools,
+    loadable_toolsets,
+    pending_gate_entries,
+    resolve_gate_entries,
+)
 from kokua.registry.registry import RESERVED_GATE_NAMESPACE
 
 if TYPE_CHECKING:
@@ -196,7 +202,7 @@ def resolve_approval_policies(config: AssistantConfig, state: LiveState, entry_a
     the agent does not hold.
     """
     full = gateable_tools(state, entry_agent)
-    any_deferred = {toolset for name in config.agents for toolset in config.deferred_for(name)}
+    any_deferred = {toolset for name in config.agents for toolset in loadable_toolsets(config, state.registry, name)}
     default = _resolve_pair(
         DEFAULT_POLICY, DEFAULT_POLICY, config.default_confirm, config.default_review, full, full, state, any_deferred
     )
@@ -207,6 +213,6 @@ def resolve_approval_policies(config: AssistantConfig, state: LiveState, entry_a
         confirm, review, source = config.approval_entries_for(name)
         vocabulary = _vocabulary_for(name, config, state, full)
         by_agent[name] = _resolve_pair(
-            name, source, confirm, review, vocabulary, full, state, set(config.deferred_for(name))
+            name, source, confirm, review, vocabulary, full, state, set(loadable_toolsets(config, state.registry, name))
         )
     return ApprovalPolicies(by_agent=by_agent, default=default)

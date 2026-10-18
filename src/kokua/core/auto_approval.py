@@ -278,7 +278,7 @@ def resolve_auto_approval(
     # `tests/toolsets/test_registration.py`, is what would fail if this moved back to the top of the
     # file; see `toolsets/capabilities.py` for the same deferral against the same surface, and
     # `config/settings_sources.py` for the analogous deferral against its own upward-import rule.
-    from kokua.core.agents import gateable_tools, pending_gate_entries, resolve_gate_entries
+    from kokua.core.agents import gateable_tools, loadable_toolsets, pending_gate_entries, resolve_gate_entries
 
     if not config.auto_approval_enabled:
         return None
@@ -334,7 +334,7 @@ def resolve_auto_approval(
             "reviewed. Add entries to [assistant.tools].review or to an agent's [agents.<name>.tools].review."
         )
     vocabulary = gateable_tools(state, entry_agent)
-    deferred = {toolset for name in config.agents for toolset in config.deferred_for(name)}
+    deferred = {toolset for name in config.agents for toolset in loadable_toolsets(config, state.registry, name)}
     pending_floor = pending_gate_entries(config.never_auto_approve, deferred, state.tools_by_toolset)
     floor = resolve_gate_entries(
         [entry for entry in config.never_auto_approve if entry not in pending_floor],

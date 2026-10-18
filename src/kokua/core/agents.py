@@ -111,6 +111,22 @@ def without_skill_names(names: Sequence[str], registry: ToolsetRegistry) -> list
     return [name for name in names if registry.providers.get(name) != _SKILL_PROVIDER]
 
 
+def loadable_toolsets(config: AssistantConfig, registry: ToolsetRegistry, agent_name: str) -> list[str]:
+    """The toolsets ``agent_name`` loads on demand, divided exactly as wiring divides them.
+
+    ``AssistantConfig.deferred_for`` reads the declaration alone, so it counts a skill the entry agent
+    names outside ``resident``. Wiring does not: the entry agent is a ``SkillAgent`` that already holds
+    every skill, so ``wire_agent`` holds skill names back before the residency split and no build ever
+    reports one. Anything asking which toolsets wait for a build (approval's pending entries, whether an
+    agent holds the loader tools) asks this, or a gate on such a skill would wait forever while the
+    skill's scripts ran ungated.
+    """
+    deferred = config.deferred_for(agent_name)
+    if agent_name == config.entry_agent:
+        return without_skill_names(deferred, registry)
+    return deferred
+
+
 def build_registry(config: AssistantConfig) -> ToolsetRegistry:
     """Every toolset an agent may name, by name.
 
@@ -794,7 +810,7 @@ def gateable_tools(state: LiveState, entry_agent) -> dict[str, set[str]]:
             reserved.add(name)
     # An agent that can defer a toolset holds AIMU's loader tools, which no toolset provides, so a gate
     # on them is writable only under the reserved prefix.
-    if any(state.config.deferred_for(name) for name in state.config.agents):
+    if any(loadable_toolsets(state.config, state.registry, name) for name in state.config.agents):
         reserved |= set(CORE_TOOL_NAMES)
     by_toolset[RESERVED_GATE_NAMESPACE] = reserved
     return by_toolset

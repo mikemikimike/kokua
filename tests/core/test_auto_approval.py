@@ -8,6 +8,7 @@ from aimu.models import parse_json_response
 
 from kokua.config import ConfigError
 from kokua.config.schema import AssistantConfig, ResolvedReviewer, ReviewerConfig
+from kokua.core.agents import build_registry
 from kokua.core.assistant import Assistant
 from kokua.core.auto_approval import (
     MAX_FIELD_CHARS,
@@ -746,7 +747,7 @@ def _pending_auto(tmp_path, available=("memory", "mcp", "compute"), resident=("m
     )
     fields.update(overrides)
     config = AssistantConfig(**fields)
-    state = LiveState(config=config)
+    state = LiveState(config=config, registry=build_registry(config))
     state.tools_by_toolset = {name: {f"{name}_tool"} for name in resident}
     entry_agent = SimpleNamespace(tools=[])
     policies = resolve_approval_policies(config, state, entry_agent)
@@ -821,3 +822,41 @@ async def test_a_refused_build_leaves_the_old_policies_and_auto_approval_in_plac
         assert assistant._human.auto_approval is auto
     finally:
         assistant._state.close()
+
+
+# A skill on the entry agent is never deferred (its SkillAgent advertises every skill), so a review or
+# floor entry naming one resolves at startup like any other, rather than waiting for a build that never
+# comes.
+
+
+def _agents_with_skill() -> dict:
+    agents = example_agents()
+    entry = agents["assistant"]
+    assert entry.resident is not None
+    agents["assistant"] = dataclasses.replace(entry, available=[*entry.available, "weekly-digest"])
+    return agents
+
+
+async def _started_with_skill(tmp_path, **overrides):
+    from tests.core.test_approval import _write_skill
+
+    config = _config(tmp_path, **_auto(agents=_agents_with_skill(), **overrides))
+    _write_skill(config)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        await assistant.start()
+        return assistant._human.policies, assistant._human.auto_approval
+    finally:
+        assistant._state.close()
+
+
+async def test_a_review_entry_on_an_entry_agent_skill_resolves_at_startup(tmp_path):
+    policies, auto = await _started_with_skill(tmp_path, default_review=["weekly-digest"], never_auto_approve=[])
+    assert policies.default.pending_review == frozenset()
+    reviewed = {tool for tool, toolset in auto.toolset_of.items() if toolset == "weekly-digest"}
+    assert reviewed and reviewed <= policies.default.review
+
+
+async def test_a_floor_entry_on_an_entry_agent_skill_refuses_a_review_reaching_it_at_startup(tmp_path):
+    with pytest.raises(ConfigError, match="never_auto_approve holds back"):
+        await _started_with_skill(tmp_path, default_review=["weekly-digest"], never_auto_approve=["weekly-digest"])

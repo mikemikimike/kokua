@@ -10,6 +10,7 @@ from aimu.aio.channels.base import Channel, ChannelMessage
 
 from kokua.config import ConfigError
 from kokua.config.schema import AgentConfig, AssistantConfig, ReviewerConfig
+from kokua.core.agents import build_registry
 from kokua.core.assistant import Assistant
 from tests.channels import AlertCapturingChannel, FakeChannel, _config
 from tests.fakes import _RequestsToolOnce
@@ -757,6 +758,55 @@ async def test_the_reserved_namespace_has_no_loaders_without_a_deferred_toolset(
     assistant._state.close()
 
 
+# A skill on the entry agent is never deferred: its SkillAgent advertises every skill, and wiring holds
+# skill names back before the residency split. So a gate naming one must resolve at startup, not wait
+# for a build that never comes while the skill's scripts run ungated.
+
+
+def _skill_tool_names(assistant) -> set[str]:
+    names = set(assistant._state.skill_manager.skills["weekly-digest"].script_tool_names())
+    assert names, "the skill must provide a tool for the gate to hold back"
+    return names
+
+
+def _with_skill_on_entry_agent(config: AssistantConfig) -> AssistantConfig:
+    entry = config.agents["assistant"]
+    assert entry.resident is not None, "the shipped entry agent declares resident, which is what exposes this"
+    config.agents["assistant"] = dataclasses.replace(entry, available=[*entry.available, "weekly-digest"])
+    _write_skill(config)
+    return config
+
+
+async def test_a_gate_on_an_entry_agent_skill_resolves_at_startup_with_resident_declared(tmp_path):
+    config = _with_skill_on_entry_agent(_config(tmp_path, default_confirm=["weekly-digest"]))
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        await assistant.start()
+        policy = assistant._human.policies.default
+        assert policy.pending_confirm == frozenset()
+        assert _skill_tool_names(assistant) <= policy.confirm
+    finally:
+        assistant._state.close()
+
+
+async def test_a_skill_alone_outside_resident_earns_no_loaders(tmp_path):
+    """An entry agent whose only non-resident name is a skill defers nothing, so it holds no loaders and
+    a bare `core` gates exactly what it did before residency."""
+    agents = {
+        "assistant": AgentConfig(available=["time", "weekly-digest"], resident=["time"], delegates_to=["helper"]),
+        "helper": AgentConfig(description="Helps.", available=["time"]),
+    }
+    config = _config(tmp_path, agents=agents, default_confirm=["core"])
+    _write_skill(config)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        await assistant.start()
+        assert "load_tools" not in {fn.__name__ for fn in assistant._agent._effective_tools(None)}
+        assert assistant._human.policies.default.gated == {"spawn_subagent", "activate_skill"}
+    finally:
+        assistant._state.close()
+
+
 # --- every agent's calls are judged by its own policy -------------------------------------------------
 
 
@@ -898,7 +948,8 @@ def _deferred_setup(tmp_path, **config_overrides):
     agents = {"assistant": AgentConfig(available=["memory", "mcp", "compute"], resident=["memory"])}
     config_overrides = {"default_confirm": [], "default_review": [], **config_overrides}
     config = AssistantConfig(data_dir=tmp_path, agents=agents, entry_agent="assistant", **config_overrides)
-    state = LiveState(config=config)
+    # A real registry: which toolsets wait for a build depends on provenance (an entry agent's skills never do).
+    state = LiveState(config=config, registry=build_registry(config))
     state.tools_by_toolset = {"memory": {"remember"}}
     policies = resolve_approval_policies(config, state, SimpleNamespace(tools=[]))
     return config, state, policies
@@ -948,7 +999,8 @@ def test_a_declared_pair_waits_on_its_own_agents_deferred_toolsets(tmp_path):
     config = AssistantConfig(
         data_dir=tmp_path, agents=agents, entry_agent="assistant", default_confirm=[], default_review=[]
     )
-    state = LiveState(config=config)
+    # A real registry: which toolsets wait for a build depends on provenance (an entry agent's skills never do).
+    state = LiveState(config=config, registry=build_registry(config))
     state.tools_by_toolset = {"memory": {"remember"}}
     policies = resolve_approval_policies(config, state, SimpleNamespace(tools=[]))
     assert policies.by_agent["assistant"].pending_confirm == frozenset({"mcp.add_mcp_server"})
@@ -1019,7 +1071,8 @@ def test_core_namespace_gains_the_group_tools_when_something_is_deferred(tmp_pat
     def core_tools(resident):
         agents = {"assistant": AgentConfig(available=["memory", "mcp"], resident=resident)}
         config = AssistantConfig(data_dir=tmp_path, agents=agents, entry_agent="assistant")
-        return gateable_tools(LiveState(config=config), SimpleNamespace(tools=[]))["core"]
+        state = LiveState(config=config, registry=build_registry(config))
+        return gateable_tools(state, SimpleNamespace(tools=[]))["core"]
 
     assert core_tools(["memory"]) >= {"available_tools", "load_tools"}
     assert not core_tools(["memory", "mcp"]) & {"available_tools", "load_tools"}
