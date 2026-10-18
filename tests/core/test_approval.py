@@ -1277,3 +1277,20 @@ async def test_a_worker_composed_with_a_deferred_toolset_is_gated_by_the_pending
     await compose("registrar", "Add a server.", ["mcp"], "Manage servers.")
 
     assert "add_mcp_server" in assistant._human.policies.for_agent(label).confirm
+
+
+async def test_startup_notices_each_shadowed_resident_tool(tmp_path, monkeypatch):
+    from kokua.core import agents
+    from kokua.core.agents import ShadowedTool
+
+    shadow = ShadowedTool("explorer", "read_file", "fs", "files")
+    monkeypatch.setattr(agents, "shadowed_tools", lambda config, registry, tools: [shadow])
+    channel = AlertCapturingChannel()
+    assistant = await Assistant.create(_config(tmp_path), channel, client=MockAsyncModelClient([]))
+    await assistant.start()
+    await assistant.start()  # idempotent: the notice is raised once
+
+    assert [text for text, *_ in channel.alerts] == [
+        "explorer: read_file from 'files' is shadowed by 'fs' (trust order keeps the first)."
+    ]
+    assistant._state.close()

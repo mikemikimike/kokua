@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import difflib
 import functools
+from dataclasses import dataclass
 from typing import Callable, Collection, Mapping, Optional, Sequence
 
 from aimu import trim_messages
@@ -165,6 +166,42 @@ def resident_for(config: AssistantConfig, registry: ToolsetRegistry, agent_name:
     if agent.resident is None:
         return available
     return [entry for entry in available if entry in agent.resident]
+
+
+@dataclass(frozen=True)
+class ShadowedTool:
+    """A resident tool one agent never sees because an earlier resident toolset offers the same name."""
+
+    agent: str
+    tool: str
+    kept: str
+    shadowed: str
+
+
+def shadowed_tools(
+    config: AssistantConfig, registry: ToolsetRegistry, tools_by_toolset: Mapping[str, Collection[str]]
+) -> list[ShadowedTool]:
+    """Every resident tool a same-named tool from an earlier toolset hides, per declared agent.
+
+    ``build_tools`` keeps the first of two same-named tools, in the agent's resident order, and says
+    nothing of the other; with ``available = "all"`` that order is trust order, so a third-party or MCP
+    tool can silently lose to one Kokua ships. ``tools_by_toolset`` records what each toolset offered,
+    which is all this needs. The entry agent's skills are held back as wiring holds them back, since its
+    ``SkillAgent`` supplies those tools by another route and they are never competing for a name here.
+    """
+    shadows: list[ShadowedTool] = []
+    for agent_name in config.agents:
+        resident = resident_for(config, registry, agent_name)
+        if agent_name == config.entry_agent:
+            resident = without_skill_names(resident, registry)
+        holder: dict[str, str] = {}
+        for toolset in resident:
+            for tool in sorted(tools_by_toolset.get(toolset, ())):
+                if tool in holder:
+                    shadows.append(ShadowedTool(agent_name, tool, holder[tool], toolset))
+                else:
+                    holder[tool] = toolset
+    return shadows
 
 
 def deferred_for(config: AssistantConfig, registry: ToolsetRegistry, agent_name: str) -> list[str]:

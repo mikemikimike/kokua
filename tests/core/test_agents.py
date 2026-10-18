@@ -472,3 +472,22 @@ def test_an_all_agent_declares_every_configured_section(monkeypatch):
     config, registry = _all_config(monkeypatch, _explorer())
     config.configured_sections = ("planning",)
     assert configured_but_undeclared(config, registry) == []
+
+
+def test_shadowed_tools_names_the_winner_and_the_loser(monkeypatch):
+    from kokua.core.agents import ShadowedTool, shadowed_tools
+
+    config, registry = _all_config(monkeypatch, _explorer(resident=["time", "files"]))
+    tools = {"time": {"read_file"}, "files": {"read_file", "grep"}}
+
+    assert shadowed_tools(config, registry, tools) == [ShadowedTool("explorer", "read_file", "time", "files")]
+
+
+def test_shadowed_tools_ignores_a_skill_on_the_entry_agent(monkeypatch):
+    from kokua.core.agents import shadowed_tools
+
+    agents = _explorer()
+    agents["assistant"] = AgentConfig(available=ALL_TOOLSETS, resident=["time", "weekly-digest"])
+    config, registry = _all_config(monkeypatch, agents)
+
+    assert shadowed_tools(config, registry, {"time": {"now"}, "weekly-digest": {"now"}}) == []

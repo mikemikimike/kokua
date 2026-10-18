@@ -328,7 +328,7 @@ class Assistant:
         self._started = True
         self._loop = asyncio.get_running_loop()
         # Imported here, not at module level, for the cycle `create` documents above.
-        from kokua.core.agents import configured_but_undeclared
+        from kokua.core.agents import configured_but_undeclared, shadowed_tools
         from kokua.core.approval import resolve_approval_policies
 
         config, state = self._config, self._state
@@ -363,6 +363,14 @@ class Assistant:
             # never sees one assigned without the other.
             self._human.auto_approval = resolve_auto_approval(config, state, entry_agent, policies)
             self._human.policies = policies
+
+        # After every startup build, since only then does `tools_by_toolset` hold what each resident
+        # toolset offered. Once, here, because a shadow is a fact about the declaration, not about a turn.
+        for shadow in shadowed_tools(config, state.registry, state.tools_by_toolset):
+            await self._ui.alert(
+                f"{shadow.agent}: {shadow.tool} from {shadow.shadowed!r} is shadowed by {shadow.kept!r} "
+                "(trust order keeps the first)."
+            )
 
         state.tasks.arm_all()
 
