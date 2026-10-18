@@ -593,8 +593,7 @@ def test_a_worker_spec_carries_its_deferred_toolsets_as_groups(tmp_path):
     }
     config, state = _state(tmp_path, agents)
     spec = build_agent_specs(config, state, "assistant")["researcher"]
-    names = {fn.__name__ for fn in spec["tools"]}
-    assert "get_current_date_and_time" in names and "get_web_content" not in names
+    assert [fn.__name__ for fn in spec["tools"]] == ["get_current_date_and_time", "convert_time"]
     assert [g.name for g in spec["tool_groups"]] == ["time", "web"]
     assert spec["tool_groups"][0].resident and not spec["tool_groups"][1].resident
 

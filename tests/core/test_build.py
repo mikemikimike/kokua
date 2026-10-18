@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 
 import pytest
 
@@ -1113,6 +1114,7 @@ async def test_a_failing_deferred_build_reports_to_the_model_and_the_user(tmp_pa
 async def test_alert_soon_is_a_no_op_before_the_assistant_has_started(tmp_path):
     assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
     assistant._state.alert_soon("nobody is listening yet")  # must not raise
+    assistant._state.close()
 
 
 def test_a_deferred_toolset_carrying_a_workflow_still_offers_its_command(tmp_path):
@@ -1128,3 +1130,141 @@ def test_a_deferred_toolset_carrying_a_workflow_still_offers_its_command(tmp_pat
 def test_the_shipped_entry_agent_has_no_deferred_group(tmp_path):
     agent, _ = _wired(_config(tmp_path))
     assert "load_tools" not in _tool_names(agent)
+
+
+# --- Deferred loads go through the approval hook, and fail loudly and recoverably -----------------------
+
+
+async def test_loading_a_deferred_toolset_resolves_the_approval_entry_waiting_on_it(tmp_path):
+    config = _residency_config(
+        tmp_path, available=("time", "web"), resident=("time",), default_confirm=["web.get_web_content"]
+    )
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    await assistant.start()
+    assert "get_web_content" not in assistant._human.policies.for_agent("assistant").confirm
+
+    assert (await assistant._agent.load_tool_group("web")).startswith("Loaded 'web':")
+
+    assert "get_web_content" in assistant._human.policies.for_agent("assistant").confirm
+    assistant._state.close()
+
+
+async def test_a_misnamed_approval_entry_refuses_the_load_and_no_tool_arrives(tmp_path):
+    import asyncio
+
+    config = _residency_config(tmp_path, available=("time", "web"), resident=("time",), default_confirm=["web.nope"])
+    channel = AlertCapturingChannel()
+    assistant = await Assistant.create(config, channel, client=MockAsyncModelClient([]))
+    await assistant.start()
+
+    result = await assistant._agent.load_tool_group("web")
+
+    assert result.startswith("Could not load 'web':")
+    for _ in range(20):
+        if channel.alerts:
+            break
+        await asyncio.sleep(0.01)
+    assert channel.alerts and channel.alerts[0][0].startswith("Loading web for assistant failed:")
+    assert "get_web_content" not in _tool_names(assistant._agent)
+    assistant._state.close()
+
+
+async def test_a_deferred_build_sees_the_live_agent(tmp_path):
+    """A toolset that needs the agent object (``skills``) must get it when it is loaded, not None."""
+    from kokua.core.agents import build_registry
+    from kokua.registry.registry import Toolset
+
+    seen: list = []
+
+    def record(ctx) -> list:
+        seen.append(ctx.agent)
+        return []
+
+    config = _residency_config(tmp_path, available=("time", "probe"), resident=("time",))
+    registry = build_registry(config)
+    registry["probe"] = Toolset(name="probe", description="records its agent", build=record)
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=registry)
+    agent, _ = _wired(config, state)
+
+    await agent.load_tool_group("probe")
+
+    assert seen == [agent]
+
+
+async def test_a_closed_loop_does_not_mask_the_real_build_error(tmp_path, monkeypatch):
+    import asyncio
+
+    config = _residency_config(tmp_path, available=("time", "broken"), resident=("time",))
+    monkeypatch.setattr("kokua.core.agents.validated_registry", lambda cfg: _registry_with_broken_toolset(cfg, []))
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    await assistant.start()
+    closed = asyncio.new_event_loop()
+    closed.close()
+    assistant._loop = closed
+
+    assert (await assistant._agent.load_tool_group("broken")) == "Could not load 'broken': store locked"
+    assistant._state.close()
+
+
+async def test_pending_alerts_are_cancelled_at_shutdown(tmp_path):
+    assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
+    await assistant.start()
+    assistant._alert_soon("will not be delivered")
+    await asyncio.sleep(0)  # the scheduled call runs and creates the task
+    pending = list(assistant._alert_tasks)
+    await assistant._cancel_alerts()
+    assert all(task.done() for task in pending)
+    assert not assistant._alert_tasks
+    assistant._state.close()
+
+
+async def test_a_deferred_mcp_server_that_is_not_connected_refuses_to_load_and_loads_once_it_is(tmp_path):
+    from types import SimpleNamespace
+
+    def stock_quote():  # the resolver only reads __name__
+        pass
+
+    config = _config(
+        tmp_path,
+        agents={"assistant": AgentConfig(available=["time", "stocks"], resident=["time"])},
+        mcp_servers=[MCPServerConfig(url="https://broker/mcp", name="stocks")],
+        default_confirm=[],
+    )
+    agent, state = _wired(config)
+
+    result = await agent.load_tool_group("stocks")
+    assert result.startswith("Could not load 'stocks':") and "not connected" in result
+
+    state.connections.append(SimpleNamespace(url="https://broker/mcp", callables=[stock_quote]))
+    assert (await agent.load_tool_group("stocks")).startswith("Loaded 'stocks':")
+    assert "stock_quote" in _tool_names(agent)
+
+
+async def test_a_resident_mcp_server_that_is_not_connected_still_builds_empty(tmp_path):
+    config = _config(
+        tmp_path,
+        agents={"assistant": AgentConfig(available=["time", "stocks"])},
+        mcp_servers=[MCPServerConfig(url="https://broker/mcp", name="stocks")],
+        default_confirm=[],
+    )
+    agent, _ = _wired(config)
+    assert "load_tools" not in _tool_names(agent)
+
+
+def test_the_prompt_wire_agent_builds_for_itself_names_deferred_toolsets_only(tmp_path, monkeypatch):
+    captured: list[str] = []
+
+    def fake_client(cfg, system_message, agent_name):
+        captured.append(system_message)
+        return MockAsyncModelClient([])
+
+    monkeypatch.setattr("kokua.core.build.build_model_client", fake_client)
+    from kokua.core.agents import build_registry
+    from kokua.core.build import wire_agent
+
+    config = _residency_config(tmp_path)
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=build_registry(config))
+    wire_agent(config, state, "assistant")
+
+    assert "Also available, load before use: web." in captured[0]
+    assert _WEB_GUIDANCE_SNIPPET not in captured[0]

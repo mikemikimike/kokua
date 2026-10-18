@@ -177,8 +177,8 @@ class Assistant:
         # nobody is watching -- the same failure invariant 7 in `core/turns.py` describes for turns.
         self._title_tasks: set[asyncio.Task] = set()
         # The event loop `start()` ran on, and the alerts scheduled onto it from worker threads (see
-        # `_alert_soon`). Held for the same reason as the title tasks: an unreferenced task can be
-        # collected before it runs.
+        # `_alert_soon`). Held so an unreferenced task is not collected before it runs, and so shutdown
+        # can cancel them (see `_cancel_alerts`).
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._alert_tasks: set[asyncio.Task] = set()
         # Whether `start()` has run. Set before its body rather than after, so a failed start is
@@ -772,6 +772,7 @@ class Assistant:
                 task.cancel()
             if self._title_tasks:
                 await asyncio.gather(*list(self._title_tasks), return_exceptions=True)
+            await self._cancel_alerts()
             for conn in self._mcp_servers:
                 try:
                     await conn.client.aclose()
@@ -1003,7 +1004,19 @@ class Assistant:
             self._alert_tasks.add(task)
             task.add_done_callback(self._alert_tasks.discard)
 
-        loop.call_soon_threadsafe(schedule)
+        try:
+            loop.call_soon_threadsafe(schedule)
+        except RuntimeError:
+            # The loop has closed (shutdown). This runs inside a group build's error path, so raising
+            # here would replace the real build error in the text the model reads.
+            logger.debug("Dropping alert, the event loop is closed: %s", text)
+
+    async def _cancel_alerts(self) -> None:
+        """Cancel alerts still waiting to be raised: one must not outlive the channel it would write to."""
+        for task in list(self._alert_tasks):
+            task.cancel()
+        if self._alert_tasks:
+            await asyncio.gather(*list(self._alert_tasks), return_exceptions=True)
 
     def _on_toolset_built(self, toolset: str, tool_names: frozenset[str]) -> None:
         """Resolve the approval entries waiting on ``toolset``, now that it has built its tools.

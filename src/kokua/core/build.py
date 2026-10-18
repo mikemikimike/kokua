@@ -168,11 +168,11 @@ def wire_agent(config: AssistantConfig, state: LiveState, agent_name: str, *, cl
             config, resolve_system_message(config, agent_name, resident, deferred), agent_name
         )
 
-    # The context is made before the agent because the agent is constructed with the groups that hold it
-    # (a group's build closes over this context), and the agent is filled in just after. A deferred
-    # `skills` toolset needs the live agent at build time (`add_skill_script` reloads it), and a load can
-    # only happen once the agent exists, so nothing reads the field while it is still empty.
-    context = ToolsetContext(state=state, agent=None, agent_name=agent_name)
+    def context() -> ToolsetContext:
+        # Reads `agent` when called, which is after the assignment below: the groups are handed to the
+        # agent's constructor, and a deferred toolset such as `skills` needs the live agent when loaded.
+        return ToolsetContext(state=state, agent=agent, agent_name=agent_name)
+
     agent = aio.SkillAgent(
         resolved_client,
         tools=[],
@@ -184,8 +184,7 @@ def wire_agent(config: AssistantConfig, state: LiveState, agent_name: str, *, cl
         max_iterations=config.max_iterations_for(agent_name),
         tool_groups=tool_groups_for(config, state, agent_name, resident, deferred, context),
     )
-    object.__setattr__(context, "agent", agent)
-    agent.tools = build_tools(resident, context)
+    agent.tools = build_tools(resident, context())
     agent.tool_approval = state.gate_for(agent_name)
     rebuild_delegation_tool(agent, state)
     return agent
@@ -197,7 +196,7 @@ def tool_groups_for(
     agent_name: str,
     resident: Sequence[Toolset],
     deferred: Sequence[Toolset],
-    ctx: ToolsetContext,
+    context: Callable[[], ToolsetContext],
 ) -> list[ToolGroup]:
     """The tool groups one agent carries: its resident toolsets listed, its deferred ones loadable.
 
@@ -209,16 +208,28 @@ def tool_groups_for(
 
     A build failure is raised again after the user is told: AIMU turns the exception into the text the
     model reads, and nothing else would tell the person that a capability they expected did not arrive.
+
+    ``context`` is a callable rather than a context because the entry agent's context holds the agent, and
+    the agent is constructed with these groups: the callable is only called at load time, when the agent
+    exists, so no context is ever built half empty or changed after the fact.
+
+    A deferred MCP server that is not connected refuses to build. Resident, the same server builds empty
+    (a reconnect reaches the next rebuild), but a load is recorded as done, so an empty one would leave
+    the group unloadable for the conversation even after the server returns.
     """
     # Imported here, not at module level: see the comment in resolve_system_message.
     from kokua.core.agents import approval_note
 
     confirm, review, _ = config.approval_entries_for(agent_name)
+    server_urls = {server.name: server.url for server in config.mcp_servers}
 
     def group(toolset: Toolset, *, is_deferred: bool) -> ToolGroup:
         def build(toolset: Toolset = toolset) -> list:
             try:
-                return build_tools([toolset], ctx)
+                url = server_urls.get(toolset.name)
+                if url is not None and not any(getattr(c, "url", None) == url for c in state.connections):
+                    raise ConnectionError(f"the MCP server {toolset.name!r} ({url}) is not connected")
+                return build_tools([toolset], context())
             except Exception as error:
                 if state.alert_soon is not None:
                     state.alert_soon(f"Loading {toolset.name} for {agent_name} failed: {error}")

@@ -7,6 +7,7 @@ collision is an error, not a precedence rule, so nothing here depends on one pro
 from __future__ import annotations
 
 import difflib
+import functools
 from typing import Callable, Mapping, Optional, Sequence
 
 from aimu import trim_messages
@@ -569,11 +570,13 @@ def build_agent_specs(config: AssistantConfig, state: LiveState, delegator: str)
         # agent object is entry-point-only and validation has already rejected it here. The name is
         # carried regardless, so a toolset scoping itself to its holder (`benchmark`) resolves this
         # worker's own model rather than the delegator's.
-        context = ToolsetContext(state=state, agent=None, agent_name=name)
+        # A partial, so each worker's groups build with that worker's own context (a bare closure over a
+        # loop variable would hand every group the last worker's).
+        make_context = functools.partial(ToolsetContext, state=state, agent=None, agent_name=name)
         # Only the resident toolsets are built here. A deferred one is built by its group, when the
         # worker loads it, and that build goes through `build_tools` too, so recording and approval
         # cover it exactly as they cover a toolset built now.
-        tools = build_tools(resident, context)
+        tools = build_tools(resident, make_context())
         if agent.delegates_to:
             tools = tools + [_spawn_tool(config, state, name)]
         # AIMU reads the first line of a spec's system_message as that agent_type's menu label (see
@@ -585,7 +588,7 @@ def build_agent_specs(config: AssistantConfig, state: LiveState, delegator: str)
         specs[name] = {
             "system_message": f"{agent.description or name}\n\n{message}",
             "tools": tools,
-            "tool_groups": tool_groups_for(config, state, name, resident, deferred, context),
+            "tool_groups": tool_groups_for(config, state, name, resident, deferred, make_context),
             # Bound to this worker's own name, so its calls are judged by its own policy rather than
             # its delegator's.
             "tool_approval": state.gate_for(name),
