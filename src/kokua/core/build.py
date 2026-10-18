@@ -174,7 +174,9 @@ def wire_agent(
     ``preloaded`` names toolsets the conversation loaded in an earlier life of this agent. Each one still
     deferred is built here and joins the resident tools, in the order given, so a rebuilt agent holds what
     the model had loaded. The loads are not replayed through the agent because AIMU's load is async and
-    this function is not; building them at wiring reaches the same end state with the same tool order.
+    this function is not; building them at wiring reaches the same tools, though not the same order: a
+    preloaded toolset's tools join the agent's own list, so they sit ahead of ``spawn_subagent``, any skill
+    tools, and the two loaders, where a model-driven load appends after all of them.
     They go through ``build_tools`` like every other build, so the approval entries waiting on a toolset
     resolve before any of its tools can be called. One that fails to build (a refused approval entry, an
     MCP server still down) is logged and left deferred, so the model can try loading it again and read the

@@ -438,7 +438,8 @@ sibling's by accident, and there is no mode to branch on.
 
 - **A declaration is the only way capability is granted.** A built-in group, an installed plugin toolset,
   and a connected MCP server all reach nothing until some agent's `available` names them, and nothing warns
-  about a name nothing references. Startup used to, for names the user had provisioned specifically to
+  about a name nothing references (the one startup warning is for a toolset whose own config section
+  was written while no agent declares it, whose settings nobody then reads). Startup used to, for names the user had provisioned specifically to
   be reachable, but telling those from the ones that merely ship meant a provenance rule over the whole
   namespace, and a toolset nobody declares costs nothing to leave unnamed. A configured MCP server does
   cost something (a handshake, and a held credential), which is the case that lost a signal here; see
@@ -549,14 +550,18 @@ and step 6 its *approval* axis:
    yet cannot be resolved then, so after its shape is checked it waits in the policy's `pending_confirm`
    or `pending_review`. `build_tools` calls `LiveState.toolset_built` for every toolset it builds, after
    recording the tool names and before returning any tool, and `Assistant._on_toolset_built` resolves the
-   waiting entries there (`ApprovalPolicies.with_built`, and `AutoApproval.with_built` for
-   `[security].never_auto_approve` entries waiting the same way). Because the hook sits in the one build
-   every path shares, it holds whoever builds the toolset: a model's `load_tools`, a composed worker, or
-   a rebuilt agent's preload. An entry that still matches nothing, or a `review` list that now reaches
-   the floor, raises there and refuses the build, every time, so a misnamed gate fails closed. Both
-   objects are swapped under one lock, since a deferred build runs in a worker thread.
-   `HumanGate.approve(agent, name, arguments)` then looks the calling agent's policy up at call time. The gate is bound to each agent's name through
-   `LiveState.gate_for`: the entry agent gets its own, a delegated worker gets its own through the spawn
+   waiting entries there (`ApprovalPolicies.with_built`, and, with auto-approval enabled,
+   `AutoApproval.with_built` for `[security].never_auto_approve` entries waiting the same way). Because
+   the hook sits in the one build every path shares, it holds whoever builds the toolset: a model's
+   `load_tools`, a composed worker, or a rebuilt agent's preload. An entry that still matches nothing, or
+   (with auto-approval enabled) a `review` list that now reaches the floor, raises there and refuses the
+   build, every time, so a misnamed gate fails closed. Both objects are swapped under one lock, since a
+   deferred build runs in a worker thread. Which toolsets count as deferred here is
+   `agents.loadable_toolsets`, not the bare declaration: wiring holds the entry agent's skill names back
+   before the split (its `SkillAgent` already holds every skill), so a gate on one of those skills
+   resolves at startup instead of waiting for a build that never comes.
+   `HumanGate.approve(agent, name, arguments)` then looks the calling agent's policy up at call time. The
+   gate is bound to each agent's name through `LiveState.gate_for`: the entry agent gets its own, a delegated worker gets its own through the spawn
    spec's `"tool_approval"` key (AIMU 0.37.0), and a composed worker is bound to `composed:<label>` and
    always judged by the default tier. `:` and `[` are therefore reserved in agent names.
 

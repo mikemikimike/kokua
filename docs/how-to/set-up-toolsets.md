@@ -105,7 +105,7 @@ You are a research sub-agent. Investigate the task with web search and page look
 against sources rather than memory, and return a concise findings summary that names its sources."""
 
 [agents.researcher.tools]
-available = ["web", "misc", "time"]
+available = ["web", "misc", "time", "messaging"]
 
 [agents.report-writer]
 description = "Builds and emails PDF reports."

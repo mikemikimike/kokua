@@ -718,8 +718,10 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer
   approval entry naming a deferred toolset is checked for shape at startup and resolved when the toolset
   is built, by whichever path builds it (a model's load, a composed worker, a rebuilt agent's preload);
   one that then matches nothing refuses every build of that toolset, failing closed rather than letting
-  it load ungated. `[security].never_auto_approve` entries for a deferred toolset wait the same way, and a
-  build after which a policy's `review` reaches the floor is refused. The shipped gate covers the same
+  it load ungated. With auto-approval enabled, `[security].never_auto_approve` entries for a deferred
+  toolset wait the same way, and a build after which a policy's `review` reaches the floor is refused.
+  A skill the entry agent names is never deferred (its `SkillAgent` already holds every skill), so a gate
+  on one resolves at startup. The shipped gate covers the same
   seven tools it did: `skills.add_skill_script` and `mcp.add_mcp_server` resolve when their toolset first
   loads.
 - **A rebuilt agent preloads what its conversation loaded.** On restart, when switching among more than

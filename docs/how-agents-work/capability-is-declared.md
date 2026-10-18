@@ -241,7 +241,9 @@ toolset, pinned as such by that same test file.
 
 **The forgotten declaration.** You `uv add` a toolset, `kokua --list-toolsets` shows it, you ask
 the assistant to use it, and it says it cannot. Nothing errored. This silence is deliberate: Kokua used
-to warn at startup about a provisioned toolset no agent named, and the warning was removed, because
+to warn at startup about a provisioned toolset no agent named, and the warning was removed (what
+remains is a log line for a toolset whose own config section you wrote while no agent declares it),
+because
 telling a toolset somebody installed on purpose from one that merely ships would take a provenance rule
 over the whole namespace, and a line printed on every start is a line people learn to skip. So the
 diagnosis is a command rather than a warning. `kokua --list-toolsets` prints every name an
@@ -250,7 +252,7 @@ your MCP servers and your skills. What it does not tell you is which agent holds
 agent's availability, residency, and approval lists as the config declares them.
 
 **Declaration is per agent, and workers are the easy thing to get wrong.** The shipped `researcher`
-declares `["web", "misc", "time"]`. It cannot read a file, and delegating a file-reading task to it
+declares `["web", "misc", "time", "messaging"]`. It cannot read a file, and delegating a file-reading task to it
 returns an apology rather than an error. Widening the entry agent widens nothing for its workers.
 
 **What is loud, so you know what to expect.** An unknown name in an `available` list fails startup. A cycle

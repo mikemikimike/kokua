@@ -146,11 +146,13 @@ hook, and the hook resolves the waiting entries before a single tool is returned
 what its conversation loaded (below).
 
 An entry that still matches nothing once its toolset is built, such as `mcp.add_mcp_servr`, refuses that
-build and every later one, so the toolset cannot be loaded until the entry is fixed. That is failing
+build and every later one, so the toolset cannot be loaded until the entry is fixed and Kokua
+restarted (approval lists are startup-only, and locked by default). That is failing
 closed on purpose: the alternative is a tool running ungated because its gate was misspelled. On a load,
 the model reads the refusal as a `Could not load` result and you get the alert.
-`[security].never_auto_approve` entries naming a deferred toolset are pending in the same way, and a
-build after which some policy's `review` list reaches that floor is refused too. In the shipped config this is how
+With auto-approval enabled, `[security].never_auto_approve` entries naming a deferred toolset are
+pending in the same way, and a build after which some policy's `review` list reaches that floor is
+refused too. In the shipped config this is how
 `skills.add_skill_script` and `mcp.add_mcp_server` are gated: both name toolsets the entry agent
 defers, and both resolve the first time their toolset is built.
 
@@ -160,13 +162,12 @@ A conversation's agent is rebuilt from the stored transcript more often than you
 restart, when switching among more than eight conversations evicts the least recently used one, and when
 a conversation is truncated. The new agent preloads the toolsets the transcript's `load_tools` calls
 named, in the order they were first named, instead of replaying the calls. The reason is mechanical: the
-agent builder is synchronous and AIMU's load is async. The end state is the same tools, the restored
-ones in their original load order, with their guidance in the prompt and the names line listing only
-what is still loadable.
+agent builder is synchronous and AIMU's load is async. The end state is the same tools, with the
+restored toolsets' guidance in the prompt and the names line listing only what is still loadable.
 
 The cost is that a preloaded toolset is held like a resident one: `available_tools` lists it as
-`resident`, not `loaded`, and the two loaders now come after its tools rather than before them. A
-preload goes through the same build and the same approval hook as a load. One that fails (a refused
+`resident`, not `loaded`, and its tools sit with the resident ones, ahead of `spawn_subagent`, any
+skill tools, and the two loaders. A preload goes through the same build and the same approval hook as a load. One that fails (a refused
 approval entry, an MCP server still down) is logged at WARNING rather than raised as an alert, since a
 rebuild is something nobody asked for, and the toolset stays deferred and loadable so the model can try
 again and read the real error. A preloaded tool whose name the agent already holds is skipped
@@ -189,8 +190,8 @@ approval gate covers the same seven tools it did. What it costs is a round: a tu
 toolset spends one model call on `load_tools` before it can use it. Each model call in the web UI still
 shows its `N tools` count, which is residency as the model experienced it.
 
-`available = "all"`, every installed toolset available to load, is designed for a later stage and not
-built yet; today `available` is always a list.
+`available = "all"`, every installed toolset available to load, is designed and not built yet; today
+`available` is always a list.
 
 ## Approval: a per-call layer
 
@@ -270,8 +271,8 @@ these fails startup rather than warning:
   in `[security].never_auto_approve`, the floor beneath the reviewer. That second check only runs when
   auto-approval is enabled.
 
-An entry naming a toolset the agent defers is the one exception to "at startup": startup checks its
-shape, and the build checks the rest, refusing the toolset rather than letting it load ungated (see
+An entry naming a toolset the agent defers, and no agent holds resident, is the one exception to "at
+startup": startup checks its shape, and the build checks the rest, refusing the toolset rather than letting it load ungated (see
 [What a load checks](#what-a-load-checks-approval-before-any-tool-is-callable)).
 
 With auto-approval off, `review` entries prompt you exactly as `confirm` ones do: turning it off never

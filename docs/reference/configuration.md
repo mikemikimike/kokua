@@ -789,8 +789,9 @@ grouped by what provides it, and `kokua agents` for what each declared agent hol
 An unknown name is a startup error listing the valid ones, so a typo can never quietly leave an agent
 with a smaller toolset than you wrote. Nothing is implicit, including the clock: `time` is added to no
 agent in code, which is why every shipped agent lists it. An installed plugin toolset and a configured
-MCP server likewise do nothing until some agent names them, and startup warns about one that nothing
-names.
+MCP server likewise do nothing until some agent names them, and nothing warns about one that nothing
+names. The one warning is narrower: a toolset whose own `[<name>]` section you wrote, with no agent
+declaring the toolset, gets a line in the log at startup, since those settings are read by nobody.
 
 The full inventory of what each toolset contains is in [set up a
 toolset](../how-to/set-up-toolsets.md#one-namespace).
@@ -809,11 +810,13 @@ every available toolset is resident. Why the axis exists, and what a load costs 
   unlocked. Order does not matter: tools are presented in `available` order.
 - **An empty list is legal** and defers everything `available` names.
 - **A skill name on the entry agent is unaffected.** The entry agent is a `SkillAgent`, which advertises
-  every skill in its catalogue whatever this list says, so a skill there is neither resident nor
-  loadable. A skill named by a worker defers like any other toolset.
+  every skill in its catalogue whatever this list says, so a skill there is never deferred, and an
+  approval entry naming it resolves at startup like any other. A skill named by a worker defers like any
+  other toolset.
 - **An approval entry naming a deferred toolset is checked when the toolset is built,** not at startup,
-  since its tool names do not exist until then. An entry that matches nothing then refuses the build, so
-  the toolset will not load until you fix the entry.
+  since its tool names do not exist until then (unless some other agent holds it resident, which builds
+  it at startup). An entry that matches nothing then refuses the build, so the toolset will not load
+  until you fix the entry and restart.
 - **A deferred MCP server that is not connected refuses to load**, and stays loadable for a retry once it
   is, where a resident one builds empty.
 

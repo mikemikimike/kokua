@@ -482,7 +482,9 @@ change. Full rationale, with the code that backs each claim, is in
    `core` reserved for the tools no toolset provides (`spawn_subagent`, `activate_skill`, and AIMU's
    `available_tools` / `load_tools` once any agent defers a toolset, so a bare `core` covers all four)
    and refused as a toolset name at registration so nothing can shadow it. An entry naming a toolset an
-   agent defers cannot resolve at startup, since its tools do not exist yet: startup checks its shape,
+   agent defers and no agent holds resident (`agents.loadable_toolsets`, which leaves out the entry
+   agent's skills, since its `SkillAgent` holds them all) cannot resolve at startup, since its tools do
+   not exist yet: startup checks its shape,
    and the build hook (`LiveState.toolset_built`, called by `build_tools` before it returns any tool)
    resolves it on whichever build comes first, refusing every build of that toolset while the entry
    matches nothing, so a misnamed gate fails closed. `core/approval.py`'s
