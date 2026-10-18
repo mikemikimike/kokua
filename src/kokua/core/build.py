@@ -8,6 +8,8 @@ with ``apply_settings``).
 
 from __future__ import annotations
 
+import json
+import logging
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -18,6 +20,9 @@ from kokua.config.schema import AssistantConfig
 from kokua.core.transcripts import SPAWN_SUBAGENT_TOOL_NAME
 from kokua.registry.context import LiveState, ToolsetContext
 from kokua.registry.registry import Toolset, build_tools, select
+
+
+logger = logging.getLogger(__name__)
 
 
 class ModelClientError(RuntimeError):
@@ -123,7 +128,14 @@ def entry_agent_system_message(config: AssistantConfig, state: LiveState) -> str
     return resolve_system_message(config, name, resident, deferred)
 
 
-def wire_agent(config: AssistantConfig, state: LiveState, agent_name: str, *, client=None) -> aio.SkillAgent:
+def wire_agent(
+    config: AssistantConfig,
+    state: LiveState,
+    agent_name: str,
+    *,
+    client=None,
+    preloaded: Sequence[str] = (),
+) -> aio.SkillAgent:
     """Build one fully-wired agent from its ``[agents.*]`` declaration: its own toolsets, the approval
     gate, and its delegate.
 
@@ -154,6 +166,15 @@ def wire_agent(config: AssistantConfig, state: LiveState, agent_name: str, *, cl
     spawned worker never reaches this agent's scripts. Omitting it raises nothing, it just leaves the
     entry agent's scripts unable to see the ``[email]`` settings or the downloads folder, which each
     script reports as being unconfigured.
+
+    ``preloaded`` names toolsets the conversation loaded in an earlier life of this agent. Each one still
+    deferred is built here and joins the resident tools, in the order given, so a rebuilt agent holds what
+    the model had loaded. The loads are not replayed through the agent because AIMU's load is async and
+    this function is not; building them at wiring reaches the same end state with the same tool order.
+    They go through ``build_tools`` like every other build, so the approval entries waiting on a toolset
+    resolve before any of its tools can be called. One that fails to build (a refused approval entry, an
+    MCP server still down) is logged and left deferred, so the model can try loading it again and read the
+    real error, and a name that is no longer deferred is ignored.
     """
     # Imported here, not at module level: see the comment in resolve_system_message -- the same cycle
     # runs through kokua.core.agents.
@@ -168,23 +189,49 @@ def wire_agent(config: AssistantConfig, state: LiveState, agent_name: str, *, cl
             config, resolve_system_message(config, agent_name, resident, deferred), agent_name
         )
 
+    deferred_by_name = {toolset.name: toolset for toolset in deferred}
+    loaded = [deferred_by_name[name] for name in dict.fromkeys(preloaded) if name in deferred_by_name]
+
     def context() -> ToolsetContext:
         # Reads `agent` when called, which is after the assignment below: the groups are handed to the
-        # agent's constructor, and a deferred toolset such as `skills` needs the live agent when loaded.
+        # agent's constructor, and a toolset such as `skills` needs the live agent when it is built.
         return ToolsetContext(state=state, agent=agent, agent_name=agent_name)
 
-    agent = aio.SkillAgent(
-        resolved_client,
-        tools=[],
-        skill_manager=state.skill_manager,
-        script_env=state.script_env(),
-        name=agent_name,
-        concurrent_tool_calls=config.concurrent_tools,
-        thinking=config.thinking_for(agent_name),
-        max_iterations=config.max_iterations_for(agent_name),
-        tool_groups=tool_groups_for(config, state, agent_name, resident, deferred, context),
-    )
-    agent.tools = build_tools(resident, context())
+    while True:
+        still_deferred = [toolset for toolset in deferred if toolset not in loaded]
+        agent = aio.SkillAgent(
+            resolved_client,
+            tools=[],
+            skill_manager=state.skill_manager,
+            script_env=state.script_env(),
+            name=agent_name,
+            concurrent_tool_calls=config.concurrent_tools,
+            thinking=config.thinking_for(agent_name),
+            max_iterations=config.max_iterations_for(agent_name),
+            tool_groups=tool_groups_for(config, state, agent_name, [*resident, *loaded], still_deferred, context),
+        )
+        agent.tools = build_tools(resident, context())
+        failed = []
+        for toolset in loaded:
+            try:
+                agent.tools.extend(build_deferred(config, state, agent_name, toolset, context))
+            except Exception as error:
+                logger.warning("Could not restore the %r toolset for %s: %s", toolset.name, agent_name, error)
+                failed.append(toolset)
+        if not failed:
+            break
+        # A group's residency is fixed when the agent is constructed, so a failure means constructing again
+        # with it deferred. What built is built again too, since a toolset like `skills` holds its agent.
+        loaded = [toolset for toolset in loaded if toolset not in failed]
+
+    if loaded and getattr(resolved_client, "system_message", None) == resolve_system_message(
+        config, agent_name, resident, deferred
+    ):
+        # Only a message Kokua itself assembled is rewritten: an injected client's own is left alone. The
+        # restored toolsets leave the line naming what is still loadable.
+        resolved_client.system_message = resolve_system_message(
+            config, agent_name, [*resident, *loaded], still_deferred
+        )
     agent.tool_approval = state.gate_for(agent_name)
     rebuild_delegation_tool(agent, state)
     return agent
@@ -221,19 +268,10 @@ def tool_groups_for(
     from kokua.core.agents import approval_note
 
     confirm, review, _ = config.approval_entries_for(agent_name)
-    server_urls = {server.name: server.url for server in config.mcp_servers}
 
     def group(toolset: Toolset, *, is_deferred: bool) -> ToolGroup:
         def build(toolset: Toolset = toolset) -> list:
-            try:
-                url = server_urls.get(toolset.name)
-                if url is not None and not any(getattr(c, "url", None) == url for c in state.connections):
-                    raise ConnectionError(f"the MCP server {toolset.name!r} ({url}) is not connected")
-                return build_tools([toolset], context())
-            except Exception as error:
-                if state.alert_soon is not None:
-                    state.alert_soon(f"Loading {toolset.name} for {agent_name} failed: {error}")
-                raise
+            return build_deferred(config, state, agent_name, toolset, context)
 
         return ToolGroup(
             toolset.name,
@@ -246,6 +284,55 @@ def tool_groups_for(
     return [group(toolset, is_deferred=False) for toolset in resident] + [
         group(toolset, is_deferred=True) for toolset in deferred
     ]
+
+
+def build_deferred(
+    config: AssistantConfig, state: LiveState, agent_name: str, toolset: Toolset, context: Callable[[], ToolsetContext]
+) -> list:
+    """The tools of one deferred toolset, built for ``agent_name`` and reported to the user if that fails.
+
+    The one build every late arrival goes through, whether the model asked for it with ``load_tools`` or a
+    rebuilt agent is restoring it, so the connected-server check, the approval hook, and the alert are the
+    same either way. The error is raised again after the alert: the caller decides what the reader of the
+    failure is.
+    """
+    server_urls = {server.name: server.url for server in config.mcp_servers}
+    try:
+        url = server_urls.get(toolset.name)
+        if url is not None and not any(getattr(c, "url", None) == url for c in state.connections):
+            raise ConnectionError(f"the MCP server {toolset.name!r} ({url}) is not connected")
+        return build_tools([toolset], context())
+    except Exception as error:
+        if state.alert_soon is not None:
+            state.alert_soon(f"Loading {toolset.name} for {agent_name} failed: {error}")
+        raise
+
+
+def loaded_toolsets_in(messages: list[dict]) -> list[str]:
+    """The toolsets a conversation's model loaded, by name, in the order it first loaded each.
+
+    Read from the stored assistant tool calls rather than kept separately, so there is no second record to
+    drift from the transcript. A call's arguments are a dict or a JSON string depending on the provider;
+    one that decodes to anything else, or has no string ``name``, is skipped.
+    """
+    names: list[str] = []
+    for message in messages:
+        if message.get("role") != "assistant":
+            continue
+        for call in message.get("tool_calls") or []:
+            function = call.get("function") or {}
+            if function.get("name") != "load_tools":
+                continue
+            arguments = function.get("arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except ValueError:
+                    continue
+            name = arguments.get("name") if isinstance(arguments, dict) else None
+            if isinstance(name, str) and name not in names:
+                names.append(name)
+    return names
 
 
 def make_agent_builder(
@@ -270,8 +357,11 @@ def make_agent_builder(
     state.refresh_workers = lambda agent: rebuild_delegation_tool(agent, state)
 
     def build(conversation_id: str) -> aio.SkillAgent:
-        agent = wire_agent(config, state, config.entry_agent, client=client_factory(conversation_id))
         session = store.get(conversation_id)
+        preloaded = loaded_toolsets_in(session.messages) if session is not None else []
+        agent = wire_agent(
+            config, state, config.entry_agent, client=client_factory(conversation_id), preloaded=preloaded
+        )
         if session is not None and session.messages:
             agent.restore(expand_message_images(session.messages, images_path))
         return agent

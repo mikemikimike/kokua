@@ -1268,3 +1268,169 @@ def test_the_prompt_wire_agent_builds_for_itself_names_deferred_toolsets_only(tm
 
     assert "Also available, load before use: web." in captured[0]
     assert _WEB_GUIDANCE_SNIPPET not in captured[0]
+
+
+# --- A rebuilt agent comes back with what its conversation loaded -----------------------------------------
+
+
+def _load_call(arguments, call_id="a") -> dict:
+    return {
+        "role": "assistant",
+        "tool_calls": [{"type": "function", "id": call_id, "function": {"name": "load_tools", "arguments": arguments}}],
+    }
+
+
+def test_loaded_toolsets_in_reads_load_tools_calls_in_order():
+    from kokua.core.build import loaded_toolsets_in
+
+    messages = [
+        _load_call({"name": "web"}, "a"),
+        _load_call('{"name": "documents"}', "b"),
+        _load_call({"name": "web"}, "c"),
+        _load_call("not json", "d"),
+        _load_call("[1, 2]", "e"),
+        _load_call({"name": 7}, "f"),
+        _load_call({}, "g"),
+        {"role": "tool", "tool_calls": [{"function": {"name": "load_tools", "arguments": {"name": "audio"}}}]},
+        {"role": "assistant", "tool_calls": [{"function": {"name": "get_time", "arguments": {"name": "time"}}}]},
+        {"role": "assistant", "content": "no calls"},
+    ]
+    assert loaded_toolsets_in(messages) == ["web", "documents"]
+
+
+def _preload_config(tmp_path, **overrides):
+    return _residency_config(
+        tmp_path, available=("memory", "time", "documents", "web"), resident=("memory", "time"), **overrides
+    )
+
+
+def _preloaded(config, names, state=None, client=None):
+    from kokua.core.agents import build_registry
+    from kokua.core.build import wire_agent
+
+    if state is None:
+        state = LiveState(gate_for=allow_all_gates, config=config, registry=build_registry(config))
+    client = client or MockAsyncModelClient([])
+    return wire_agent(config, state, "assistant", client=client, preloaded=names), state
+
+
+def _prompted_client(config, system_message, agent_name):
+    client = MockAsyncModelClient([])
+    client.system_message = system_message
+    return client
+
+
+def test_a_rebuilt_agent_has_its_loads_back_in_order(tmp_path):
+    config = _preload_config(tmp_path)
+    resident_names = _tool_names(_preloaded(config, [])[0])
+
+    agent, _ = _preloaded(config, ["documents", "web"])
+
+    names = _tool_names(agent)
+    assert max(names.index(n) for n in resident_names if n in names and n != "spawn_subagent") < names.index(
+        "read_document"
+    )
+    assert names.index("read_document") < names.index("get_web_content")
+
+
+def test_a_restored_toolset_is_resident_and_not_also_loadable(tmp_path):
+    agent, _ = _preloaded(_preload_config(tmp_path), ["web"])
+
+    listing = agent._groups.listing()
+    assert "web [resident]" in listing
+    assert "documents [loadable]" in listing
+
+
+def test_the_names_line_leaves_out_restored_toolsets(tmp_path, monkeypatch):
+    monkeypatch.setattr("kokua.core.build.build_model_client", _prompted_client)
+    from kokua.core.agents import build_registry
+    from kokua.core.build import wire_agent
+
+    config = _preload_config(tmp_path)
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=build_registry(config))
+    agent = wire_agent(config, state, "assistant", preloaded=["web"])
+
+    message = agent.model_client.system_message
+    assert "Also available, load before use: documents." in message
+    assert "web" not in message.split("Also available, load before use:")[1]
+
+
+async def test_a_preloaded_toolsets_approval_entry_is_resolved_before_its_tools_exist(tmp_path):
+    config = _preload_config(tmp_path, default_confirm=["web.get_web_content"])
+
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    await assistant.start()
+    assert "get_web_content" not in assistant._human.policies.for_agent("assistant").confirm
+
+    _preloaded(config, ["web"], state=assistant._state)
+
+    assert "get_web_content" in assistant._human.policies.for_agent("assistant").confirm
+    assistant._state.close()
+
+
+def test_a_preload_that_fails_is_skipped_logged_and_still_loadable(tmp_path, caplog):
+    config = _residency_config(tmp_path, available=("time", "broken", "web"), resident=("time",))
+    builds: list = []
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=_registry_with_broken_toolset(config, builds))
+
+    with caplog.at_level("WARNING", logger="kokua.core.build"):
+        agent, _ = _preloaded(config, ["broken", "web"], state=state)
+
+    assert "get_web_content" in _tool_names(agent)
+    assert "'broken'" in caplog.text and "store locked" in caplog.text
+    listing = agent._groups.listing()
+    assert "broken [loadable]" in listing and "web [resident]" in listing
+    assert builds
+
+
+def test_a_failed_preloads_name_stays_in_the_prompt(tmp_path, monkeypatch):
+    monkeypatch.setattr("kokua.core.build.build_model_client", _prompted_client)
+    from kokua.core.build import wire_agent
+
+    config = _residency_config(tmp_path, available=("time", "broken", "web"), resident=("time",))
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=_registry_with_broken_toolset(config, []))
+    agent = wire_agent(config, state, "assistant", preloaded=["broken", "web"])
+
+    assert "Also available, load before use: broken." in agent.model_client.system_message
+
+
+def test_a_preload_no_longer_deferred_is_ignored(tmp_path):
+    config = _preload_config(tmp_path)
+    expected = _tool_names(_preloaded(config, [])[0])
+
+    agent, _ = _preloaded(config, ["memory", "audio", "no-such-toolset", "memory"])
+
+    assert _tool_names(agent) == expected
+
+
+def test_the_agent_builder_restores_what_the_stored_conversation_loaded(tmp_path):
+    from aimu.sessions import Session, TinyDBSessionStore
+    from kokua.core.agents import build_registry
+    from kokua.core.build import make_agent_builder
+
+    config = _preload_config(tmp_path)
+    store = TinyDBSessionStore(str(config.sessions_path))
+    store.save(
+        Session(
+            key="c1",
+            metadata={},
+            messages=[
+                {"role": "user", "content": "hi"},
+                _load_call({"name": "documents"}, "a"),
+                _load_call('{"name": "web"}', "b"),
+            ],
+        )
+    )
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=build_registry(config))
+    build = make_agent_builder(
+        config,
+        state,
+        client_factory=lambda cid: MockAsyncModelClient([]),
+        store=store,
+        images_path=config.images_path,
+    )
+
+    names = _tool_names(build("c1"))
+
+    assert names.index("read_document") < names.index("get_web_content")
+    assert "get_web_content" not in _tool_names(build("a-conversation-with-no-session"))
