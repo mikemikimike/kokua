@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import difflib
 import functools
-from typing import Callable, Collection, Iterable, Mapping, Optional, Sequence
+from typing import Callable, Collection, Mapping, Optional, Sequence
 
 from aimu import trim_messages
 from aimu.aio.tools.builtin import SubagentObserver, make_async_subagent_tool
@@ -862,7 +862,7 @@ def pending_gate_entries(entries: Sequence[str], deferred: set[str], built: Coll
     }
 
 
-def certain_overlap(left: Iterable[str], right: Iterable[str]) -> list[str]:
+def certain_overlap(left: Collection[str], right: Collection[str]) -> list[str]:
     """What two lists of pending gate entries are sure to share once their toolset builds, as entries.
 
     Decided from the text alone, so a conflict between entries still waiting on a build fails startup

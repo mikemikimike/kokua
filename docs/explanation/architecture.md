@@ -598,7 +598,7 @@ both the message and the tools, so the two cannot resolve different toolsets for
 
 **A rebuilt agent preloads what its conversation loaded.** The agent builder `make_agent_builder` hands
 `wire_agent` a `preloaded` list, read by `build.loaded_toolsets_in` from the stored transcript's
-`load_tools` calls in the order each name first appeared, so an agent rebuilt on restart, after LRU
+`load_tools` calls in the order each name first loaded successfully, so an agent rebuilt on restart, after LRU
 eviction from `AgentRegistry` (more than eight live conversations), or after a truncation holds what the
 model had loaded. Only a call whose stored result (joined by `tool_call_id`, as replay joins one) opens
 with AIMU's `Loaded '<name>':` counts. AIMU stores a call whether or not it ran, so reading calls alone
