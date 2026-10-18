@@ -112,7 +112,7 @@ def entry_agent_system_message(config: AssistantConfig, state: LiveState) -> str
     drifting apart.
     """
     name = config.entry_agent
-    toolsets = select(config.agents[name].tools, state.registry, agent=name, entry_point=name)
+    toolsets = select(config.agents[name].available, state.registry, agent=name, entry_point=name)
     return resolve_system_message(config, name, toolsets)
 
 
@@ -152,7 +152,7 @@ def wire_agent(config: AssistantConfig, state: LiveState, agent_name: str, *, cl
     # runs through kokua.core.agents.
     from kokua.core.agents import without_skill_names
 
-    resolvable = without_skill_names(config.agents[agent_name].tools, state.registry)
+    resolvable = without_skill_names(config.agents[agent_name].available, state.registry)
     toolsets = select(resolvable, state.registry, agent=agent_name, entry_point=config.entry_agent)
     resolved_client = client
     if resolved_client is None:
@@ -169,7 +169,7 @@ def wire_agent(config: AssistantConfig, state: LiveState, agent_name: str, *, cl
         max_iterations=config.max_iterations_for(agent_name),
     )
     agent.tools = build_tools(toolsets, ToolsetContext(state=state, agent=agent, agent_name=agent_name))
-    agent.tool_approval = state.tool_approval
+    agent.tool_approval = state.gate_for(agent_name)
     rebuild_delegation_tool(agent, state)
     return agent
 

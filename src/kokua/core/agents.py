@@ -151,6 +151,9 @@ def build_registry(config: AssistantConfig) -> ToolsetRegistry:
 #: startup rather than at reader-open time, because the collision is in the config and is silent
 #: everywhere else.
 RESERVED_AGENT_NAMES = frozenset({USER, EVERYONE})
+#: Characters no declared agent name may contain: the approval gate binds composed workers and the default
+#: tier under names built from them, and a declared agent must never be able to equal one.
+RESERVED_GATE_NAME_CHARACTERS = (":", "[")
 
 
 def validate_agents(config: AssistantConfig, registry: Mapping[str, Toolset]) -> None:
@@ -174,6 +177,13 @@ def validate_agents(config: AssistantConfig, registry: Mapping[str, Toolset]) ->
             f"table. Configured agents: {known}."
         )
     for name, agent in config.agents.items():
+        if any(character in name for character in RESERVED_GATE_NAME_CHARACTERS):
+            raise ConfigError(
+                f"[agents.{name!r}] contains ':' or '[', which are reserved for the approval gate's own "
+                "names (a composed worker is gated as 'composed:<label>' and the default tier as "
+                "'[assistant.tools]'). An agent with such a name could be mistaken for one of those, so a "
+                "worker composed to look like it would inherit its approval policy. Rename the agent."
+            )
         if name in RESERVED_AGENT_NAMES:
             raise ConfigError(
                 f"[agents.{name}] uses a name reserved by the message bus. An agent's declared name is "
@@ -181,7 +191,7 @@ def validate_agents(config: AssistantConfig, registry: Mapping[str, Toolset]) ->
                 f"{USER!r} is the user's own address and {EVERYONE!r} reaches every run. Rename the agent."
             )
         try:
-            select(agent.tools, registry, agent=name, entry_point=config.entry_agent)
+            select(agent.available, registry, agent=name, entry_point=config.entry_agent)
         except ToolsetError as e:
             raise ConfigError(str(e)) from e
         _check_model(f"agents.{name}", agent.model)
@@ -270,7 +280,7 @@ def build_command_map(config: AssistantConfig, registry: ToolsetRegistry) -> dic
     shape instead of a collision with another one.
     """
     entry = config.agents[config.entry_agent]
-    toolsets = select(entry.tools, registry, agent=config.entry_agent, entry_point=config.entry_agent)
+    toolsets = select(entry.available, registry, agent=config.entry_agent, entry_point=config.entry_agent)
     commands: dict[str, Workflow] = {}
     claimed_by: dict[str, str] = {}
     for toolset_name, workflow in workflows_of(toolsets):
@@ -296,7 +306,7 @@ def build_command_map(config: AssistantConfig, registry: ToolsetRegistry) -> dic
             raise ConfigError(
                 f"toolsets {claimed_by[command]!r} and {toolset_name!r} both offer the "
                 f"/{command} command. Rename one, or drop one from "
-                f"[agents.{config.entry_agent}].tools."
+                f"[agents.{config.entry_agent}.tools].available."
             )
         commands[command] = workflow
         claimed_by[command] = toolset_name
@@ -309,7 +319,7 @@ def undeclared_workflow_commands(config: AssistantConfig, registry: ToolsetRegis
 
     This is the gap ``build_command_map`` leaves on purpose: a config that predates naming a
     workflow's toolset (or dropped it) still gets the command typed at it verbatim -- the web Plan
-    toggle sends ``"/plan <task>"`` over the socket regardless of what ``[agents.*].tools`` says -- so
+    toggle sends ``"/plan <task>"`` over the socket regardless of what ``[agents.*.tools].available`` says -- so
     the serve loop needs to recognize the word even though no declared toolset claims it, to answer
     with what config change would grant it instead of running a plain turn on the literal command text.
 
@@ -317,7 +327,7 @@ def undeclared_workflow_commands(config: AssistantConfig, registry: ToolsetRegis
     that one checks every agent's tools (a toolset a worker holds is still declared) and looks at config
     sections rather than commands, and fires once at startup rather than on an incoming channel message.
     """
-    declared = set(config.agents[config.entry_agent].tools)
+    declared = set(config.agents[config.entry_agent].available)
     return {
         workflow.command: toolset_name
         for toolset_name, workflow in workflows_of(list(registry.values()))
@@ -335,7 +345,7 @@ def configured_but_undeclared(config: AssistantConfig) -> list[str]:
     recognize ``/plan`` typed at it and name the fix instead of running a plain turn on the literal
     text. This one checks every agent's tools and looks at *config sections*, so a warning can fire the
     moment the assistant starts, before anyone has typed anything: writing ``[planning]`` and leaving
-    ``planning`` out of every ``[agents.*].tools`` means its settings are read by nobody, which is
+    ``planning`` out of every ``[agents.*.tools].available`` means its settings are read by nobody, which is
     otherwise silent until someone notices the checkboxes doing nothing.
 
     Checked against every agent's tools, not just the entry agent's: a section belongs to whichever
@@ -347,7 +357,7 @@ def configured_but_undeclared(config: AssistantConfig) -> list[str]:
     cannot tell "the user wrote this" from "Kokua defaulted it" -- exactly the distinction this warning
     needs, since a defaulted section nobody wrote is not a mistake worth reporting.
     """
-    declared = {name for agent in config.agents.values() for name in agent.tools}
+    declared = {name for agent in config.agents.values() for name in agent.available}
     return sorted(name for name in config.configured_sections if name not in declared)
 
 
@@ -499,7 +509,7 @@ def build_agent_specs(config: AssistantConfig, state: LiveState, delegator: str)
     specs: dict[str, dict] = {}
     for name in config.agents[delegator].delegates_to:
         agent = config.agents[name]
-        toolsets = select(agent.tools, state.registry, agent=name, entry_point=config.entry_agent)
+        toolsets = select(agent.available, state.registry, agent=name, entry_point=config.entry_agent)
         # A spawned worker is a plain AIMU Agent, so `agent=None`: the one toolset needing the live
         # agent object is entry-point-only and validation has already rejected it here. The name is
         # carried regardless, so a toolset scoping itself to its holder (`benchmark`) resolves this
@@ -516,6 +526,9 @@ def build_agent_specs(config: AssistantConfig, state: LiveState, delegator: str)
         specs[name] = {
             "system_message": f"{agent.description or name}\n\n{message}",
             "tools": tools,
+            # Bound to this worker's own name, so its calls are judged by its own policy rather than
+            # its delegator's.
+            "tool_approval": state.gate_for(name),
         }
         # Only a declared model is carried. AIMU reads a missing key as "the model the spawn tool was
         # built with", which is the [assistant].model default -- so an undeclared worker runs on that
@@ -617,10 +630,14 @@ def _spawn_tool(config: AssistantConfig, state: LiveState, delegator: str) -> Ca
     its own.
     """
     observer: Optional[SubagentObserver] = state.observer
+    # Deferred: core.approval imports this module for the gate vocabulary.
+    from kokua.core.approval import DEFAULT_POLICY
+
+    # A fallback no Kokua spawn reaches: every spec carries its own gate and Kokua spawns with max_depth=1.
     return make_async_subagent_tool(
         config.default_model,
         agent_types=build_agent_specs(config, state, delegator),
-        tool_approval=state.tool_approval,
+        tool_approval=state.gate_for(DEFAULT_POLICY),
         observer=observer,
         events=record_event,
         max_iterations=config.max_iterations,
@@ -650,10 +667,14 @@ def make_delegation_tool(agent, config: AssistantConfig, state: LiveState) -> Op
     if not config.agents[name].delegates_to:
         return None
     observer: Optional[SubagentObserver] = state.observer
+    # Deferred: core.approval imports this module for the gate vocabulary.
+    from kokua.core.approval import DEFAULT_POLICY
+
+    # A fallback no Kokua spawn reaches: every spec carries its own gate and Kokua spawns with max_depth=1.
     return make_async_subagent_tool(
         config.default_model,
         agent_types=build_agent_specs(config, state, name),
-        tool_approval=state.tool_approval,
+        tool_approval=state.gate_for(DEFAULT_POLICY),
         observer=observer,
         events=record_event,
         max_iterations=config.max_iterations,
@@ -661,10 +682,6 @@ def make_delegation_tool(agent, config: AssistantConfig, state: LiveState) -> Op
     )
 
 
-# Where the approval gate is declared, so the errors below point at the words the user would edit rather
-# than at a paraphrase of them.
-_CONFIRM_TOOLS_SECTION = "security"
-_CONFIRM_TOOLS_KEY = "confirm_tools"
 #: The one tool every skill's toolset carries a reference to. It is attributed to the reserved namespace
 #: and removed from each skill, so gating one skill cannot stop every skill from being loaded.
 _ACTIVATE_SKILL = "activate_skill"
@@ -743,7 +760,7 @@ def _resolve_gate_entry(entry: str, vocabulary: dict[str, set[str]], registry: M
         if toolset in registry:
             return set(), (
                 f"{entry!r} names the {toolset!r} toolset, which no agent declares, so it builds no "
-                f"tools and holds nothing back. Add {toolset!r} to an [agents.<name>].tools list, or "
+                f"tools and holds nothing back. Add {toolset!r} to an [agents.<name>.tools].available list, or "
                 "drop the gate."
             )
         close = difflib.get_close_matches(toolset, sorted(set(vocabulary) | set(registry)), n=2)
@@ -782,9 +799,9 @@ def resolve_gate_entries(
     Shared by every setting written in the ``<toolset>``/``<toolset>.<tool>`` vocabulary, so a
     misspelling in one of them gets the same "did you mean" as a misspelling in another. ``effect`` and
     ``remedy`` are the caller's own words, because what a dead entry does and what it costs both differ:
-    a dead ``confirm_tools`` entry gates nothing, and a tool with full machine access then runs
-    unprompted, while a dead ``[security.auto_approval].tools`` entry reviews nothing, and a prompt
-    somebody meant to stop receiving still arrives.
+    a dead ``confirm`` entry gates nothing, and a tool with full machine access then runs
+    unprompted, while a dead ``review`` entry reviews nothing, and a prompt somebody meant to stop
+    receiving still arrives.
     """
     names: set[str] = set()
     faults: list[str] = []
@@ -798,39 +815,3 @@ def resolve_gate_entries(
         noun = "entry" if len(faults) == 1 else "entries"
         raise ConfigError(f"{setting} has {len(faults)} {noun} that would {effect}: {'; '.join(faults)}. {remedy}")
     return frozenset(names)
-
-
-def resolve_confirm_tools(config: AssistantConfig, state: LiveState, entry_agent) -> frozenset[str]:
-    """The tool names ``[security].confirm_tools`` gates, rejecting an entry that would gate nothing.
-
-    An entry that gates nothing is the one config mistake whose symptom is the absence of a symptom: a
-    tool with full machine access runs without ever prompting, and no session says the line is dead. A
-    user notices a prompt they did not expect; nobody notices a prompt that never comes. That asymmetry
-    is why every fault here fails startup instead of logging a warning, and why a toolset that provides
-    no tools is refused as firmly as a misspelling is.
-
-    Called once every agent has been wired, because the vocabulary does not exist before then and is
-    wider than the entry agent's own tools. ``compute.execute_python`` is one of the six gates Kokua
-    ships and no toolset the entry agent declares provides it: it comes from ``[agents.coder]``, whose
-    tools are built when the delegation tool is.
-
-    **A prefix is a declaration vocabulary, not a call-time discriminator.** The gate itself sees only a
-    tool name (``HumanGate.approve``), so what a prefix buys is a gate that can name a whole capability,
-    an error that can point at the right one, and a config a reader can follow without knowing which of
-    the 21 toolsets a bare name came from. What it cannot buy is telling two toolsets' same-named tools
-    apart at the moment of the call: gating either prefix gates that name wherever it is called.
-    """
-    return resolve_gate_entries(
-        config.confirm_tools,
-        gateable_tools(state, entry_agent),
-        state.registry,
-        setting=f"[{_CONFIRM_TOOLS_SECTION}].{_CONFIRM_TOOLS_KEY}",
-        effect="gate nothing",
-        remedy=(
-            "An entry matching no tool holds nothing back, so the call it was written to stop runs with "
-            "no prompt and nothing reports it. Only tools that exist at startup can be gated, so a tool "
-            "from a server the assistant connects later with add_mcp_server cannot be listed ahead of "
-            "time: give the server a [[mcp.server]] table in config.toml and name it in an agent's "
-            "tools, and its tools are gateable from the next start."
-        ),
-    )

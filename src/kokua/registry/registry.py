@@ -104,7 +104,7 @@ class ToolsetRegistry(dict):
         self.providers: dict[str, str] = dict(providers)
 
 
-#: The ``[security].confirm_tools`` prefix for the tools no toolset builds: ``spawn_subagent``, attached
+#: The approval-entry prefix (``confirm`` and ``review``) for the tools no toolset builds: ``spawn_subagent``, attached
 #: to the entry agent after its toolsets are, and ``activate_skill``, which AIMU gives a ``SkillAgent``.
 #: Reserved here rather than only in the gate's own parser, because a registered toolset of this name
 #: would make those two gates unwritable, and a gate nobody can write is the failure this whole check
@@ -131,7 +131,7 @@ def register(sources: Sequence[tuple[str, Iterable[Toolset]]]) -> ToolsetRegistr
             if toolset.name == RESERVED_GATE_NAMESPACE:
                 raise ToolsetError(
                     f"toolset name {RESERVED_GATE_NAMESPACE!r} (from {label}) is reserved. It is the "
-                    "[security].confirm_tools prefix for the tools no toolset provides, so a toolset "
+                    "approval-entry prefix (confirm and review) for the tools no toolset provides, so a toolset "
                     "holding it would leave those gates with no name to write. Rename it."
                 )
             if toolset.name in registry:
@@ -192,7 +192,7 @@ def build_tools(toolsets: Sequence[Toolset], ctx: "ToolsetContext") -> list:
     tool name declares that toolset earlier.
 
     Each name is also recorded on ``ctx.state`` **under the toolset that offered it**, which is what
-    lets startup resolve a ``[security].confirm_tools`` entry written as ``toolset.tool`` and reject one
+    lets startup resolve a ``confirm`` or ``review`` entry written as ``toolset.tool`` and reject one
     that names no real tool. This is the only place that recording can happen once: every agent's
     registry-provided tools are built through this function, the entry agent's and a spawned worker's
     alike, and a nested worker's are built by a recursion that lands here too. Collecting at any of the

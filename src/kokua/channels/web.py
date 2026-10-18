@@ -12,7 +12,7 @@ carries the running turn's conversation id (set by ``Assistant._handle``/``_proa
 running that turn); :meth:`WebChannel._foreground` compares it against
 :attr:`WebChannel.active_conversation_id` (the viewed conversation) to decide whether to emit. ``None``
 means "no turn context" (e.g. a direct push, or the CLI channel, which has no muting at all) and is
-always treated as foreground. ``Assistant._approve`` reads the same contextvar (against
+always treated as foreground. ``HumanGate.approve`` reads the same contextvar (against
 ``Assistant._active_id`` rather than this channel's ``active_conversation_id``) to gate tool approval on
 foreground: a background turn auto-denies a gated tool since no user is watching to confirm it.
 
@@ -51,7 +51,7 @@ streaming_conversation: ContextVar[Optional[str]] = ContextVar("streaming_conver
 # True while a proactive/scheduled turn runs in this task (set by Assistant._proactive /
 # _run_in_new_session). Unlike streaming_conversation, this does not depend on which conversation is
 # viewed: a firing on a channel with no conversation list runs in the viewed conversation and would
-# otherwise look foreground, so Assistant._approve reads this to auto-deny a
+# otherwise look foreground, so HumanGate.approve reads this to auto-deny a
 # gated tool for any proactive turn (nobody is watching to confirm an unattended full-access call).
 proactive_turn: ContextVar[bool] = ContextVar("proactive_turn", default=False)
 
@@ -588,13 +588,13 @@ class WebChannel(BaseWebChannel):
         """
         await self.send_frame({"type": "download", "name": name, "url": url})
 
-    async def send_approval_request(self, name: str, arguments: Any) -> None:
+    async def send_approval_request(self, name: str, arguments: Any, *, agent: Optional[str] = None) -> None:
         """Ask the browser to approve a tool call; the page replies with a normal 'y'/'n' frame.
 
         The reply flows back through the ordinary inbound path (receive()), so the Assistant's serve
         loop routes it to the pending approval -- no interception is needed here.
         """
-        await self.send_frame({"type": "approval", "name": name, "arguments": arguments})
+        await self.send_frame({"type": "approval", "name": name, "arguments": arguments, "agent": agent})
 
     async def send_auto_approval(
         self,
@@ -605,6 +605,7 @@ class WebChannel(BaseWebChannel):
         reason: str,
         model: str,
         conversation_id: Optional[str] = None,
+        agent: Optional[str] = None,
     ) -> None:
         """Show the page a reviewer's answer about a gated tool call. Nothing replies to this frame.
 
@@ -627,6 +628,7 @@ class WebChannel(BaseWebChannel):
                 "reason": reason,
                 "model": model,
                 "conversation_id": conversation_id,
+                "agent": agent,
             }
         )
 

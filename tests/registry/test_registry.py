@@ -99,7 +99,7 @@ def test_build_tools_concatenates_and_keeps_the_first_tool_of_a_repeated_name():
 
 
 def test_build_tools_records_each_name_under_the_toolset_that_built_it():
-    """The vocabulary the [security].confirm_tools check matches against is collected here, and it is
+    """The vocabulary the [assistant.tools].confirm check matches against is collected here, and it is
     collected per toolset because a gate entry names one. A name dropped from the returned list as a
     duplicate is still recorded under the toolset that offered it: `b` really does provide `first`, and
     an entry saying so gates a call that `b` can serve on some other agent."""
@@ -132,7 +132,7 @@ def test_build_tools_records_a_toolset_that_built_nothing():
 
 
 def test_register_refuses_a_toolset_claiming_the_reserved_gate_namespace():
-    """`core` is the [security].confirm_tools prefix for the tools no toolset builds (spawn_subagent,
+    """`core` is the [assistant.tools].confirm prefix for the tools no toolset builds (spawn_subagent,
     activate_skill). A toolset of that name would make those gates unwritable, so it fails at
     registration rather than at the gate."""
     with pytest.raises(ToolsetError) as error:

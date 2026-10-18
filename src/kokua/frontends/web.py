@@ -675,10 +675,12 @@ def main() -> None:
     # Resolve config (defaults < file < flags), then serve. The `kokua-web` console script reaches
     # this through `cli.main_web`, which runs the AIMU preflight first: importing *this* module
     # already pulls in the AIMU surface that preflight exists to check, so the check cannot live here.
-    from ..cli import build_arg_parser, resolve_config
+    from ..cli import build_arg_parser, print_access_summary, resolve_config
 
     args = build_arg_parser("kokua-web").parse_args()
-    serve(resolve_config(args))
+    config = resolve_config(args)
+    print_access_summary(config)
+    serve(config)
 
 
 FRONTEND = FrontEnd(

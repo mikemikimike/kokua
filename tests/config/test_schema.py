@@ -19,10 +19,10 @@ def test_logs_path_under_data_dir(tmp_path):
 
 
 def test_default_confirm_tools():
-    """The code-level default and the shipped example agree: `resolve_config` returns exactly what the
-    example's explicit `confirm_tools` line says, which is the same list `AssistantConfig` falls back to
-    when a `config.toml` omits the key entirely."""
-    shipped = [
+    """The code-level default still gates all six tools, and the shipped example covers the same six
+    by splitting them across the pair: the three that install something to run later ask the user,
+    and the three that act once ask a reviewer first."""
+    six = [
         "skills.add_skill_script",
         "mcp.add_mcp_server",
         "compute.execute_python",
@@ -30,8 +30,12 @@ def test_default_confirm_tools():
         "fs_write",
         "config.update_config",
     ]
-    assert AssistantConfig().confirm_tools == shipped
-    assert resolve_config(build_arg_parser().parse_args([])).confirm_tools == shipped
+    assert AssistantConfig().default_confirm == six
+    assert AssistantConfig().default_review == []
+    shipped = resolve_config(build_arg_parser().parse_args([]))
+    assert shipped.default_confirm == ["skills.add_skill_script", "mcp.add_mcp_server", "config.update_config"]
+    assert shipped.default_review == ["compute.run_command", "compute.execute_python", "fs_write"]
+    assert sorted(shipped.default_confirm + shipped.default_review) == sorted(six)
 
 
 # --- the default model: one resolution, carrying whatever the string carries ----------
@@ -129,3 +133,17 @@ def test_reviewer_generation_is_a_fresh_dict_per_call():
     first = config.reviewer_for("plan").generation
     first["temperature"] = 1.0
     assert config.reviewer_for("plan").generation == {"temperature": 0.7}
+
+
+def test_approval_entries_for_a_declared_agent_and_the_default():
+    config = AssistantConfig(
+        agents={
+            "coder": AgentConfig(available=["compute"], confirm=["compute.run_command"], review=[]),
+            "researcher": AgentConfig(available=["web"]),
+        },
+        default_confirm=["fs_write"],
+        default_review=["compute.run_command"],
+    )
+    assert config.approval_entries_for("coder") == (["compute.run_command"], [], "[agents.coder.tools]")
+    assert config.approval_entries_for("researcher") == (["fs_write"], ["compute.run_command"], "[assistant.tools]")
+    assert config.approval_entries_for("composed:x") == (["fs_write"], ["compute.run_command"], "[assistant.tools]")

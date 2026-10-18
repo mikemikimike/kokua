@@ -86,7 +86,7 @@ def make_mcp_tools(
         token, then call this tool again with that bearer_token.
 
         When a server is recorded, its name is derived from the URL, but that name reaches no agent
-        until a human adds it to that agent's tools list in config.toml's [agents.*] section AND
+        until a human adds it to that agent's available list in config.toml's [agents.*.tools] table AND
         restarts Kokua: that section is locked by default and is read only at startup, so this tool
         cannot grant itself (or any agent) the capability it just connected.
         """

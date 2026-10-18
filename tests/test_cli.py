@@ -72,7 +72,7 @@ def test_two_mcp_urls_on_one_host_get_distinct_names():
     from kokua.core.agents import build_registry
 
     config = AssistantConfig(
-        agents={"assistant": AgentConfig(tools=names)},
+        agents={"assistant": AgentConfig(available=names)},
         entry_agent="assistant",
         mcp_servers=servers,
     )
@@ -82,11 +82,11 @@ def test_two_mcp_urls_on_one_host_get_distinct_names():
 
 def test_confirm_tools_flag_parses():
     cfg = resolve_config(build_arg_parser().parse_args(["--confirm-tools", "add_skill_script, execute_python"]))
-    assert cfg.confirm_tools == ["add_skill_script", "execute_python"]
+    assert cfg.default_confirm == ["add_skill_script", "execute_python"]
 
 
 def test_confirm_tools_flag_empty_disables():
-    assert resolve_config(build_arg_parser().parse_args(["--confirm-tools", ""])).confirm_tools == []
+    assert resolve_config(build_arg_parser().parse_args(["--confirm-tools", ""])).default_confirm == []
 
 
 def test_cli_frontend_reports_model_client_error(tmp_path, monkeypatch, capsys):
@@ -314,7 +314,7 @@ def test_main_web_reports_a_broken_agents_table_as_an_instruction(monkeypatch, t
     # asserted-on string is `[agents.coder]`'s tools line, which is why it fails loudly if that line is
     # edited without editing this: a no-op replace leaves a *valid* config and the test stops testing.
     broken = settings.example_text().replace(
-        'tools = ["fs", "fs_write", "compute", "time", "messaging"]', 'tools = ["fs", "nope", "time"]'
+        'available = ["fs", "fs_write", "compute", "time", "messaging"]', 'available = ["fs", "nope", "time"]'
     )
     assert "nope" in broken, "the [agents.coder] tools line moved; this replace no longer breaks anything"
     text = broken
@@ -550,3 +550,110 @@ def test_export_turn_without_full_prints_no_note_and_says_when_no_calls_were_rec
     captured = capsys.readouterr()
     assert captured.err == ""
     assert "_No model calls were recorded for this turn._" in captured.out
+
+
+# --- kokua agents and the startup summary -----------------------------------------------------
+
+
+def _write_example_config(monkeypatch, tmp_path, transform=lambda text: text):
+    from kokua.config import file as settings
+
+    monkeypatch.setenv("KOKUA_HOME", str(tmp_path))
+    (tmp_path / "config.toml").write_text(transform(settings.example_text()), encoding="utf-8")
+
+
+def test_summary_line_per_agent():
+    from kokua.cli import access_summary_lines
+    from kokua.config.schema import AgentConfig
+
+    config = _config(
+        Path("/tmp"),
+        agents={
+            "assistant": AgentConfig(available=["a"] * 12),
+            "coder": AgentConfig(available=["b"] * 5, confirm=["compute.run_command"], review=[]),
+        },
+        default_confirm=["x", "y", "z"],
+        default_review=["p", "q", "r"],
+    )
+
+    assert access_summary_lines(config) == [
+        "assistant: 12 available, 12 resident, 3 confirm, 3 review (from [assistant.tools])",
+        "coder: 5 available, 5 resident, 1 confirm, 0 review (from [agents.coder.tools])",
+    ]
+
+
+def test_agents_command_prints_each_agents_three_axes(monkeypatch, tmp_path, capsys):
+    _write_example_config(monkeypatch, tmp_path)
+
+    _run_main(monkeypatch, ["agents"])
+
+    out = capsys.readouterr().out
+    assert "assistant\n  available: " in out
+    assert "  resident:  every available toolset" in out
+    confirm = "skills.add_skill_script, mcp.add_mcp_server, config.update_config"
+    review = "compute.run_command, compute.execute_python, fs_write"
+    assert f"  confirm:   {confirm}  (from [assistant.tools])" in out
+    assert f"  review:    {review}  (from [assistant.tools])" in out
+    assert f"composed workers, confirm (from [assistant.tools]): {confirm}" in out
+    assert f"composed workers, review (from [assistant.tools]): {review}" in out
+
+
+def test_agents_command_shows_a_declared_pair_source(monkeypatch, tmp_path, capsys):
+    anchor = 'available = ["fs", "fs_write", "compute", "time", "messaging"]'
+
+    def declare_pair(text):
+        assert anchor in text
+        return text.replace(anchor, anchor + '\nconfirm = ["compute.run_command"]\nreview = []')
+
+    _write_example_config(monkeypatch, tmp_path, declare_pair)
+
+    _run_main(monkeypatch, ["agents"])
+
+    assert "  confirm:   compute.run_command  (from [agents.coder.tools])" in capsys.readouterr().out
+
+
+def test_agents_command_reports_a_bad_config_and_exits_2(monkeypatch, tmp_path, capsys):
+    def break_coder(text):
+        broken = text.replace(
+            'available = ["fs", "fs_write", "compute", "time", "messaging"]', 'available = ["fs", "nope", "time"]'
+        )
+        assert "nope" in broken, "the [agents.coder] tools line moved; this replace no longer breaks anything"
+        return broken
+
+    _write_example_config(monkeypatch, tmp_path, break_coder)
+
+    _run_main(monkeypatch, ["agents"], expect_exit=2)
+
+    assert "nope" in capsys.readouterr().err
+
+
+def test_agents_command_builds_no_toolset(monkeypatch, tmp_path):
+    _write_example_config(monkeypatch, tmp_path)
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("kokua agents must not build a toolset")
+
+    monkeypatch.setattr("kokua.registry.registry.build_tools", refuse)
+    monkeypatch.setattr("kokua.core.build.build_tools", refuse)
+
+    _run_main(monkeypatch, ["agents"])
+
+
+def test_startup_prints_the_summary_to_stderr_before_the_front_end_runs(monkeypatch, tmp_path, capsys):
+    from kokua import plugins
+    from kokua.plugins import FrontEnd
+
+    _write_example_config(monkeypatch, tmp_path)
+    stderr_at_run: list[str] = []
+
+    async def run(config, args):
+        stderr_at_run.append(capsys.readouterr().err)
+
+    # configure_logging enables faulthandler, which needs a real stderr fileno that capture does not give.
+    monkeypatch.setattr("kokua.cli.configure_logging", lambda config: None)
+    monkeypatch.setattr(plugins, "get_frontend", lambda name: FrontEnd(name="stub", description="", run=run))
+
+    _run_main(monkeypatch, [])
+
+    assert "assistant: " in stderr_at_run[0]
+    assert "resident" in stderr_at_run[0]

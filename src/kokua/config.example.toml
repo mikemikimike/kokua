@@ -65,38 +65,42 @@ capture_requests = true
 # max_tokens = 4096          # at least 1
 # context_length = 32768     # at least 1
 
-[security]
-# Tools requiring confirmation before each call (terminal y/N, or Allow/Deny in the web UI). These run
-# with full machine access. [] disables approval; proactive turns auto-deny these regardless. Gating is
-# by tool name at call time, so a sub-agent's call is routed to you too. Every entry names the toolset
-# the tool comes from: "compute" (or "compute.*") gates every tool that capability provides,
-# "compute.execute_python" gates one, and the reserved "core" prefix holds the two tools no toolset
-# provides, spawn_subagent and activate_skill. A "*" anywhere but as the whole tool is rejected. An entry
-# that would gate nothing fails startup, naming it and suggesting the near misses: a gate matching
-# nothing prompts for nothing, and a prompt that never comes is not something you notice. So does a bare
-# tool name with no prefix, a real tool filed under the wrong toolset, a toolset no agent declares, and
-# one that provides no tools. Only what exists at startup can be listed, so a tool the assistant brings
-# in later with add_mcp_server, or one only compose_subagent would build from a toolset no agent names,
-# has to be reachable from an [agents.*] table first. Locked by default.
-#
-# Four of the six shipped entries write with this process's privileges: fs_write's two tools name the
-# path, execute_python and run_command name their own target, and update_config rewrites the file every
-# setting comes from. The other two sit one step further back, each installing something that will run
-# later.
-#
-# Note fs_write is named bare where the rest name a tool. That toolset is every writer AIMU puts in its
-# fs group and nothing else, so the bare name gates a writer added in a later release too; spelling out
-# write_file and edit_file would gate today's two and let tomorrow's third through in silence. compute
-# cannot be bare for the reverse reason: it carries calculate, which no gate should stop.
-confirm_tools = [
+# Which tool calls reach you, and which a reviewer answers first, for every agent that does not declare
+# its own pair in [agents.<name>.tools] below. The two keys are a pair: declare one and the other is [].
+# A tool in neither runs with no prompt, and proactive turns auto-deny both. Gating is by tool name at
+# call time, so a sub-agent's call is routed to you too. Every entry names the toolset the tool comes
+# from: "compute" (or "compute.*") covers every tool that capability provides, "compute.execute_python"
+# one, and the reserved "core" prefix holds the two tools no toolset provides, spawn_subagent and
+# activate_skill. A "*" anywhere but as the whole tool is rejected, and an entry that would gate nothing
+# fails startup, naming it and suggesting the near misses: a prompt that never comes is not something
+# you notice. Locked by default. Restart to apply, and keep this sub-table LAST in [assistant] (a plain
+# key after the header would join it).
+[assistant.tools]
+# Ask you before each call (y/N in the terminal, Allow/Deny in the web UI). Emptying only this list
+# leaves `review` prompting; empty both to turn approval off. These change what may act LATER:
+# update_config rewrites the file every setting comes from, add_skill_script writes a script that
+# becomes a tool, and add_mcp_server adds a tool source.
+confirm = [
     "skills.add_skill_script",
     "mcp.add_mcp_server",
-    "compute.execute_python",
-    "compute.run_command",
-    "fs_write",
     "config.update_config",
 ]
+# Ask a reviewer first (see [security.auto_approval] below); you are prompted only if it does not
+# approve. Both compute tools are here, and leaving execute_python out would have been the incoherent
+# choice: run_command reaches unrestricted Python by a shorter route, so excluding the Python tool
+# withholds nothing. execute_python runs in a subprocess under a timeout with an import allowlist and
+# restricted builtins; run_command is a shell, the aggressive entry here, so drop that one to narrow it.
+# fs_write is named bare where the rest name a tool: that toolset is every writer AIMU puts in its fs
+# group and nothing else, so the bare name covers a writer added in a later release too, where spelling
+# out write_file and edit_file would let tomorrow's third through in silence. compute cannot be bare
+# for the reverse reason: it carries calculate, which nothing should stop.
+review = [
+    "compute.run_command",
+    "compute.execute_python",
+    "fs_write",
+]
 
+[security]
 # Tools no reviewer may ever approve, whatever [security.auto_approval] below names. These three change
 # what may act LATER rather than acting once, so the arguments a review was about stop constraining
 # anything the moment the write lands: a waved update_config can widen this very list, a waved
@@ -116,12 +120,13 @@ never_auto_approve = [
 # task name inside a pattern is not checked, since you may be locking one you are about to add. This
 # key is always locked, whatever the list says, so the assistant cannot unlock itself in one call;
 # everything else below is yours to remove. Removing "agents.*" really does let the assistant
-# rewrite any agent's tools list, and so widen its own reach, on the next restart. Restart to apply.
+# rewrite any agent's tools table, and so widen its own reach, on the next restart. Restart to apply.
 locked_config_keys = [
     "security.*",
     "email.to",
     "paths.data_dir",
     "agents.*",
+    "assistant.tools.*",
     "reviewers.*",
     "scheduling.task.*",
     "compute.command_env_passthrough",
@@ -138,21 +143,9 @@ locked_config_keys = [
 # header would join it). Full explanation: docs/explanation/auto-approval.md
 [security.auto_approval]
 enabled = false
-# Which [reviewers.<name>] tables are asked. Name more than one and all of them must agree.
+# Which [reviewers.<name>] tables are asked. Name more than one and all of them must agree. Which
+# calls they are asked about is each `review` list: [assistant.tools].review, or an agent's own.
 reviewers = ["approval"]
-# Which gated tools a reviewer may answer for, in confirm_tools' vocabulary above. Each must be gated
-# there (reviewing an ungated tool reviews nothing) and must not be in never_auto_approve above.
-# Enabled with an entry that matches no gated tool, or no entry at all, is a startup error.
-#
-# Both compute tools are here, and leaving execute_python out would have been the incoherent choice
-# rather than the cautious one: run_command reaches unrestricted Python by a shorter route, so
-# excluding the Python tool withholds nothing and only routes the same capability through the less
-# contained of the two. execute_python runs in a subprocess under a timeout with an import allowlist
-# and restricted builtins, so `os`, `subprocess`, and even `open` are unavailable to it, and the
-# process environment (API keys included) is invisible. run_command has none of that: it is a shell,
-# and `python3 -c` from there reads any file this user can. run_command is the aggressive entry in
-# this list; if you want to narrow it, drop that one rather than the Python one.
-tools = ["compute.run_command", "compute.execute_python", "fs_write"]
 # Past this the review escalates rather than being waited on any longer.
 timeout_seconds = 10
 # Most auto-approvals one turn may collect, so a model retrying one call cannot collect one per attempt.
@@ -160,10 +153,12 @@ timeout_seconds = 10
 max_per_turn = 5
 
 # Every agent, declared whole, and locked by default (see [security].locked_config_keys below). An
-# agent's `tools` list IS its capability: nothing is added in code, and nothing is implicit, including
-# the clock (declare "time" to get it).
+# agent's `available` list, in its [agents.<name>.tools] table, IS its capability: nothing is added in
+# code, and nothing is implicit, including the clock (declare "time" to get it). The same table may
+# carry the agent's own `confirm` and `review` lists, replacing [assistant.tools] as a pair; leave both
+# out to inherit it.
 #
-# One namespace covers everything, so a `tools` entry may be an AIMU built-in group ("web", "fs",
+# One namespace covers everything, so an `available` entry may be an AIMU built-in group ("web", "fs",
 # "fs_write", "compute", "time", "misc", "audio", "speech", "transcription"), one of Kokua's own ("memory",
 # "documents", "skills", "capabilities", "config", "conversations", "mcp", "messaging", "planning",
 # "scheduling"), a plugin toolset ("aimu_agents", "benchmark", "github_backup", "image"), a skill by name, or an
@@ -181,36 +176,39 @@ max_per_turn = 5
 # the spot with `capabilities`, so there is no catch-all role here to route to instead.
 description = "The assistant the user talks to."
 system_message = "You are a personal assistant running on the user's own machine. Be concise and helpful."
-tools = ["memory", "documents", "skills", "config", "mcp", "scheduling", "conversations", "planning", "capabilities", "time", "benchmark", "messaging"]
 delegates_to = ["researcher", "coder", "introspector"]
+[agents.assistant.tools]
+available = ["memory", "documents", "skills", "config", "mcp", "scheduling", "conversations", "planning", "capabilities", "time", "benchmark", "messaging"]
 
 [agents.researcher]
 description = "Research specialist: gather and verify information from the web."
 # model = "ollama:qwen3:32b"   # this agent alone runs on a bigger model
 # thinking = "high"            # ...and reasons harder than the rest; `false` would turn it off
 # max_iterations = 25          # ...and gets more rounds, since every round spends a search
-tools = ["web", "misc", "time", "messaging"]
 system_message = """\
 You are a research sub-agent. Investigate the task with web search and page lookups, verify claims \
 against sources rather than memory, and return a concise, well-organized findings summary that names \
 its sources."""
-# Overrides [assistant.generation] per key; what it does not name, it inherits. Keep it last in the
-# agent's table, for the reason [assistant.generation] is last in [assistant].
+[agents.researcher.tools]
+available = ["web", "misc", "time", "messaging"]
+# Overrides [assistant.generation] per key; what it does not name, it inherits. A sub-table of the
+# agent, like its `tools` table above: both come after the agent's plain keys.
 # [agents.researcher.generation]
 # temperature = 0.2
 # context_length = 131072
 
 # `fs` reads and `fs_write` writes, and they are two entries because one name could not say both: with
 # the writers inside `fs`, every agent below declaring it to read a file would be able to rewrite one.
-# `write_file` and `edit_file` are in [security].confirm_tools above for the same reason
+# `write_file` and `edit_file` are in [assistant.tools].review above for the same reason
 # `execute_python` and `run_command` are: an ungated write beside a gated one is the shorter route to
 # the same outcome.
 [agents.coder]
 description = "Coding specialist: read/write files and run code to complete a task."
-tools = ["fs", "fs_write", "compute", "time", "messaging"]
 system_message = """\
 You are a coding sub-agent. Complete the task by reading and writing files and running code (Python, \
 shell, or calculations). Report exactly what you did and the concrete result."""
+[agents.coder.tools]
+available = ["fs", "fs_write", "compute", "time", "messaging"]
 
 # Evaluates a conversation against criteria you give, in its own context rather than yours: a run's
 # full reasoning and tool output would swallow the context of the conversation asking about it. It is
@@ -221,7 +219,6 @@ shell, or calculations). Report exactly what you did and the concrete result."""
 # agent (and its name from delegates_to above) if you would rather not have either.
 [agents.introspector]
 description = "Evaluates a past conversation against the criteria you specify: what was reasoned, called, delegated, and cost."
-tools = ["conversations", "fs", "time", "messaging"]
 system_message = """\
 You are an introspection sub-agent. Your subject is one of the user's own conversations and your job is \
 to evaluate it against the criteria you were given.
@@ -241,17 +238,22 @@ through the rest before reporting, and if you stop early say which part of the r
 answer drawn from the opening turns must never be reported as an answer about the whole run. And if you were \
 given no criteria, evaluate whether the run reached what the user asked for, how much it spent doing \
 so, and where it went wrong if it did, saying up front that those are the criteria you chose."""
+[agents.introspector.tools]
+available = ["conversations", "fs", "time", "messaging"]
 
 # More agents to copy, each mixing built-in groups, MCP servers, and plugin toolsets in the one list.
 # [agents.stock-trader]
 # description = "Looks up quotes and places trades."
-# tools = ["stocks", "compute", "time"]   # "stocks" matches [[mcp.server]].name below
+# [agents.stock-trader.tools]
+# available = ["stocks", "compute", "time"]   # "stocks" matches [[mcp.server]].name below
 # [agents.report-writer]
 # description = "Builds and emails PDF reports."
-# tools = ["markdown-to-pdf", "email-report", "fs", "time"]
+# [agents.report-writer.tools]
+# available = ["markdown-to-pdf", "email-report", "fs", "time"]
 # [agents.reviewer]
 # description = "Reviews code for security, performance, and readability."
-# tools = ["aimu_agents", "time"]
+# [agents.reviewer.tools]
+# available = ["aimu_agents", "time"]
 
 # Images: the assistant reads what you attach (web upload/paste, or the CLI `/attach <path>`) given a
 # vision-capable model, and generates images through the `image` toolset when $AIMU_IMAGE_MODEL is set
@@ -310,7 +312,7 @@ cost them their data."""
 # system_message = "..."       # unset: planning's own shipped standard applies
 
 # Remote MCP servers to connect at startup, one [[mcp.server]] table each. `url` and `name` are
-# required; `name` is how the server enters the toolset namespace, so an agent's `tools` must list it
+# required; `name` is how the server enters the toolset namespace, so an agent's `available` list must name it
 # for the server to reach anything. `token_env` names an env var holding a bearer token (omit it when
 # unauthenticated, or for OAuth, which triggers on an auth challenge). The add_mcp_server tool appends
 # servers here with a host-derived name; that name reaches no agent until you add it above and restart.
@@ -353,7 +355,7 @@ level = "INFO"
 
 [email]
 # Lets the assistant email you, through the `email-report` skill (`kokua skills install email-report`,
-# then name it in an agent's `tools` beside `fs` and `compute`). It can ONLY send to `to`, which is why
+# then name it in an agent's `available` list beside `fs` and `compute`). It can ONLY send to `to`, which is why
 # sending needs no per-call approval and scheduled turns can use it. The password comes from
 # $KOKUA_EMAIL_PASSWORD, never this file; for Gmail use an App Password. Nothing is sent unless `host`,
 # `to`, and that variable are all present.
@@ -390,7 +392,7 @@ level = "INFO"
 # schedule = { type = "daily", at = "03:00" }
 
 [planning]
-# Declared by the `planning` toolset: an agent's `tools` must list "planning" for "/plan <task>" to
+# Declared by the `planning` toolset: an agent's `available` list must name "planning" for "/plan <task>" to
 # exist. It drafts an explicit plan (which tools/skills/MCP services to use or build) before working.
 # plan_review pauses the planned turn for your Approve/Edit/Reject; off runs the plan autonomously.
 # plan_review = false
@@ -405,10 +407,10 @@ level = "INFO"
 # show_reasoning = false
 
 [capabilities]
-# Declared by the `capabilities` toolset: an agent's `tools` must list "capabilities" to get
+# Declared by the `capabilities` toolset: an agent's `available` list must name "capabilities" to get
 # list_capabilities (what else is installed) and compose_subagent (build a sub-agent holding exactly
 # what one task needs, and run it). A composed sub-agent runs on the [assistant] defaults and still
-# obeys [security].confirm_tools; composing itself is ungated unless you add "capabilities" or
+# obeys [assistant.tools]; composing itself is ungated unless you add "capabilities" or
 # "capabilities.compose_subagent" there.
 # max_depth bounds nesting: at 3 the last sub-agent in a chain holds neither tool, 0 switches composing
 # off. Applies live, to the next composition.
@@ -417,7 +419,7 @@ level = "INFO"
 [github_backup]
 # Back up Kokua's own state (config.toml, memory, documents, skills, conversation transcripts) to a
 # private GitHub repository as a git commit, when you ask or when a scheduled task fires. Declared by
-# the `github_backup` toolset: an agent's `tools` must list "github_backup" for backup_kokua_state to
+# the `github_backup` toolset: an agent's `available` list must name "github_backup" for backup_kokua_state to
 # exist, and this key must be set or the toolset offers no tool at all. The repository MUST be private;
 # Kokua checks and refuses otherwise. The token comes from $GITHUB_BACKUP_TOKEN (a fine-grained PAT
 # with `contents: write`, scoped to this repository alone), never this file. Restart to apply.
@@ -425,9 +427,9 @@ level = "INFO"
 # branch = "main"
 
 [compute]
-# Declared by the `compute` toolset: an agent's `tools` must list "compute" to get calculate,
+# Declared by the `compute` toolset: an agent's `available` list must name "compute" to get calculate,
 # execute_python, and run_command. Both execution tools run as this process's user, so both are in
-# [security].confirm_tools above; neither offers containment, and run_command offers one step less of
+# [assistant.tools] above; neither offers containment, and run_command offers one step less of
 # it, since a shell string reaches a credential in a file with no code to read first. run_command also
 # carries no memory cap, unlike execute_python's 512 MB limit: that cap would break compilers and test
 # suites, and a shell child's own cap would need preexec_fn, which is neither portable nor thread-safe.

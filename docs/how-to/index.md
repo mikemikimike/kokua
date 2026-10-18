@@ -11,7 +11,7 @@ Kokua's core.
 All three share a single rule, which is the thing to understand before reading any of them. **A
 capability is declared, never defaulted.** Every capability an agent can hold is a named *toolset* in one
 namespace, and a built-in tool group, an installed plugin toolset, and a connected MCP server all reach an
-agent by exactly one route: an `[agents.<name>]` table in `config.toml` whose `tools` list names it.
+agent by exactly one route: an `[agents.<name>.tools]` table in `config.toml` whose `available` list names it.
 Installing or connecting something is never the last step, and no code path adds a tool an agent did not
 name. The one exception is reached by declaration too: an agent whose table names `capabilities` can
 compose a sub-agent out of anything installed, for the length of one task. Two names are out of

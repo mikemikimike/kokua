@@ -7,7 +7,7 @@ installable, modular application: a small transport-agnostic core with capabilit
 Because there is no earlier release, this section describes what 0.1.0 *is* rather than what changed.
 The pre-release development history is in the git log.
 
-Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.36.0 or newer. Apache-2.0.
+Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer. Apache-2.0.
 
 ### Package and entry points
 
@@ -660,6 +660,63 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.36.0 or newer
   mid-turn words as the run reads them.
 
 ### Agents and tools
+
+- **Tool access is three axes, and the config now says so: breaking, with no migration code.** What an
+  agent may call (availability), what is in its context (residency), and what asks before it runs
+  (approval) used to share one list per agent and two global lists. Availability and approval now have
+  their own keys, in one `[agents.<name>.tools]` subtable per agent with `[assistant.tools]` as the default
+  for the approval half; residency has no key yet, so every available toolset is still resident. The
+  explanation is [Tool access](https://saxman.info/kokua/explanation/tool-access/). The old keys fail
+  startup with a message naming their replacement:
+
+  | Old | New |
+  |---|---|
+  | `[agents.<name>].tools = [...]` | `[agents.<name>.tools].available = [...]` |
+  | `[security].confirm_tools` | `[assistant.tools].confirm`, minus any entry that moves to `review` |
+  | `[security.auto_approval].tools` | `[assistant.tools].review`, and remove those entries from `confirm` |
+
+  The shipped config splits what `confirm_tools` held: `skills.add_skill_script`, `mcp.add_mcp_server`, and
+  `config.update_config` stay in `confirm`, and `compute.run_command`, `compute.execute_python`, and
+  `fs_write` move to `review`, where they prompt you exactly as before unless you switch
+  [auto-approval](https://saxman.info/kokua/explanation/auto-approval/) on. A config that sets neither key
+  keeps the old six-entry gate. `--confirm-tools` now overrides `[assistant.tools].confirm`, and naming a
+  tool the file's `review` also names is refused. `assistant.tools.*` joins the default
+  `locked_config_keys` for newly scaffolded configs only. An existing config writes the list out in full
+  without it (the old `"security.*"` is what covered `confirm_tools`), so add `"assistant.tools.*"` to
+  `[security].locked_config_keys` by hand, or `update_config` can rewrite the default policy; the
+  removed-key message for `[security].confirm_tools` says so.
+- **Each agent's tool calls are judged by its own approval policy.** `confirm` and `review` are one pair:
+  an agent whose table declares either declares its whole policy (a key it leaves out is empty), and one
+  that declares neither inherits `[assistant.tools]`'s pair whole. A declared pair replaces the default and
+  never merges with it. Policies resolve once, after every agent is wired (`core/approval.py`), and the
+  gate is bound to each agent's name: a delegated worker carries its own through AIMU 0.37.0's
+  `"tool_approval"` spec key, and a composed worker is bound to `composed:<label>` and always gets the
+  default tier. So a worker's `fs_write` is held to the worker's policy, where it used to be held to one
+  global list.
+  `review` entries prompt you whether or not auto-approval is on, so switching it off never ungates a call;
+  a dead `review` entry fails startup even with it off; and `never_auto_approve` is checked only when it is
+  on. `[security.auto_approval]` keeps `enabled`, `reviewers`, `timeout_seconds`, and `max_per_turn`.
+  Enabling it with no `review` entry in any policy is a startup error.
+- **Agent names may not contain `:` or `[`.** The gate reserves them for `composed:<label>` and for the
+  default tier's own label, so an agent named either way would collide with them. Refused at startup.
+- **`kokua agents`, and a startup summary.** `kokua agents` prints each declared agent's availability,
+  residency, and `confirm` / `review` lists, marking which came from `[assistant.tools]`, reading the
+  config alone and building nothing, so it works with the model server down. Startup writes one line per
+  agent to stderr (for example `assistant: 12 available, 12 resident, 3 confirm, 3 review (from [assistant.tools])`), because a declared
+  policy replacing the default silently dropping its other entries is the one foot-gun the replace-whole
+  rule leaves, and this is where it shows.
+- **The approval prompt and the auto-approval card name the agent asking** ("Allow coder to run ...",
+  "<model> auto-approved coder's ..."), on the terminal and on the web card (the `approval` and
+  `auto_approval` frames carry `"agent"`), since agents now hold different policies and a bare tool name no longer says whose call it is.
+- **Breaking for a third-party channel: `RichChannel.send_approval_request` and `send_auto_approval` take
+  an `agent` argument.** The signatures are now `send_approval_request(name, arguments, *, agent=None)`
+  and `send_auto_approval(..., agent=None)`, and `ChannelUI` always passes `agent=` (None when unknown),
+  so a channel still implementing the older form raises `TypeError` the first time a gated call asks. A
+  channel that does not show who is asking can accept and ignore it, which is what adding `agent=None`
+  to the signature does. It is keyword-only for the reason `send_turn_saved`'s `token`
+  is.
+- **The AIMU floor is 0.37.0**, for the spawn spec's `"tool_approval"` key. See the floor history under
+  "Diagnostics and error reporting" below.
 
 - **An individual skill is a name in the same namespace as everything else.** A `[agents.*]` table lists
   `"citation-check"` beside `"web"` and `"stocks"` without saying which kind each is, and `--list-toolsets`
@@ -1973,9 +2030,11 @@ notice on startup.
   key, whether both drivers drained all three branches a steered turn could take, whether the three
   stream consumers rendered the phase, whether the budget reset on a drained mailbox was bounded, and
   whether a misbehaving host source was caught rather than trusted. `Inbox` joins the probe's job.
-  Today the floor is **0.36.0**: every run event carries `run_id` and `parent_run_id`, which the request
-  records behind "what the model saw" are keyed by, and the startup check is a signature check on
-  `aimu.events.RunEvent` for its `run_id` field. Before it the floor was **0.34.0**, the first one a rename alone moved: AIMU renamed its
+  Today the floor is **0.37.0**: a spawned worker's spec carries a `"tool_approval"` key, which is what lets
+  each agent's tool calls be judged by its own approval policy; its absence raises loudly, so the startup
+  check stays where it was. Before it the floor was **0.36.0**: every run event carries `run_id` and
+  `parent_run_id`, which the request records behind "what the model saw" are keyed by, and the startup
+  check is a signature check on `aimu.events.RunEvent` for its `run_id` field. Before that it was **0.34.0**, the first one a rename alone moved: AIMU renamed its
   mid-turn-message seam from `Steering` to `Inbox`, with no legacy path, and taught it which agent is
   opening each reader. `Inbox.reader(agent=...)` is called once per run, at its start, and `agent` is
   that run's own name, offered so a host can route a message to the one run it was meant for rather than

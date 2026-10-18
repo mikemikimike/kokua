@@ -2200,7 +2200,7 @@ function handleFrame(event) {
     // minutes ago counts on from there rather than restarting at zero.
     setWorking(frame.active ? (frame.elapsed || 0) * 1000 : null);
   } else if (frame.type === "approval") {
-    renderApproval(frame.name, frame.arguments);
+    renderApproval(frame.name, frame.arguments, frame.agent);
   } else if (frame.type === "auto_approval") {
     renderAutoApproval(frame);
   } else if (frame.type === "plan") {
@@ -2386,12 +2386,14 @@ function handleFrame(event) {
 
 // A gated tool needs confirmation: show the call and Allow/Deny buttons. The reply is a plain
 // "y"/"n" frame, which the server routes to the waiting tool call (same path as typing it).
-function renderApproval(name, args) {
+function renderApproval(name, args, agent) {
   const el = document.createElement("div");
   el.className = "bubble approval";
   const prompt = document.createElement("div");
   prompt.className = "prompt";
-  prompt.textContent = "Allow ";
+  // Naming the agent matters because a delegated worker's call lands in the same log as the entry
+  // agent's; without it the user cannot tell whose action they are allowing.
+  prompt.textContent = agent ? `Allow ${agent} to run ` : "Allow ";
   const code = document.createElement("code");
   code.textContent = toolLine(name, args);
   prompt.appendChild(code);
@@ -2433,7 +2435,11 @@ function renderAutoApproval(frame) {
   el.className = frame.approved ? "bubble approval auto-approved" : "bubble approval auto-escalated";
   const prompt = document.createElement("div");
   prompt.className = "prompt";
-  prompt.textContent = frame.approved ? `${frame.model} auto-approved ` : `${frame.model} is asking you to approve `;
+  // The agent is named for the reason the approval prompt names it: a worker's call lands in the same log.
+  const call = frame.agent ? `${frame.agent}'s ` : "";
+  prompt.textContent = frame.approved
+    ? `${frame.model} auto-approved ${call}`
+    : `${frame.model} is asking you to approve ${call}`;
   const code = document.createElement("code");
   code.textContent = toolLine(frame.name, frame.arguments);
   prompt.appendChild(code);

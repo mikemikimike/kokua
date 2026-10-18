@@ -352,7 +352,7 @@ omission one subsystem over), so a composed worker could not receive a message m
 now, and delivery is only half of why `inbox` is unconditional there: a run that opens no reader mints
 no address, which leaves `current_address` holding whatever its caller set, so `send_message` would
 have attributed a composed worker's message to the agent that composed it. `capabilities` and
-`messaging` are both in the shipped default `[agents.assistant].tools`, so that was reachable on a
+`messaging` are both in the shipped default `[agents.assistant.tools].available`, so that was reachable on a
 default install rather than hypothetical. A scheduled firing opens its bus in `_run_unattended`
 rather than in the body that reads it, because the body runs in a child task that copies the context at
 creation, and reaches `close()` outside the gate hold, because a follow-up turn takes a hold of its own
@@ -424,8 +424,10 @@ the same reason.
 ## Agents and delegation
 
 Every agent is declared whole in `config.toml`, as one `[agents.<name>]` table carrying a
-`description`, a `system_message`, a `tools` list of toolset names, and a `delegates_to` list. Nothing
-about an agent is defaulted in code. `[assistant].agent` names the **entry agent**: the one Kokua
+`description`, a `system_message`, a `[agents.<name>.tools]` subtable (an `available` list of toolset
+names, plus optionally its own `confirm` and `review`), and a `delegates_to` list. Nothing about an
+agent's availability is defaulted in code; its approval policy is the one thing that can be inherited,
+whole, from `[assistant.tools]`. `[assistant].agent` names the **entry agent**: the one Kokua
 constructs directly, one per conversation. Every other agent exists only as a spawn target, built when a
 delegator's `spawn_subagent` is constructed.
 
@@ -434,7 +436,7 @@ toolsets, build their tools, attach the approval gate, attach its delegate if it
 conversation's agent cannot differ from a sibling's by accident, and there is no mode to branch on.
 
 - **A declaration is the only way capability is granted.** A built-in group, an installed plugin toolset,
-  and a connected MCP server all reach nothing until some agent's `tools` names them, and nothing warns
+  and a connected MCP server all reach nothing until some agent's `available` names them, and nothing warns
   about a name nothing references. Startup used to, for names the user had provisioned specifically to
   be reachable, but telling those from the ones that merely ship meant a provenance rule over the whole
   namespace, and a toolset nobody declares costs nothing to leave unnamed. A configured MCP server does
@@ -443,10 +445,11 @@ conversation's agent cannot differ from a sibling's by accident, and there is no
 - **A composed sub-agent is the one exception, and it is entered by declaration.** `compose_subagent`
   ([toolsets/capabilities.py](https://github.com/saxman/kokua/blob/main/src/kokua/toolsets/capabilities.py)) resolves a sub-agent's tools from
   names the model picked out of the registry rather than from a table, and runs one task on it through
-  AIMU's subagent machinery instead of `wire_agent`. Only an agent whose own `tools` names `capabilities`
+  AIMU's subagent machinery instead of `wire_agent`. Only an agent whose own `available` names `capabilities`
   holds that tool; it may not be handed `capabilities` itself, since how far composition nests is
   `[capabilities].max_depth`'s decision (default 3, `0` off) and not the model's; and its tools
-  still route through `[security].confirm_tools`. It is built per call and discarded with the call, so
+  still go through the approval gate, bound to the label `composed:<label>` and always under the default
+  `[assistant.tools]` pair. It is built per call and discarded with the call, so
   what widens is one task's reach, never a persistent agent's.
 - **Delegation nesting is Kokua's, not AIMU's.** AIMU's `max_depth` gives every level the same worker
   menu, which cannot express a graph where each agent has its own targets, so `build_agent_specs`
@@ -471,29 +474,32 @@ declared next to it would claim the same slot more cheaply and win. That keeps t
 tool context small, and the prompt tells it so: `assemble_system_message` adds the "you are a lean
 supervisor, you MUST delegate" clause only when every toolset the agent declared is `cross_cutting`. But
 that is a property of the config, not a law of the code. Give `[agents.assistant]` a
-`tools = [..., "compute"]` and it gets `execute_python`, loses the lean clause, and Kokua neither objects
+`available = [..., "compute"]` and it gets `execute_python`, loses the lean clause, and Kokua neither objects
 nor cares. The one structural
 restriction is `entry_point_only`: `skills` works solely on the entry agent, because a spawned worker is a
 plain AIMU `Agent` rather than a `SkillAgent`, so skill injection would have nothing to hook.
 
 ### How an agent's tools resolve
 
-Four steps, all in `toolsets/`. The first two run once at startup, before Kokua opens or connects to
-anything; the last two run once per agent, whenever one is built:
+Five steps. The first two run once at startup, before Kokua opens or connects to anything; the next two
+run once per agent, whenever one is built; the fifth runs once, after every agent is wired. Steps 1 to 4
+read an agent's `available` list. This is the *availability* axis of
+[Tool access](tool-access.md); step 5 is its *approval* axis, and there is no residency step yet, since
+every available toolset is resident:
 
-1. **Build the namespace.** `agents.build_registry(config)` collects toolsets from six labeled
-   providers: AIMU capability (`builtin.py`), core subsystem (`core.py`), MCP server (one per
-   `[[mcp.server]]`, named by its required `name`), skill (one per skill on disk, so a skill name sits in
-   the same namespace as everything else), built-in toolset, and plugin. The last two are both the
-   `kokua.toolsets` entry-point group, split by which distribution registered them: Kokua's own four
-   (`aimu_agents`, `benchmark`, `github_backup`, `image`) take the built-in label so
+1. **Build the namespace.** `agents.build_registry(config)` collects toolsets from four sources, each
+   with a provider label: MCP server (one per `[[mcp.server]]`, named by its required `name`), skill (one
+   per skill on disk, so a skill name sits in the same namespace as everything else), built-in toolset,
+   and plugin. The last two are both the `kokua.toolsets` entry-point group, split by which distribution
+   registered them: Kokua's own toolsets, wrappers over AIMU's groups included (`fs`, `compute`, `web`),
+   take the built-in label, and a third party's take the plugin label, so
    `--list-toolsets` can group them separately. That label is the only difference between the two, and
    every toolset keeps the `build` its author wrote: nothing is wrapped, so a toolset that fails to import or to build takes startup down
    naming itself, whichever route it arrived by. **Nothing gates any of this either.** Registration is unconditional because installing a
    distribution that registers an entry point is the consent, and because the switch that used to exist
    could not do what it claimed: `resolve_config` imports every entry point before the file is parsed
    (see [Configuration](#configuration)), so withholding the names afterwards ran the
-   same code and only turned a working `tools` declaration into an unknown-toolset error.
+   same code and only turned a working `available` declaration into an unknown-toolset error.
    `registry.register` then rejects a name two providers claim. A `Toolset` is a frozen dataclass:
    `name`, `description`, `build`, `guidance`, `cross_cutting`, `entry_point_only`, `workflow`,
    `settings`.
@@ -516,6 +522,15 @@ anything; the last two run once per agent, whenever one is built:
    last half, and not by accident: every agent is a `SkillAgent` and so takes the manager regardless, and
    `tasks.arm_all()` has to fire a persisted scheduled task whether or not any agent can talk about
    scheduling.
+5. **Resolve approval.** `core/approval.py`'s `resolve_approval_policies` runs from `Assistant.start`
+   after every agent is wired, because a gate entry is written as `<toolset>.<tool>` and the tool names
+   exist only once the toolsets have built them. It resolves one `ApprovalPolicy` per declared agent
+   (its own `confirm` and `review`, or `[assistant.tools]`'s pair inherited whole) plus the default tier
+   itself, and rejects any entry that gates nothing. `HumanGate.approve(agent, name, arguments)` then
+   looks the calling agent's policy up at call time. The gate is bound to each agent's name through
+   `LiveState.gate_for`: the entry agent gets its own, a delegated worker gets its own through the spawn
+   spec's `"tool_approval"` key (AIMU 0.37.0), and a composed worker is bound to `composed:<label>` and
+   always judged by the default tier. `:` and `[` are therefore reserved in agent names.
 
 The prompt is assembled from the same selected list, in `agents.assemble_system_message`. For the entry
 agent, a `--system` flag wins outright over its declared opener; a worker's declared opener is never
@@ -560,7 +575,7 @@ unconfigured, which is what `email-report` did on the entry agent until the seco
 #### The shipped entry agent's inventory
 
 All 37 tools the shipped `[agents.assistant]` table resolves to, and where each comes from. This is what
-`config.example.toml` declares, not a fixed list: a different `tools` line produces a different set.
+`config.example.toml` declares, not a fixed list: a different `available` list produces a different set.
 Fourteen of the 37 come from AIMU, more than a third, and so are not greppable in this repository (more
 once skills are installed, since AIMU injects a tool per skill script on top of this set), which is why
 this table exists rather than a naming convention alone:
@@ -1178,10 +1193,13 @@ now: the method has a default implementation on the ABC (read everything, keep t
 messages), correct anywhere and slow where a full read is expensive, so a name lookup cannot tell
 `TinyDBSessionStore`'s override from a plain inheritance of the default.
 
-The floor is now **`aimu>=0.36.0`**: every run event carries `run_id` and `parent_run_id`, which Kokua's
-request records (`core/requests.py`) are keyed by, and the probe is a signature check on the dataclass
-`aimu.events.RunEvent` for its `run_id` field (a dataclass field is a constructor parameter). Before it,
-the floor was `aimu>=0.34.0`, the first one a rename alone moved: AIMU renamed its
+The floor is now **`aimu>=0.37.0`**: a spawned worker's spec carries a `"tool_approval"` key, which is
+what lets each agent's tool calls be judged by its own approval policy. The probe did not move: that key
+set is closed, so an older AIMU raises `ValueError` naming the key when the factory is called, and the one
+probe slot stays on a capability whose absence is silent. Before it, the floor was `aimu>=0.36.0`: every
+run event carries `run_id` and `parent_run_id`, which Kokua's request records (`core/requests.py`) are
+keyed by, and the probe is a signature check on the dataclass `aimu.events.RunEvent` for its `run_id`
+field (a dataclass field is a constructor parameter). Before that, the floor was `aimu>=0.34.0`, the first one a rename alone moved: AIMU renamed its
 mid-turn-message seam from `Steering` to `Inbox`, with no legacy path, and taught it which agent is
 opening each reader. `Inbox.reader(agent=...)` is called once per run, at its start, and `agent` is
 that run's own name, offered so a host can route a message to the one run it was meant for rather than
@@ -1439,7 +1457,7 @@ The two settings behind it are `[mcp].oauth_callback_host` / `oauth_callback_por
 ## Workflows
 
 A workflow is a named turn strategy carried by a `Toolset` (its `workflow` field): declaring that
-toolset in an agent's `tools` is what gives the agent the workflow's `/`-command, resolved by
+toolset in an agent's `available` is what gives the agent the workflow's `/`-command, resolved by
 `toolsets.agents.build_command_map` from the entry agent's own declared toolsets -- the same list
 that resolves its tools, so a turn strategy is granted exactly the way a tool is. A workflow's `build`
 returns an `aimu.aio.AsyncRunner`, AIMU's abstract base for every agent and workflow, so AIMU's own
@@ -1457,8 +1475,8 @@ name Kokua looks up, so it is available only to a runner that actually subclasse
 not one that merely matches its shape by duck-typing `run` and `messages`.
 
 `toolsets/planning.py` is the first workflow, and the only toolset that carries one instead of
-tools: declaring `"planning"` in `[agents.<name>].tools` is what gives that agent the `/plan` command
-(the web UI's Plan toggle sends the same command, and an agent whose `tools` omits `"planning"` has
+tools: declaring `"planning"` in `[agents.<name>.tools].available` is what gives that agent the `/plan` command
+(the web UI's Plan toggle sends the same command, and an agent whose `available` omits `"planning"` has
 neither). Its runner, `PlanningWorkflow` (`workflows/planning/runner.py`), is rich tier -- it shows
 phases and reviewer cards, pauses for a human approve/edit/reject, and rewrites the transcript so a
 planned turn is saved as a plain user/assistant pair rather than as planner scaffolding -- and
@@ -1628,7 +1646,8 @@ wait. Boot has two halves. `Assistant.create` reads local state only: it validat
 opens the session store, adopts the most recently updated conversation, and builds the `LiveState` and
 the agent registry, reaching no network at all. `Assistant.start()` is the remainder, and it is the
 expensive one: it connects every configured MCP server, builds the entry agent (which resolves a
-model), checks `confirm_tools` against the tools that now exist, and arms the scheduled tasks. On a
+model), resolves each agent's approval policy against the tools that now exist, and arms the scheduled
+tasks. On a
 config with two remote servers that is most of startup, and it is dominated by round trips Kokua does
 not control. So `serve_connection` sends the conversation list, the history and the settings *between*
 the two calls, and the page renders them while the servers are still being asked for their tool lists.

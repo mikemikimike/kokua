@@ -961,7 +961,15 @@ async def test_web_channel_send_approval_request_emits_frame():
     ws = _FakeWS()
     channel = WebChannel(ws)
     await channel.send_approval_request("add_skill_script", {"skill_name": "x"})
-    assert ws.frames == [{"type": "approval", "name": "add_skill_script", "arguments": {"skill_name": "x"}}]
+    assert ws.frames == [
+        {"type": "approval", "name": "add_skill_script", "arguments": {"skill_name": "x"}, "agent": None}
+    ]
+
+
+async def test_web_approval_frame_carries_the_agent():
+    ws = _FakeWS()
+    await WebChannel(ws).send_approval_request("run_command", {}, agent="coder")
+    assert ws.frames == [{"type": "approval", "name": "run_command", "arguments": {}, "agent": "coder"}]
 
 
 async def test_web_channel_sends_an_auto_approval_frame():
@@ -981,8 +989,17 @@ async def test_web_channel_sends_an_auto_approval_frame():
             "reason": "lists files",
             "model": "ollama:b",
             "conversation_id": "c1",
+            "agent": None,
         }
     ]
+
+
+async def test_web_auto_approval_frame_carries_the_agent():
+    ws = _FakeWS()
+    await WebChannel(ws).send_auto_approval(
+        "run_command", {}, approved=True, reason="", model="ollama:b", agent="coder"
+    )
+    assert ws.frames[0]["agent"] == "coder"
 
 
 async def test_an_auto_approval_frame_is_never_muted_by_a_switch():
@@ -1391,7 +1408,7 @@ def test_ws_reports_a_start_failure_to_the_browser_and_closes(tmp_path):
     from starlette.testclient import TestClient
     from starlette.websockets import WebSocketDisconnect
 
-    app = build_app(_config(tmp_path, confirm_tools=["execute_pythn"]), client=MockAsyncModelClient([]))
+    app = build_app(_config(tmp_path, default_confirm=["execute_pythn"]), client=MockAsyncModelClient([]))
     frames = []
     with TestClient(app).websocket_connect("/ws") as ws:
         try:
@@ -2093,7 +2110,7 @@ def test_build_app_rejects_agents_that_cannot_resolve(tmp_path):
     from kokua.config import ConfigError
 
     agents = example_agents()
-    agents["assistant"].tools = ["memory", "pdf"]
+    agents["assistant"].available = ["memory", "pdf"]
     with pytest.raises(ConfigError, match="pdf"):
         build_app(_config(tmp_path, agents=agents))
 

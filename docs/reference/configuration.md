@@ -8,8 +8,8 @@ from its name.
 Two rules run through the whole file and explain most of what follows:
 
 - **A capability is declared, never defaulted.** An agent holds exactly the toolsets its
-  `[agents.<name>].tools` list names. No code path adds one it did not name, and no flag can disagree
-  with the declaration. See [set up a toolset](../how-to/set-up-toolsets.md).
+  `[agents.<name>.tools].available` list names. No code path adds one it did not name, and no flag can
+  disagree with the declaration. See [set up a toolset](../how-to/set-up-toolsets.md).
 - **`config.toml` is the single source of settings, and the app writes it too.** There is no second
   store, no dotfile, no database. The assistant's own `update_config` tool and the runtime
   `add_mcp_server` tool write back to this file, preserving your comments, which is why
@@ -23,8 +23,9 @@ Two rules run through the whole file and explain most of what follows:
 - [Who may change which key](#who-may-change-which-key)
 - [Which keys apply live](#which-keys-apply-live)
 - Sections: [`[assistant]`](#assistant) · [`[assistant.generation]`](#assistantgeneration) ·
-  [`[security]`](#security) · [`[security.auto_approval]`](#securityauto_approval) ·
-  [`[agents.<name>]`](#agentsname) · [`[reviewers.<name>]`](#reviewersname) ·
+  [`[assistant.tools]`](#assistanttools) · [`[security]`](#security) · [`[security.auto_approval]`](#securityauto_approval) ·
+  [`[agents.<name>]`](#agentsname) ·
+  [`[agents.<name>.tools]`](#agentsnametools) · [`[reviewers.<name>]`](#reviewersname) ·
   [`[[mcp.server]]`](#mcpserver) · [`[paths]`](#paths) · [`[frontend]`](#frontend) · [`[web]`](#web) ·
   [`[logging]`](#logging) · [`[email]`](#email) · [`[scheduling]`](#scheduling) ·
   [`[scheduling.task.<name>]`](#schedulingtaskname) · [`[planning]`](#planning) ·
@@ -109,7 +110,7 @@ Keys never contain dots and sections do, so the last segment of the third form i
 lock one task's contents, write `"scheduling.task.morning-brief.*"`, not
 `"scheduling.task.morning-brief"`. Anything that is none of the three forms fails startup naming the
 pattern, and so does a pattern whose shape is right but whose section or key does not exist: `agnets.*`,
-`Agents.*`, and `security.confirm_tool` are all refused. What no check can catch is a name only you
+`Agents.*`, and `security.never_auto_approv` are all refused. What no check can catch is a name only you
 bring into being. `agents.resercher.*` and `scheduling.task.mornin-brief.*` name an agent and a task
 that could be created tomorrow, so there is no closed set to test them against, and each one loads while
 locking nothing. See [`locked_config_keys`](#locked_config_keys) for the full list of what is refused.
@@ -117,22 +118,23 @@ locking nothing. See [`locked_config_keys`](#locked_config_keys) for the full li
 **One key is always locked:** `[security].locked_config_keys` itself, whatever the list says, including
 when it is empty. Otherwise an assistant holding `update_config` would need a single call to disable
 every other lock. Note how narrow that is: only this key, not the `[security]` section around it. Set
-`locked_config_keys = ["email.to"]` and `[security].confirm_tools` becomes writable by the assistant,
-because the shipped `security.*` pattern was the only thing that was locking it.
+`locked_config_keys = ["email.to"]` and `[security].never_auto_approve` becomes writable by the
+assistant, because the shipped `security.*` pattern was the only thing that was locking it.
 
 Everything else is yours to remove, and here is what removing each shipped pattern actually permits:
 
 | Pattern | Removing it |
 | --- | --- |
-| `security.*` | lets the assistant change `confirm_tools`, and so remove its own approval gate |
+| `security.*` | lets the assistant change `never_auto_approve` and the `[security.auto_approval]` sub-table, and so widen what a reviewer may answer for |
+| `assistant.tools.*` | lets the assistant change `[assistant.tools].confirm` and `review`, and so remove its own approval gate |
 | `email.to` | lets the assistant mail someone other than you |
 | `paths.data_dir` | lets the assistant move its own state out from under you |
-| `agents.*` | lets the assistant rewrite any agent's `tools`, `model`, `thinking`, `max_iterations`, `system_message`, `description`, and `delegates_to`, set its `[agents.<name>.generation]` parameters, and create new agents (under a name of letters, digits, hyphens, or underscores). It can widen its own reach, effective on the next restart. |
+| `agents.*` | lets the assistant rewrite any agent's `[agents.<name>.tools]` table (its `available` list and its own `confirm` and `review`), `model`, `thinking`, `max_iterations`, `system_message`, `description`, and `delegates_to`, set its `[agents.<name>.generation]` parameters, and create new agents (under a name of letters, digits, hyphens, or underscores). It can widen its own reach, effective on the next restart. |
 | `reviewers.*` | changes the error message only. `update_config` refuses `[reviewers.*]` whatever the list says, for the reason it is listed here: a reviewer's prompt and model decide how the assistant's own work is judged, including (with [`[security.auto_approval]`](#securityauto_approval) on) whether a gated call reaches you at all. Hand-edit to change one. |
 | `scheduling.task.*` | changes the error message only. `update_config` still cannot write a task: the scheduling tools are the write path, because a task write has to be paired with the scheduler arming or disarming to match, and a bare config write would leave the running scheduler firing the old schedule. |
 | `compute.command_env_passthrough` | lets the assistant name its own credentials for a `run_command` child to see; because the key is cold, that exposure is persistent, surviving into every later session rather than one command |
 
-A flat agent key (`tools`, `model`, `thinking`, `system_message`, `description`, `delegates_to`) is
+A flat agent key (`model`, `thinking`, `system_message`, `description`, `delegates_to`) is
 checked before it is saved by the same `validate_agents` that runs at startup, so an unknown toolset
 name, an unresolvable model, an unknown delegate, or a delegation cycle is refused at the tool rather
 than breaking your next launch. That check reads `config.toml` itself, not the copy this session started
@@ -164,7 +166,7 @@ immediately. Everything else is **startup-only**: change it, then restart.
 | --- | --- |
 | `[assistant].generate_titles`, `[assistant].capture_requests` | the rest of `[assistant]`, including `[assistant.generation]`, and `[planning].review_rounds` |
 | `[planning].plan_review`, `plan_review_agent`, `result_review`, `show_reasoning` | |
-| `[capabilities].max_depth` | all of `[agents.*]` and `[reviewers.*]`, `[mcp]` (including `[[mcp.server]]`), `[security]` (including `[security.auto_approval]`), `[paths]`, `[frontend]`, `[web]`, `[logging]`, `[email]` |
+| `[capabilities].max_depth` | all of `[agents.*]` (including each `[agents.<name>.tools]`), `[assistant.tools]`, and `[reviewers.*]`, `[mcp]` (including `[[mcp.server]]`), `[security]` (including `[security.auto_approval]`), `[paths]`, `[frontend]`, `[web]`, `[logging]`, `[email]` |
 | `[scheduling].max_task_conversations` | |
 
 The model, the reasoning effort, and the tool-loop cap read like runtime settings and are not. Nothing
@@ -394,37 +396,60 @@ Because this is a TOML sub-table, it must come **last** in `[assistant]`: any pl
 written after the `[assistant.generation]` header would belong to the sub-table instead. The same is true
 of an agent's own generation table.
 
-## `[security]`
+## `[assistant.tools]`
 
-### `confirm_tools`
-
-Tools that require interactive confirmation before each call: a terminal `y/N`, or Allow/Deny in the web
-UI. These are the tools that run with full machine access.
+The default approval policy: which tool calls ask before they run, and who answers. Every agent whose own
+[`[agents.<name>.tools]`](#agentsnametools) table declares neither key inherits this pair, and a composed
+worker (see [`[capabilities]`](#capabilities)) always uses it. Startup-only, and locked by default under
+`assistant.tools.*`, so only a hand-edit changes it. For why approval is its own axis, see
+[Tool access](../explanation/tool-access.md).
 
 ```toml
-confirm_tools = [
-    "skills.add_skill_script",
-    "mcp.add_mcp_server",
-    "compute.execute_python",
-    "compute.run_command",
-    "fs_write",
-    "config.update_config",
-]
+[assistant.tools]
+confirm = ["skills.add_skill_script", "mcp.add_mcp_server", "config.update_config"]
+review = ["compute.run_command", "compute.execute_python", "fs_write"]
 ```
 
-Set to `[]` to disable approval entirely. Proactive turns (scheduled tasks, anything the assistant starts
-unprompted) **auto-deny** these regardless of the setting, since there is no one at the keyboard to ask.
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `confirm` | list of strings | six entries, see below | calls that ask you |
+| `review` | list of strings | `[]` | calls that ask a reviewer first, then you |
 
-Four of the six write with this process's privileges. `fs_write`'s two tools name the path,
-`compute.execute_python` and `compute.run_command` name their own target, and `config.update_config`
-rewrites this file, except for the locked keys it can never change (this key is itself locked by
-default, for the obvious reason). The other two sit one step further back, each installing something
-that will run later.
+The block above is what `config.example.toml` ships. A config that sets neither key gets the schema
+default instead: all six tools the old `confirm_tools` gated (those three plus `compute.execute_python`,
+`compute.run_command`, and `fs_write`) in `confirm`, and an empty `review`, so it gates exactly what it
+always did. Enabling auto-approval on that default is a startup error until you move entries into
+`review`, since a reviewer with nothing to answer for would do nothing.
 
-The writers are gated for a reason worth stating, because leaving them out would have been the quiet
-mistake: `[agents.coder]` holds `run_command`, which is gated because a shell can write a file. An
-ungated `write_file` beside it is the same outcome by a shorter route, so the gate would have been
-approving the long way round and waving the short one through.
+This table holds only those two keys. `available` or `resident` here is a startup error, because
+availability is declared per agent and never defaulted. The two lists must not name the same tool.
+
+### `confirm`
+
+Tools that require interactive confirmation before each call: a terminal `y/N`, or Allow/Deny in the web
+UI. Set to `[]` to clear this list; calls in `review` still prompt, so turning approval off entirely means emptying both `confirm` and `review`. Proactive turns (scheduled tasks, anything the assistant
+starts unprompted) **auto-deny** a gated call regardless, since there is no one at the keyboard to ask.
+`--confirm-tools` overrides this key for one run.
+
+The default entries each reach past the model: `config.update_config` rewrites this file (except the
+locked keys it can never change, and this table is one of them by default), and `skills.add_skill_script`
+and `mcp.add_mcp_server` each install something that will run later.
+
+### `review`
+
+Tools that ask a model reviewer first, and you when the reviewer does not approve. With
+[`[security.auto_approval]`](#securityauto_approval) off (the shipped state) a `review` entry prompts
+you exactly as a `confirm` entry does, so turning auto-approval off never ungates a call, and a dead
+entry fails startup either way. Turning it on lets a declared reviewer answer for you on these calls
+alone. The reviewer can only approve; there is no deny verdict (see
+[Auto-approval](../explanation/auto-approval.md)).
+
+The default entries are the tools that act with this process's privileges: `fs_write`'s tools name the
+path, and `compute.execute_python` and `compute.run_command` name their own target. The writers are
+gated for a reason worth stating, because leaving them out would have been the quiet mistake:
+`[agents.coder]` holds `run_command`, which is gated because a shell can write a file. An ungated
+`write_file` beside it is the same outcome by a shorter route, so the gate would have been approving the
+long way round and waving the short one through.
 
 Note `fs_write` is named bare where the rest name a tool. That toolset is
 `select(builtin.fs, include=builtin.unscoped)`, so it is every writer AIMU puts in that group and
@@ -434,7 +459,7 @@ in silence, which is the drift [`toolsets/fs.py`](https://github.com/saxman/koku
 selects by reach to avoid, reappearing one layer up. `compute` cannot be named bare for the reverse
 reason: it carries `calculate`, which no gate should stop.
 
-#### Every entry names its toolset
+### Every entry names its toolset
 
 An entry is a tool's name with the toolset that provides it in front, and it takes one of three forms:
 
@@ -460,42 +485,43 @@ gate on one skill hold back the entry point to all of them.
 Naming a toolset is a broader statement than naming its members, and it means what it says:
 `compute` gates `calculate` as well as the two execution tools, which the shipped default leaves alone.
 
-Gating is still **by tool name at call time**, so it applies to a worker's call as much as the entry
-agent's: a worker's gated call is routed to you. The prefix is a declaration vocabulary that startup
-resolves down to tool names; it is not a discriminator at the moment of the call. If two toolsets ever
-provided one tool name, gating either prefix would gate that name wherever it is called. Note the flip
-side too, which is easy to misread: there is no privilege tier among agents. An agent whose table
-declares `config` really does get `update_config`, and one declaring `compute` really does get
-`execute_python`. Your hand-edit is the consent, and this list is the gate at call time.
+Gating is by tool name at call time, resolved per agent: the gate an agent's calls pass through is bound
+to that agent's own policy, so a worker's gated call is routed to you under the worker's policy, not the
+delegator's. The prefix is a declaration vocabulary that startup resolves down to tool names; it is not
+a discriminator at the moment of the call. Note the flip side, which is easy to misread: there is no
+privilege tier among agents. An agent whose table declares `config` really does get `update_config`, and
+one declaring `compute` really does get `execute_python`. Your hand-edit is the consent, and the policy is
+the gate at call time.
 
-#### An entry that would gate nothing fails startup
+### An entry that would gate nothing fails startup
 
 Every fault is refused at startup, naming each bad entry and suggesting the close names. An entry that
 gates nothing holds nothing back, and the only sign of it is a prompt that never comes, which is not a
-thing anyone notices: `confirm_tools = ["execute_pythn"]` once loaded clean and then let
-`execute_python` run unattended for as long as the file stood. Four ways an entry can be that entry:
+thing anyone notices: a gate entry misspelled `execute_pythn` once loaded clean and then let
+`execute_python` run unattended for as long as the file stood. Five ways an entry can be that entry:
 
 - **A bare tool name.** `execute_python` with no prefix is refused, and the error names the form to
-  write instead (`compute.execute_python`). This is what a config written before the prefix was required
-  will hit, once each.
+  write instead (`compute.execute_python`).
 - **The wrong toolset.** `web.execute_python` is spelled correctly and filed wrong; the error says which
   toolset does provide it.
+- **A toolset the policy's agent cannot reach.** A declared pair is checked against that agent's own
+  `available` list, so `confirm = ["compute"]` on an agent that does not list `compute` fails naming
+  the agent. The default tier is checked against every tool any agent builds, since an inheriting agent
+  may be any of them.
 - **A toolset no agent declares.** `github_backup` is a real toolset the shipped config gives to nobody,
   so nothing under it can be called. Name it in an `[agents.*]` table first.
 - **A toolset that provides no tools.** `planning` contributes a workflow, so there is nothing under it
   to hold back.
 
-The vocabulary is every tool this config builds, which is wider than the entry agent's own:
-`compute.execute_python` resolves because `[agents.coder]` declares `compute`. An empty list names
-nothing, so there is nothing for the check to refuse.
+A tool in both `confirm` and `review` of one policy is refused too: pick one.
 
 The limit is anything that does not exist when startup ends. A tool from an MCP server the assistant
 connects later with `add_mcp_server` has no name to match yet, and neither does a tool only
 `compose_subagent` would build, out of a toolset no `[agents.*]` table names. Listing either one is
 refused, which will look wrong if you were deliberately gating ahead of the connection. To gate an MCP
-tool, give its server a `[[mcp.server]]` table here and name that server in an agent's `tools`; to gate
-a tool from a toolset nothing declares, name that toolset in an agent's `tools`. Both are known from the
-next start, and both are named by their server or toolset like anything else:
+tool, give its server a `[[mcp.server]]` table here and name that server in an agent's `available`; to
+gate a tool from a toolset nothing declares, name that toolset in an agent's `available`. Both are known
+from the next start, and both are named by their server or toolset like anything else:
 `stocks.get_quote`, or `stocks` for all of them.
 
 Four names worth considering adding, all ungated by default: `conversations.read_conversation`,
@@ -510,10 +536,16 @@ conversation at all: it changes nothing and can only write inside `downloads_pat
 from the conversation's own id, but what it writes there is a whole transcript in the clear, in a folder
 `/download/{name}` serves unauthenticated. Gate it if that folder is the part you are protecting.
 
+## `[security]`
+
+The controls that are not a per-agent policy: the floor beneath the reviewer, and which keys the assistant
+may not write. The approval policies themselves live in [`[assistant.tools]`](#assistanttools) and
+[`[agents.<name>.tools]`](#agentsnametools).
+
 ### `never_auto_approve`
 
 Tools no reviewer may ever approve on your behalf, whatever
-[`[security.auto_approval]`](#securityauto_approval) names. Same vocabulary as `confirm_tools`.
+[`[security.auto_approval]`](#securityauto_approval) names. Same vocabulary as [`[assistant.tools]`](#assistanttools).
 Default:
 
 ```toml
@@ -530,7 +562,7 @@ widen this very list, a waved `add_skill_script` writes a script that becomes a 
 call, and a waved `add_mcp_server` adds a whole source of tools. Reviewing the arguments of a call like
 that answers a question about one action, when what the call actually grants is a capability.
 
-Naming one of these in `[security.auto_approval].tools` is a startup error saying so, and so is an entry
+Naming one of these in any policy's `review` list is a startup error saying so, and so is an entry
 here that matches no tool at all: a floor holding nothing back is the same silent gap a gate matching
 nothing is. Both checks run only when the gate is enabled, which is worth knowing, because it means a
 typo in this list sits unreported until the day you switch the gate on (nothing reads the list before
@@ -538,14 +570,14 @@ then, so there is nothing for it to fail to hold back). Startup-only, and locked
 `security.*`, so only a hand-edit changes it. Emptying it is a hand-edit you may make, and what it buys
 is a reviewer that can approve a capability grant.
 
-This list is not a second approval gate: `confirm_tools` decides what stops and asks, and this decides
-what a reviewer may never answer for.
+This list is not a second approval gate: `confirm` and `review` decide what stops and asks, and this
+decides what a reviewer may never answer for.
 
 ### `locked_config_keys`
 
 A list of patterns naming which keys `update_config` refuses. Default:
-`["security.*", "email.to", "paths.data_dir", "agents.*", "scheduling.task.*",
-"compute.command_env_passthrough"]`. Startup-only, and
+`["security.*", "email.to", "paths.data_dir", "agents.*", "assistant.tools.*", "reviewers.*",
+"scheduling.task.*", "compute.command_env_passthrough"]`. Startup-only, and
 always locked against `update_config` regardless of its own value. See
 [Who may change which key](#who-may-change-which-key) for the pattern forms and what each shipped
 pattern is holding back. A pattern that could never match anything is a hard startup error rather than a
@@ -557,8 +589,8 @@ anywhere but the last segment (`*.*`, `agents.*.*`) all fail. The second is its 
 schema this install actually has, so it knows the sections your installed toolsets contribute as well as
 Kokua's own. The first segment must be a real section, which is what refuses `agnets.*` and, since TOML
 keys are case-sensitive, `Agents.*`. An exact `<section>.<key>` in a section whose keys are known must
-name one of them, which is what refuses `security.confirm_tool` while accepting
-`security.confirm_tools`.
+name one of them, which is what refuses `security.never_auto_approv` while accepting
+`security.never_auto_approve`.
 
 Neither check can see a name that does not exist yet, and neither tries to. The `[agents.<name>]` and
 `[scheduling.task.<name>]` sections are yours to create, so `agents.resercher.*` is accepted and locks
@@ -567,14 +599,14 @@ to write; a misspelling of one is indistinguishable from it.
 
 ## `[security.auto_approval]`
 
-A declared model reviewer may approve a gated tool call in your place, so you are prompted less. Off by
-default, and the whole sub-table is startup-only and locked under `security.*`.
+A declared model reviewer may approve a `review` call (see [`[assistant.tools]`](#assistanttools)) in your
+place, so you are prompted less. Which calls it may answer for is not a key here: it is every tool in the
+policy's `review` list. Off by default, and the whole sub-table is startup-only and locked under `security.*`.
 
 ```toml
 [security.auto_approval]
 enabled = false
 reviewers = ["approval"]
-tools = ["compute.run_command", "compute.execute_python", "fs_write"]
 timeout_seconds = 10
 max_per_turn = 5
 ```
@@ -590,38 +622,39 @@ reviewer whose token cost is not counted).
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `enabled` | bool | `false` | whether any gated call is reviewed at all |
+| `enabled` | bool | `false` | whether any `review` call is reviewed at all |
 | `reviewers` | list of strings | `[]` | which [`[reviewers.<name>]`](#reviewersname) tables are asked |
-| `tools` | list of strings | `[]` | which gated tools a reviewer may answer for, in `confirm_tools`' vocabulary |
 | `timeout_seconds` | number > 0 | `10` | past this, the review escalates rather than being waited on |
 | `max_per_turn` | integer >= 1 | `5` | most auto-approvals one turn may collect |
 
 Name more than one reviewer and **all of them must agree**: they are asked in order, and the first
 withheld answer ends the round, so a quorum costs every reviewer only when the ones before it agreed.
 
-`tools` is checked against two things at startup, and a fault in either is a hard error rather than a
+`review` entries are checked at startup, and a fault in either check is a hard error rather than a
 warning, for the reason every control in `[security]` is: the symptom of a broken gate is the absence of
-a symptom. An entry must name something `confirm_tools` gates (reviewing an ungated tool reviews
-nothing, because that call already runs without asking), and it must not name anything
-[`never_auto_approve`](#never_auto_approve) holds back. Enabling the gate with no reviewer, with no
-tool, or with an entry matching no tool is refused the same way, each with the config fix in the message.
+a symptom. A `review` entry must name something that exists (a dead entry fails startup whether
+auto-approval is on or off), and, when `enabled = true`, it must not name anything
+[`never_auto_approve`](#never_auto_approve) holds back. Enabling the gate with no reviewer, or with no
+`review` entry in any policy, is refused the same way, each with the config fix in the message.
+With `enabled = false` a `review` entry simply prompts you, so switching this table off never ungates a
+call.
 
-The shipped list names both `compute` execution tools, and leaving `execute_python` out would have been
-the incoherent choice rather than the cautious one. `run_command` is a shell, so `python3 -c` from there
-runs Python with no restrictions at all; excluding the Python tool withholds nothing and only routes the
-same capability through the less contained of the two. `execute_python` runs in a subprocess under a
-timeout, with an import allowlist and restricted builtins that put `os`, `subprocess`, and even `open`
-out of reach, and the process environment (API keys included) is invisible to it. If you want to narrow
-this list, `run_command` is the entry to drop.
+The shipped `review` list names both `compute` execution tools, and leaving `execute_python` out would
+have been the incoherent choice rather than the cautious one. `run_command` is a shell, so `python3 -c`
+from there runs Python with no restrictions at all; excluding the Python tool withholds nothing and only
+routes the same capability through the less contained of the two. `execute_python` runs in a subprocess
+under a timeout, with an import allowlist and restricted builtins that put `os`, `subprocess`, and even
+`open` out of reach, and the process environment (API keys included) is invisible to it. If you want to
+narrow that list, `run_command` is the entry to drop.
 
-`max_per_turn` is per *turn*, and the budget is spent when a review is **attempted**, not when one
-approves. A model retrying the same rejected call cannot collect one approval per attempt, and a loop
+`max_per_turn` is per *turn*, counted across every agent in it, and the budget is spent when a review
+is **attempted**, not when one approves. A model retrying the same rejected call cannot collect one approval per attempt, and a loop
 that keeps being escalated stops costing reviews after the fifth. Each reactive turn gets its own
 budget, so one conversation's loop cannot spend another's.
 
 An unattended turn (a scheduled task, anything the assistant starts unprompted) is never auto-approved.
 Its gated calls are denied before a reviewer is consulted at all, which is the behavior
-`confirm_tools` already had and is unchanged by this table.
+the gate already had and is unchanged by this table.
 
 Both outcomes are reported. An approval and an escalation each arrive as a card naming the tool, its
 arguments, the model that answered (every model in a quorum, or the one reviewer that is the reason for
@@ -653,35 +686,12 @@ for what removing `agents.*` from `[security].locked_config_keys` actually permi
 | --- | --- | --- |
 | `description` | string | the label a delegator sees in its worker menu |
 | `system_message` | string | this agent's opener; falls back to `[assistant].system_message` |
-| `tools` | list of strings | **this agent's capability**, named from the one toolset namespace |
+| `tools` | sub-table | **this agent's capability and approval policy**: see [`[agents.<name>.tools]`](#agentsnametools) |
 | `delegates_to` | list of strings | agent names this agent may spawn as workers |
 | `model` | string | overrides `[assistant].model` for this agent alone |
 | `thinking` | bool or level | overrides `[assistant].thinking` for this agent alone |
 | `generation` | sub-table | overrides `[assistant.generation]`, **per key** |
 | `max_iterations` | integer >= 1 | overrides `[assistant].max_iterations` for this agent alone |
-
-### `tools`
-
-An agent's `tools` list *is* its capability. Nothing is added in code, so a toolset you delete from a
-list is gone, and one you add is there on the next start.
-
-There is one namespace for every capability, so a name may be an AIMU built-in tool group (`web`, `fs`,
-`fs_write`, `compute`, `time`, `misc`, `audio`, `speech`, `transcription`), one of Kokua's own (`memory`,
-`documents`, `skills`, `capabilities`, `config`, `conversations`, `mcp`, `messaging`, `planning`,
-`scheduling`),
-an installed plugin toolset (`aimu_agents`, `benchmark`, `github_backup`, `image`), a skill in your skills folder
-named by its own name, or an MCP server configured under `[[mcp.server]]`, named by its `name`. The list
-does not say which kind a name is. Run `kokua --list-toolsets` for every name this install accepts,
-grouped by what provides it.
-
-An unknown name is a startup error listing the valid ones, so a typo can never quietly leave an agent
-with a smaller toolset than you wrote. Nothing is implicit, including the clock: `time` is added to no
-agent in code, which is why every shipped agent lists it. An installed plugin toolset and a configured
-MCP server likewise do nothing until some agent names them, and startup warns about one that nothing
-names.
-
-The full inventory of what each toolset contains is in [set up a
-toolset](../how-to/set-up-toolsets.md#one-namespace).
 
 ### `delegates_to`
 
@@ -689,8 +699,8 @@ A non-empty `delegates_to` is what makes an agent a delegator. There is no separ
 disagree with it. The agent gets a `spawn_subagent(agent_type, task)` tool offering exactly the agents it
 names, each built from its own table. The graph must be acyclic.
 
-A worker's gated tool calls (see [`[security]`](#security)) are routed to you for approval, not run
-unattended.
+A worker's gated tool calls are judged by the worker's own approval policy (see
+[`[agents.<name>.tools]`](#agentsnametools)) and routed to you, not run unattended.
 
 ### `model`, `thinking`, `generation`, `max_iterations`
 
@@ -732,6 +742,83 @@ longer leash, declare it on that worker.
 tools = ["web", "misc", "time"]
 max_iterations = 25    # a search-heavy worker: every round spends a tool call
 ```
+
+## `[agents.<name>.tools]`
+
+An agent's tool access, one subtable per agent. Startup-only, and locked by default under `agents.*`.
+The page that explains the shape is [Tool access](../explanation/tool-access.md); this is the reference.
+
+```toml
+[agents.researcher.tools]
+available = ["web", "misc", "time", "messaging"]
+
+[agents.coder.tools]
+available = ["compute", "fs_write", "time"]
+confirm = ["fs_write"]
+```
+
+| Key | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `available` | list of strings | yes | **this agent's capability**, named from the one toolset namespace |
+| `confirm` | list of strings | no | calls that ask you; see [`[assistant.tools]`](#assistanttools) for the vocabulary |
+| `review` | list of strings | no | calls that ask a reviewer first, then you |
+
+### `available`
+
+An agent's `available` list *is* its capability. Nothing is added in code, so a toolset you delete from a
+list is gone, and one you add is there on the next start. Every available toolset is also resident today:
+in the agent's context on every call.
+
+There is one namespace for every capability, so a name may be an AIMU built-in tool group (`web`, `fs`,
+`fs_write`, `compute`, `time`, `misc`, `audio`, `speech`, `transcription`), one of Kokua's own (`memory`,
+`documents`, `skills`, `capabilities`, `config`, `conversations`, `mcp`, `messaging`, `planning`,
+`scheduling`),
+an installed plugin toolset (`aimu_agents`, `benchmark`, `github_backup`, `image`), a skill in your skills folder
+named by its own name, or an MCP server configured under `[[mcp.server]]`, named by its `name`. The list
+does not say which kind a name is. Run `kokua --list-toolsets` for every name this install accepts,
+grouped by what provides it, and `kokua agents` for what each declared agent holds.
+
+An unknown name is a startup error listing the valid ones, so a typo can never quietly leave an agent
+with a smaller toolset than you wrote. Nothing is implicit, including the clock: `time` is added to no
+agent in code, which is why every shipped agent lists it. An installed plugin toolset and a configured
+MCP server likewise do nothing until some agent names them, and startup warns about one that nothing
+names.
+
+The full inventory of what each toolset contains is in [set up a
+toolset](../how-to/set-up-toolsets.md#one-namespace).
+
+### `confirm` and `review`
+
+An agent's own pair. **They are declared or inherited together:** a table that declares either key
+declares its whole approval policy, and a key it leaves out is empty. A table that declares neither
+inherits [`[assistant.tools]`](#assistanttools)'s pair. A declared policy *replaces* the default, never
+merges with it, because loosening a control is allowed as well as tightening one. The foot-gun is that
+writing `confirm = ["fs_write"]` to add a gate also drops the default's other entries and empties
+`review`; `kokua agents` prints each agent's resolved lists and which table they came from, and startup
+prints one summary line per agent, so the result is visible rather than inferred.
+
+Entries are checked against this agent's own `available` list, so an agent cannot gate (or claim to
+gate) a capability it does not hold. A composed worker has no table and always uses the
+[`[assistant.tools]`](#assistanttools) pair. Agent names may not contain `:` or `[`, which the gate
+reserves for `composed:<label>` and for the default tier's own label.
+
+### Removed keys
+
+These fail startup with a message naming the replacement; there is no migration code.
+
+| Old | New |
+|---|---|
+| `[agents.<name>].tools = [...]` | `[agents.<name>.tools].available = [...]` |
+| `[security].confirm_tools` | `[assistant.tools].confirm`, minus any entry that moves to `review` |
+| `[security.auto_approval].tools` | `[assistant.tools].review`, and remove those entries from `confirm` |
+
+The `--confirm-tools` flag now overrides `[assistant.tools].confirm` for one run. A tool it names that
+the file's `review` list also names is refused as being in both.
+
+If `[security].locked_config_keys` is written out in your `config.toml` (a scaffolded one is), add
+`"assistant.tools.*"` to it: the old `"security.*"` entry is what locked `confirm_tools`, so without the
+new one `update_config` can rewrite `[assistant.tools]`, the default policy. A missing lock is not an
+error, since you may loosen it, and nothing else reports it.
 
 ## `[reviewers.<name>]`
 
@@ -828,7 +915,7 @@ Remote MCP servers to connect at startup. An array of tables: one `[[mcp.server]
 | `name` | yes | how the server enters the toolset namespace |
 | `token_env` | no | environment variable holding a bearer token, read at startup |
 
-`name` is what an agent lists in its `tools`, so a server no agent can name reaches no agent. Omit
+`name` is what an agent lists in its `available`, so a server no agent can name reaches no agent. Omit
 `token_env` for an unauthenticated server, or one using the OAuth flow, which triggers automatically on
 an auth challenge. The token stays in the environment, never in this file.
 
@@ -845,7 +932,7 @@ name = "stocks"
 
 Servers added at runtime with the `add_mcp_server` tool are appended here automatically, with a `name`
 derived from the host and a numeric suffix if that name is taken, so the file always loads. That name
-reaches no agent until you add it to a `tools` list **and restart**, since the toolset namespace and the
+reaches no agent until you add it to an `available` list **and restart**, since the toolset namespace and the
 agent tables are both read only at startup. See [add an MCP
 service](../how-to/add-mcp-services.md).
 
@@ -1018,7 +1105,7 @@ max_conversations = 3
 
 ## `[planning]`
 
-Deep planning is a toolset: an agent's `tools` must list `planning` for the `/plan <task>` command to
+Deep planning is a toolset: an agent's `available` must list `planning` for the `/plan <task>` command to
 exist at all. It drafts an explicit plan, naming which tools, skills, and MCP services to use or build,
 before doing the work. Every key here belongs to that toolset and is read only when an agent declares it.
 
@@ -1044,7 +1131,7 @@ rejected against.
 
 ## `[capabilities]`
 
-Capability discovery is a toolset: an agent's `tools` must list `capabilities` for the agent to see what
+Capability discovery is a toolset: an agent's `available` must list `capabilities` for the agent to see what
 is installed beyond its own tools. It gets two tools. `list_capabilities` reads the registry, every
 installed capability except this one, which the agent reading it already holds. `compose_subagent` builds a
 sub-agent holding exactly the capabilities one task needs, and runs it.
@@ -1054,9 +1141,10 @@ chosen per task from everything installed, except two names it can never be give
 on the agent Kokua constructs directly, and `capabilities` itself would hand it a fresh
 composition budget. A capability that is installed but builds no tools (`image` with no
 `AIMU_IMAGE_MODEL` set, for one) is refused by name rather than given as nothing. It runs on `[assistant].model` with the `[assistant]` thinking
-and generation defaults, and its tools still go through `[security].confirm_tools`, so `execute_python`
-and `add_mcp_server` still ask you first. Composing itself is not in the shipped `confirm_tools`, so it
-does not ask; add `capabilities.compose_subagent` there to gate that too.
+and generation defaults, and its tools go through the default `[assistant.tools]` policy (a composed worker is gated as
+`composed:<label>`), so `execute_python` still goes to a reviewer or you and `add_mcp_server` still asks
+you first. Composing itself is in neither shipped list, so it does not ask; add
+`capabilities.compose_subagent` to `confirm` to gate that too.
 
 ### `max_depth`
 
@@ -1070,7 +1158,7 @@ running keeps the count it started with.
 
 ## `[github_backup]`
 
-Declared by the `github_backup` toolset: an agent's `tools` must list `github_backup` for
+Declared by the `github_backup` toolset: an agent's `available` must list `github_backup` for
 `backup_kokua_state` to exist. The tool takes no arguments; everything it needs comes from here.
 
 | Key | Type | Default | Hot | Meaning |
@@ -1102,7 +1190,7 @@ conversation transcripts, as a single git commit.
 
 ## `[compute]`
 
-Declared by the `compute` toolset: an agent's `tools` must list `compute` to get `calculate`,
+Declared by the `compute` toolset: an agent's `available` must list `compute` to get `calculate`,
 `execute_python`, and `run_command`. The shipped `[agents.coder]` is the only agent that declares it.
 
 | Key | Type | Default | Hot | Meaning |
@@ -1127,10 +1215,9 @@ trailing comma is harmless. A name that is unset in Kokua's own environment prod
 rather than an empty one.
 
 Not hot: the value is read when an agent is built, so a change needs a restart. `run_command` is in the
-shipped `[security].confirm_tools` as `compute.run_command`, so a command reaches you for approval
-before it runs, including one
-a sub-agent asked for, since a worker's gated calls route to the parent's gate rather than running
-unattended.
+shipped `[assistant.tools].review` as `compute.run_command`, so a command reaches you for approval
+(or a reviewer, if auto-approval is on) before it runs, including one a sub-agent asked for, since a
+worker's gated calls are judged by its own policy rather than running unattended.
 
 **Neither execution tool is a sandbox.** They buy a hard timeout, crash isolation, and no parent
 environment variables. The process-group kill only fires on timeout or on interruption: a command that
@@ -1193,7 +1280,7 @@ Flags override the file for one run and are never written back.
 | `--frontend NAME` | `[frontend].name` |
 | `--model STRING` | `[assistant].model` |
 | `--system TEXT` | the entry agent's opener, leaving a worker's alone |
-| `--confirm-tools NAMES` | `[security].confirm_tools`, comma-separated `toolset.tool` entries; empty string disables |
+| `--confirm-tools NAMES` | `[assistant.tools].confirm` only, comma-separated `toolset.tool` entries; must not name anything in `review`; an empty string clears `confirm` but leaves `review` prompting |
 | `--mcp URL` | adds a server for this run, unauthenticated or OAuth |
 | `--host`, `--port` | `[web].host`, `[web].port` |
 
@@ -1201,7 +1288,8 @@ Introspection, which exits without running the assistant:
 
 ```bash
 kokua --list-frontends    # installed front ends
-kokua --list-toolsets     # every name a tools list may use, grouped by provider
+kokua --list-toolsets     # every name an available list may use, grouped by provider
+kokua agents              # each declared agent's availability and approval lists, from the config alone
 ```
 
 ## See also

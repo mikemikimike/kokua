@@ -106,7 +106,7 @@ def example_agents() -> dict[str, AgentConfig]:
     off the cached parse so a caller mutating one agent's `tools` list cannot corrupt another test's
     config.
     """
-    return {name: AgentConfig(**deepcopy(spec)) for name, spec in _shipped_agents().items()}
+    return {name: settings._parse_agent(name, deepcopy(spec)) for name, spec in _shipped_agents().items()}
 
 
 def planning_settings(**overrides) -> dict[str, dict]:

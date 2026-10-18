@@ -36,6 +36,7 @@ from kokua.config.file import ConfigError
 from kokua.config.schema import AssistantConfig, ResolvedReviewer
 
 if TYPE_CHECKING:
+    from kokua.core.approval import ApprovalPolicies
     from kokua.registry.context import LiveState
 
 logger = logging.getLogger(__name__)
@@ -182,14 +183,14 @@ current_review_context: ContextVar[Optional[ReviewContext]] = ContextVar("curren
 
 @dataclass(frozen=True)
 class AutoApproval:
-    """The resolved gate: which tool names a reviewer may be asked about, and who is asked.
+    """The resolved gate: who reviews, and how a tool name maps back to its capability.
 
-    Built once at startup, after every agent is wired, because the vocabulary an entry resolves
-    against does not exist until then. ``toolset_of`` is resolved here rather than looked up per call
+    Which calls a reviewer is asked about is each agent's own ``review`` list, held on its approval
+    policy, so it is not repeated here. Built once at startup, after every agent is wired, because the
+    vocabulary an entry resolves against does not exist until then. ``toolset_of`` is resolved here rather than looked up per call
     so the packet can name a capability without the gate reaching the registry mid-dispatch.
     """
 
-    tools: frozenset[str]
     toolset_of: Mapping[str, str]
     reviewers: tuple[ResolvedReviewer, ...]
     timeout_seconds: float
@@ -202,18 +203,20 @@ class AutoApproval:
 
 
 def resolve_auto_approval(
-    config: AssistantConfig, state: LiveState, entry_agent, gated: frozenset[str]
+    config: AssistantConfig, state: LiveState, entry_agent, policies: ApprovalPolicies
 ) -> Optional[AutoApproval]:
     """The gate ``[security.auto_approval]`` describes, or None when it is off.
 
-    Every fault here fails startup rather than warning, for the reason ``resolve_confirm_tools`` gives
-    about its own: the symptom of a broken gate is the absence of a symptom. A reviewer nobody declared,
-    a standard nobody wrote, or a tool nothing gates all present as a feature that silently is not
-    running, and a user who enabled it has no way to tell that from a reviewer that keeps approving.
+    Every fault here fails startup rather than warning, for the reason
+    ``resolve_approval_policies`` gives about its own: the symptom of a broken gate is the absence of a
+    symptom. A reviewer nobody declared, a standard nobody wrote, or a review list naming nothing all
+    present as a feature that silently is not running, and a user who enabled it has no way to tell that
+    from a reviewer that keeps approving.
 
-    ``gated`` is ``resolve_confirm_tools``' answer, passed in rather than recomputed: the two are halves
-    of one decision, and an auto-approval set that is not a subset of it would describe a prompt that
-    never existed.
+    ``policies`` is ``resolve_approval_policies``' answer, passed in rather than recomputed: a ``review``
+    entry is itself a gate, so which tools a reviewer may be asked about is already decided there, per
+    agent, and this function only checks that enabling the feature has something to act on and that no
+    review list reaches a tool the ``never_auto_approve`` floor holds back.
     """
     # Deferred rather than at module scope: `core.agents` reaches `aimu.aio.tools.builtin`, the surface
     # `aimu_compat.require_aimu` probes for, and every toolset module sits on the import path of
@@ -270,23 +273,14 @@ def resolve_auto_approval(
                 name,
             )
         reviewers.append(resolved)
-    vocabulary = gateable_tools(state, entry_agent)
-    tools = resolve_gate_entries(
-        config.auto_approval_tools,
-        vocabulary,
-        state.registry,
-        setting="[security.auto_approval].tools",
-        effect="review nothing",
-        remedy=(
-            "An entry matching no tool cannot reduce a prompt, so the call it was written to wave "
-            "through still stops and asks."
-        ),
-    )
+    all_policies = [policies.default, *policies.by_agent.values()]
+    tools = frozenset().union(*(policy.review for policy in all_policies))
     if not tools:
         raise ConfigError(
-            "[security.auto_approval] is enabled but names no tool, so nothing would ever be reviewed. "
-            'Add the gated tools a reviewer may answer for, for instance tools = ["compute.run_command"].'
+            "[security.auto_approval] is enabled but no review list names a tool, so nothing would ever be "
+            "reviewed. Add entries to [assistant.tools].review or to an agent's [agents.<name>.tools].review."
         )
+    vocabulary = gateable_tools(state, entry_agent)
     floor = resolve_gate_entries(
         config.never_auto_approve,
         vocabulary,
@@ -295,27 +289,20 @@ def resolve_auto_approval(
         effect="hold nothing back",
         remedy="An entry matching no tool holds nothing back from a reviewer that can approve it.",
     )
-    forbidden = sorted(tools & floor)
-    if forbidden:
-        raise ConfigError(
-            f"[security.auto_approval].tools reaches {', '.join(forbidden)}, which "
-            "[security].never_auto_approve holds back. Those tools change what may act later rather "
-            "than acting once, so approving one grants a capability and the arguments it was approved "
-            "for stop constraining anything. Drop them here, or take them out of never_auto_approve by "
-            "hand and understand that a waved update_config can widen this list."
-        )
-    ungated = sorted(tools - gated)
-    if ungated:
-        raise ConfigError(
-            f"[security.auto_approval].tools reaches {', '.join(ungated)}, which nothing gates: "
-            "[security].confirm_tools does not name it, so that call already runs with no prompt and "
-            "there is nothing for a reviewer to save you. Gate it first, or drop it here."
-        )
+    for policy in all_policies:
+        forbidden = sorted(policy.review & floor)
+        if forbidden:
+            raise ConfigError(
+                f"{policy.source}.review reaches {', '.join(forbidden)}, which "
+                "[security].never_auto_approve holds back. Those tools change what may act later rather "
+                "than acting once, so approving one grants a capability and the arguments it was approved "
+                "for stop constraining anything. Drop them here, or take them out of never_auto_approve by "
+                "hand and understand that a waved update_config can widen this list."
+            )
     toolset_of = {
         tool: ",".join(sorted(name for name, provided in vocabulary.items() if tool in provided)) for tool in tools
     }
     return AutoApproval(
-        tools=tools,
         toolset_of=toolset_of,
         reviewers=tuple(reviewers),
         timeout_seconds=config.auto_approval_timeout_seconds,

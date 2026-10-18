@@ -505,7 +505,7 @@ def rename_task(path: Path, old: str, new: str) -> None:
 #: The one key no lock list can unlock. Without it, an assistant holding ``update_config`` needs a single
 #: call to disable every other lock, and a policy the app can rewrite for itself is not a policy. Note the
 #: narrowness: only this key is axiomatic, not the ``[security]`` section around it. A list of
-#: ``["email.to"]`` leaves ``confirm_tools`` writable, because the shipped ``security.*`` pattern was the
+#: ``["email.to"]`` leaves ``[assistant.tools]`` writable, because the shipped ``assistant.tools.*`` pattern was the
 #: only thing locking it.
 LOCK_AXIOM: tuple[str, str] = ("security", "locked_config_keys")
 

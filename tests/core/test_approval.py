@@ -18,16 +18,17 @@ from tests.helpers import MockAsyncModelClient
 
 async def test_assistant_wires_approval_policy(tmp_path):
     assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
-    assert assistant._agent.tool_approval == assistant._approve
+    gate = assistant._agent.tool_approval
+    assert gate.func == assistant._human.approve and gate.args == ("assistant",)
 
 
 async def test_approve_allows_ungated_tool_without_prompting(tmp_path):
     channel = FakeChannel()
     assistant = await Assistant.create(
-        _config(tmp_path, confirm_tools=["skills.add_skill_script"]), channel, client=MockAsyncModelClient([])
+        _config(tmp_path, default_confirm=["skills.add_skill_script"]), channel, client=MockAsyncModelClient([])
     )
     await assistant.start()
-    assert await assistant._approve("get_weather", {}) is True
+    assert await assistant._gate_for("assistant")("get_weather", {}) is True
     assert channel.sent == []  # no prompt for an ungated tool
 
 
@@ -40,13 +41,13 @@ async def test_approve_gated_tool_waits_for_routed_answer(tmp_path):
 
     channel = FakeChannel()
     assistant = await Assistant.create(
-        _config(tmp_path, confirm_tools=["skills.add_skill_script"]), channel, client=MockAsyncModelClient([])
+        _config(tmp_path, default_confirm=["skills.add_skill_script"]), channel, client=MockAsyncModelClient([])
     )
     await assistant.start()
     # Foreground: the calling turn's conversation is the one currently viewed.
     token = streaming_conversation.set(assistant._active_id)
     try:
-        task = asyncio.create_task(assistant._approve("add_skill_script", {"skill_name": "x"}))
+        task = asyncio.create_task(assistant._gate_for("assistant")("add_skill_script", {"skill_name": "x"}))
         await asyncio.sleep(0)  # let the policy register the pending approval and prompt
         assert assistant._human.approval.pending
         assert channel.sent  # a prompt was sent to the user
@@ -66,13 +67,13 @@ async def test_approve_backgrounded_auto_denies_without_prompting(tmp_path):
 
     channel = FakeChannel()
     assistant = await Assistant.create(
-        _config(tmp_path, confirm_tools=["skills.add_skill_script"]), channel, client=MockAsyncModelClient([])
+        _config(tmp_path, default_confirm=["skills.add_skill_script"]), channel, client=MockAsyncModelClient([])
     )
     await assistant.start()
     # Background: the calling turn's conversation ("elsewhere") isn't the one being viewed.
     token = streaming_conversation.set("elsewhere")
     try:
-        assert await assistant._approve("add_skill_script", {}) is False
+        assert await assistant._gate_for("assistant")("add_skill_script", {}) is False
         assert not assistant._human.approval.pending  # nothing is waiting on an answer
         assert [s for s in channel.sent if "[approve]" in s] == []  # and nothing asked for one
         assert any("add_skill_script" in s and "denied" in s for s in channel.sent)
@@ -101,12 +102,12 @@ async def test_serve_loop_routes_message_to_pending_approval(tmp_path):
 
 
 async def test_denied_gated_tool_does_not_run(tmp_path):
-    cfg = _config(tmp_path, confirm_tools=["skills.add_skill_script"])
+    cfg = _config(tmp_path, default_confirm=["skills.add_skill_script"])
     client = _RequestsToolOnce("add_skill_script", {"skill_name": "disk", "filename": "u.py", "content": "print(1)\n"})
     assistant = await Assistant.create(cfg, FakeChannel(), client=client)
     await assistant.start()
     # No streaming_conversation is set around this call, so it defaults to None -- not the viewed
-    # conversation -- making _approve auto-deny without an interactive prompt. That exercises the real
+    # conversation -- making the gate auto-deny without an interactive prompt. That exercises the real
     # dispatch path (the Agent's tool-loop engine + approval gate) via a normal run.
 
     await assistant._agent.run("go")
@@ -129,14 +130,14 @@ async def test_approve_serializes_concurrent_gated_calls(tmp_path):
     """
     from kokua.channels.web import streaming_conversation
 
-    cfg = _config(tmp_path, confirm_tools=["compute.execute_python"])
+    cfg = _config(tmp_path, default_confirm=["compute.execute_python"])
     assistant = await Assistant.create(cfg, FakeChannel(), client=MockAsyncModelClient([]))
     await assistant.start()
 
     prompts: list[str] = []
     order: list[str] = []
 
-    async def fake_prompt(name, arguments):
+    async def fake_prompt(name, arguments, *, agent=None):
         prompts.append(name)
         # Yield to the event loop before resolving so the two gathered coroutines can interleave.
         # Without the lock the second call overwrites the pending slot here, causing the
@@ -148,7 +149,7 @@ async def test_approve_serializes_concurrent_gated_calls(tmp_path):
     assistant._ui.ask_approval = fake_prompt
 
     async def call(tag):
-        result = await assistant._approve("execute_python", {"code": tag})
+        result = await assistant._gate_for("assistant")("execute_python", {"code": tag})
         order.append(tag)
         return result
 
@@ -167,7 +168,7 @@ async def test_approve_serializes_concurrent_gated_calls(tmp_path):
 async def test_background_turn_auto_denies_gated_tool(tmp_path):
     from kokua.channels.web import streaming_conversation
 
-    cfg = _config(tmp_path, confirm_tools=["compute.execute_python"])
+    cfg = _config(tmp_path, default_confirm=["compute.execute_python"])
     assistant = await Assistant.create(cfg, FakeChannel(), client_factory=lambda cid: MockAsyncModelClient([]))
     await assistant.start()
     viewed = assistant._active_id
@@ -177,7 +178,7 @@ async def test_background_turn_auto_denies_gated_tool(tmp_path):
     # A turn running in `background` is not the viewed conversation -> auto-deny.
     token = streaming_conversation.set(background)
     try:
-        assert await assistant._approve("execute_python", {}) is False
+        assert await assistant._gate_for("assistant")("execute_python", {}) is False
     finally:
         streaming_conversation.reset(token)
 
@@ -185,14 +186,14 @@ async def test_background_turn_auto_denies_gated_tool(tmp_path):
 async def test_foreground_turn_prompts_for_approval(tmp_path):
     from kokua.channels.web import streaming_conversation
 
-    cfg = _config(tmp_path, confirm_tools=["compute.execute_python"])
+    cfg = _config(tmp_path, default_confirm=["compute.execute_python"])
     channel = FakeChannel()
     assistant = await Assistant.create(cfg, channel, client_factory=lambda cid: MockAsyncModelClient([]))
     await assistant.start()
     viewed = assistant._active_id
     token = streaming_conversation.set(viewed)
     try:
-        approve_task = asyncio.create_task(assistant._approve("execute_python", {}))
+        approve_task = asyncio.create_task(assistant._gate_for("assistant")("execute_python", {}))
         await asyncio.sleep(0.01)
         assert assistant._human.approval.pending
         assistant._human.approval.resolve(True)
@@ -232,10 +233,10 @@ async def test_the_shipped_gates_all_name_tools_that_exist(tmp_path):
     on arrival, and a regression to naming its two tools would still start and still pass a
     smoke test."""
     config = _config(tmp_path)
-    assert config.confirm_tools == AssistantConfig().confirm_tools
+    assert config.default_confirm == AssistantConfig().default_confirm
     assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
     await assistant.start()
-    assert assistant._human.gated_tools == {
+    assert assistant._human.policies.default.gated == {
         "add_skill_script",
         "add_mcp_server",
         "execute_python",
@@ -245,25 +246,25 @@ async def test_the_shipped_gates_all_name_tools_that_exist(tmp_path):
         "update_config",
     }
     # And the benign member of a toolset one of those entries names is deliberately not gated.
-    assert "calculate" not in assistant._human.gated_tools
+    assert "calculate" not in assistant._human.policies.default.gated
 
 
 async def test_an_empty_gate_list_is_still_valid(tmp_path):
     """[] is the documented way to turn approval off, so it has to stay a legal value."""
     assistant = await Assistant.create(
-        _config(tmp_path, confirm_tools=[]), FakeChannel(), client=MockAsyncModelClient([])
+        _config(tmp_path, default_confirm=[]), FakeChannel(), client=MockAsyncModelClient([])
     )
     await assistant.start()
-    assert assistant._human.gated_tools == frozenset()
+    assert assistant._human.policies.default.gated == frozenset()
 
 
 async def _gated(tmp_path, entries) -> frozenset:
     """The tool names ``entries`` resolves to on an otherwise default config."""
     assistant = await Assistant.create(
-        _config(tmp_path, confirm_tools=entries), FakeChannel(), client=MockAsyncModelClient([])
+        _config(tmp_path, default_confirm=entries), FakeChannel(), client=MockAsyncModelClient([])
     )
     await assistant.start()
-    return assistant._human.gated_tools
+    return assistant._human.policies.default.gated
 
 
 def _write_skill(config) -> None:
@@ -306,7 +307,7 @@ async def test_a_bare_tool_name_fails_startup_and_names_the_prefix_to_write(tmp_
 async def test_a_bare_tool_offered_under_two_prefixes_names_both(tmp_path):
     """activate_skill belongs to the reserved namespace, and every skill toolset carries it too, so a
     bare entry for it has more than one prefixed form and the user is the one who picks."""
-    config = _config(tmp_path, confirm_tools=["activate_skill"])
+    config = _config(tmp_path, default_confirm=["activate_skill"])
     _write_skill(config)
     with pytest.raises(ConfigError) as error:
         assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
@@ -381,7 +382,7 @@ async def test_a_tool_only_a_worker_holds_is_gateable(tmp_path):
     """execute_python is one of the shipped gates and the entry agent does not hold it: it comes from
     [agents.coder]. A check over the entry agent's own tools alone would reject the default config."""
     assistant = await Assistant.create(
-        _config(tmp_path, confirm_tools=["compute.execute_python"]), FakeChannel(), client=MockAsyncModelClient([])
+        _config(tmp_path, default_confirm=["compute.execute_python"]), FakeChannel(), client=MockAsyncModelClient([])
     )
     assert "execute_python" not in {fn.__name__ for fn in assistant._agent.tools}
 
@@ -393,11 +394,11 @@ async def test_the_delegation_tool_is_gateable(tmp_path):
 
 
 async def test_the_reserved_namespace_gates_both_of_its_members(tmp_path):
-    config = _config(tmp_path, confirm_tools=["core"])
+    config = _config(tmp_path, default_confirm=["core"])
     _write_skill(config)
     assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
     await assistant.start()
-    assert assistant._human.gated_tools == {"spawn_subagent", "activate_skill"}
+    assert assistant._human.policies.default.gated == {"spawn_subagent", "activate_skill"}
     assistant._state.close()
 
 
@@ -405,22 +406,22 @@ async def test_a_skill_script_is_gateable(tmp_path):
     """A skill script is an unsandboxed subprocess, so it is worth gating, and an AIMU SkillAgent
     attaches its script tools on first run rather than at startup. The vocabulary is therefore derived
     from the skills on disk, not read off the built agent."""
-    config = _config(tmp_path, confirm_tools=["weekly-digest.weekly_digest__collect_notes", "core.activate_skill"])
+    config = _config(tmp_path, default_confirm=["weekly-digest.weekly_digest__collect_notes", "core.activate_skill"])
     _write_skill(config)
     assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
     await assistant.start()
-    assert assistant._human.gated_tools == {"weekly_digest__collect_notes", "activate_skill"}
+    assert assistant._human.policies.default.gated == {"weekly_digest__collect_notes", "activate_skill"}
     assistant._state.close()
 
 
 async def test_a_bare_skill_gates_its_scripts_and_not_activate_skill(tmp_path):
     """Every skill's tool list carries activate_skill, so attributing it per skill would let one
     skill's gate stop every skill from being loaded. It belongs to `core`, and only there."""
-    config = _config(tmp_path, confirm_tools=["weekly-digest"])
+    config = _config(tmp_path, default_confirm=["weekly-digest"])
     _write_skill(config)
     assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
     await assistant.start()
-    assert assistant._human.gated_tools == {"weekly_digest__collect_notes"}
+    assert assistant._human.policies.default.gated == {"weekly_digest__collect_notes"}
     assistant._state.close()
 
 
@@ -460,8 +461,8 @@ async def test_the_gate_cannot_run_before_startup_resolves_it(tmp_path):
         is_proactive=lambda: False,
         turn_conversation=lambda: "a",
     )
-    with pytest.raises(RuntimeError):
-        await gate.approve("execute_python", {})
+    with pytest.raises(RuntimeError, match="before startup resolved"):
+        await gate.approve("assistant", "execute_python", {})
 
 
 async def test_background_auto_deny_raises_an_alert(tmp_path):
@@ -470,7 +471,7 @@ async def test_background_auto_deny_raises_an_alert(tmp_path):
     there is still something to do about it."""
     from kokua.channels.web import streaming_conversation
 
-    cfg = _config(tmp_path, confirm_tools=["compute.execute_python"])
+    cfg = _config(tmp_path, default_confirm=["compute.execute_python"])
     channel = AlertCapturingChannel()
     assistant = await Assistant.create(cfg, channel, client_factory=lambda cid: MockAsyncModelClient([]))
     await assistant.start()
@@ -481,8 +482,8 @@ async def test_background_auto_deny_raises_an_alert(tmp_path):
 
     token = streaming_conversation.set(background)
     try:
-        assert await assistant._approve("execute_python", {}) is False
-        assert await assistant._approve("execute_python", {}) is False  # same tool, same card
+        assert await assistant._gate_for("assistant")("execute_python", {}) is False
+        assert await assistant._gate_for("assistant")("execute_python", {}) is False  # same tool, same card
     finally:
         streaming_conversation.reset(token)
 
@@ -497,13 +498,13 @@ async def test_proactive_auto_deny_stays_silent(tmp_path):
     that calls a gated tool every firing would otherwise raise one every firing."""
     from kokua.channels.web import proactive_turn
 
-    cfg = _config(tmp_path, confirm_tools=["compute.execute_python"])
+    cfg = _config(tmp_path, default_confirm=["compute.execute_python"])
     channel = AlertCapturingChannel()
     assistant = await Assistant.create(cfg, channel, client_factory=lambda cid: MockAsyncModelClient([]))
     await assistant.start()
     token = proactive_turn.set(True)
     try:
-        assert await assistant._approve("execute_python", {}) is False
+        assert await assistant._gate_for("assistant")("execute_python", {}) is False
     finally:
         proactive_turn.reset(token)
     assert channel.alerts == []
@@ -517,14 +518,15 @@ async def test_assistant_wires_the_auto_approval_gate(tmp_path):
     resolver through a helper, so the line in `start` that connects the two is the kind of thing a
     refactor drops with the suite still green and no symptom but a feature that never runs.
 
-    The subset assertion is the pairing the resolver enforces: an auto-approval set reaching a tool
-    nothing gates would describe a prompt that never existed.
+    A review entry is itself a gate, so the tool the reviewer may be asked about is in the policy's
+    ``review`` half and nowhere else.
     """
     cfg = _config(
         tmp_path,
         auto_approval_enabled=True,
         auto_approval_reviewers=["approval"],
-        auto_approval_tools=["compute.run_command"],
+        default_confirm=["compute.execute_python"],
+        default_review=["compute.run_command"],
         reviewers={"approval": ReviewerConfig(model="ollama:qwen3:8b", system_message="judge it")},
     )
     assistant = await Assistant.create(cfg, FakeChannel(), client=MockAsyncModelClient([]))
@@ -532,8 +534,8 @@ async def test_assistant_wires_the_auto_approval_gate(tmp_path):
 
     auto = assistant._human.auto_approval
     assert auto is not None
-    assert auto.tools == frozenset({"run_command"})
-    assert auto.tools <= assistant._human.gated_tools
+    assert auto.toolset_of["run_command"] == "compute"
+    assert assistant._human.policies.default.review == frozenset({"run_command"})
 
 
 async def test_an_assistant_holds_no_gate_when_the_feature_is_off(tmp_path):
@@ -541,5 +543,304 @@ async def test_an_assistant_holds_no_gate_when_the_feature_is_off(tmp_path):
     assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
     await assistant.start()
 
-    assert assistant._human.gated_tools is not None
+    assert assistant._human.policies is not None
     assert assistant._human.auto_approval is None
+
+
+# --- Resolving one approval policy per agent -------------------------------------------------------
+
+import dataclasses  # noqa: E402
+
+from kokua.core.approval import DEFAULT_POLICY, resolve_approval_policies  # noqa: E402
+
+
+async def _wired(tmp_path, **overrides):
+    """A real wired assistant, so ``tools_by_toolset`` holds the tool names the shipped toolsets build."""
+    config = _config(tmp_path, default_confirm=["fs_write"], default_review=[], **overrides)
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    return config, assistant._state, assistant._agent
+
+
+def _declaring(config: AssistantConfig, **pairs) -> AssistantConfig:
+    """``config`` with ``{agent: (confirm, review)}`` declared on those agents."""
+    agents = dict(config.agents)
+    for name, (confirm, review) in pairs.items():
+        agents[name] = dataclasses.replace(agents[name], confirm=confirm, review=review)
+    return dataclasses.replace(config, agents=agents)
+
+
+async def test_default_tier_resolves_against_every_built_tool(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    config = dataclasses.replace(config, default_review=["compute.run_command"])
+    policies = resolve_approval_policies(config, state, entry)
+    assert DEFAULT_POLICY == "[assistant.tools]"
+    assert policies.default.source == DEFAULT_POLICY
+    assert policies.default.confirm == {"write_file", "edit_file"}
+    assert policies.default.review == {"run_command"}
+    assert policies.default.gated == {"write_file", "edit_file", "run_command"}
+
+
+async def test_an_agent_without_a_pair_shares_the_default_under_its_own_name(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    policies = resolve_approval_policies(config, state, entry)
+    researcher = policies.for_agent("researcher")
+    assert researcher.confirm == policies.default.confirm
+    assert researcher.agent == "researcher"
+    assert researcher.source == DEFAULT_POLICY
+
+
+async def test_a_declared_pair_replaces_the_default_whole(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    config = _declaring(config, coder=(["compute.run_command"], []))
+    coder = resolve_approval_policies(config, state, entry).for_agent("coder")
+    assert coder.source == "[agents.coder.tools]"
+    assert coder.confirm == {"run_command"}
+    assert coder.review == frozenset()
+
+
+async def test_an_unknown_name_gets_the_default_relabelled(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    policies = resolve_approval_policies(config, state, entry)
+    composed = policies.for_agent("composed:quote-checker")
+    assert composed.agent == "composed:quote-checker"
+    assert composed.gated == policies.default.gated
+
+
+async def test_a_declared_entry_must_name_a_toolset_the_agent_can_reach(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    config = _declaring(config, researcher=(["compute.run_command"], []))
+    with pytest.raises(
+        ConfigError,
+        match=r"\[agents\.researcher\.tools\]\.confirm names 'compute\.run_command', "
+        r"but researcher cannot reach the 'compute' toolset: it is not in \[agents\.researcher\.tools\]\.available\.",
+    ):
+        resolve_approval_policies(config, state, entry)
+
+
+async def test_a_declared_entry_matching_no_tool_is_a_startup_error(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    assert "compute" in config.agents["coder"].available
+    config = _declaring(config, coder=(["compute.run_comand"], []))
+    with pytest.raises(ConfigError) as error:
+        resolve_approval_policies(config, state, entry)
+    message = str(error.value)
+    assert "[agents.coder.tools].confirm has 1 entry that would gate nothing" in message
+    assert "compute.run_comand" in message and "run_command" in message
+    assert "cannot reach" not in message
+
+
+async def test_a_declared_review_entry_must_name_a_toolset_the_agent_can_reach(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    config = _declaring(config, researcher=([], ["compute.run_command"]))
+    with pytest.raises(
+        ConfigError,
+        match=r"\[agents\.researcher\.tools\]\.review names 'compute\.run_command', "
+        r"but researcher cannot reach the 'compute' toolset",
+    ):
+        resolve_approval_policies(config, state, entry)
+
+
+async def test_a_declared_review_entry_resolves_into_that_agents_review_set(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    config = _declaring(config, coder=(["compute.execute_python"], ["compute.run_command"]))
+    coder = resolve_approval_policies(config, state, entry).for_agent("coder")
+    assert coder.review == {"run_command"}
+    assert coder.confirm == {"execute_python"}
+
+
+async def test_confirm_and_review_overlapping_is_a_startup_error(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    config = dataclasses.replace(config, default_confirm=["compute"], default_review=["compute.run_command"])
+    with pytest.raises(ConfigError, match=r"\[assistant\.tools\] gates run_command in both confirm and review"):
+        resolve_approval_policies(config, state, entry)
+
+
+async def test_a_declared_pair_overlapping_names_its_own_table(tmp_path):
+    config, state, entry = await _wired(tmp_path)
+    config = _declaring(config, coder=(["compute"], ["compute.run_command"]))
+    with pytest.raises(ConfigError, match=r"\[agents\.coder\.tools\] gates run_command in both"):
+        resolve_approval_policies(config, state, entry)
+
+
+async def test_the_confirm_tools_flag_overlapping_the_files_review_fails(tmp_path):
+    """``--confirm-tools`` replaces ``default_confirm`` but not the file's review list, so naming one
+    tool in both is caught here rather than silently picking a winner."""
+    import re
+    from importlib.resources import files
+
+    from kokua.cli import build_arg_parser, resolve_config
+
+    text = files("kokua").joinpath("config.example.toml").read_text()
+    text = re.sub(r"^review = \[.*?\]", 'review = ["compute.run_command"]', text, count=1, flags=re.M | re.S)
+    path = tmp_path / "config.toml"
+    path.write_text(text)
+    args = build_arg_parser().parse_args(["--config", str(path), "--confirm-tools", "compute.run_command"])
+    flagged = resolve_config(args)
+    assert flagged.default_confirm == ["compute.run_command"]
+    assert flagged.default_review == ["compute.run_command"]
+
+    _, state, entry = await _wired(tmp_path)
+    with pytest.raises(ConfigError, match="in both confirm and review"):
+        resolve_approval_policies(flagged, state, entry)
+
+
+async def test_the_shipped_example_resolves_to_todays_gate(tmp_path):
+    import shutil
+    from importlib.resources import files
+
+    from kokua.config.file import load
+    from tests.helpers import core_table
+
+    path = tmp_path / "config.toml"
+    shutil.copyfile(str(files("kokua").joinpath("config.example.toml")), path)
+    loaded = load(str(path), table=core_table())
+    # A scaffolded config writes its lock list out in full, so the default list's entry alone would
+    # leave [assistant.tools] writable by update_config.
+    assert "assistant.tools.*" in loaded["locked_config_keys"]
+    config, state, entry = await _wired(tmp_path)
+    config = dataclasses.replace(
+        config, default_confirm=loaded["default_confirm"], default_review=loaded["default_review"]
+    )
+
+    policies = resolve_approval_policies(config, state, entry)
+
+    assert policies.default.confirm == {"add_skill_script", "add_mcp_server", "update_config"}
+    assert policies.default.review == {"execute_python", "run_command", "write_file", "edit_file"}
+    # The union is what the old six-entry gate held, so the split changed who is asked first and not
+    # which calls are held.
+    assert policies.default.gated == {
+        "add_skill_script",
+        "add_mcp_server",
+        "execute_python",
+        "run_command",
+        "write_file",
+        "edit_file",
+        "update_config",
+    }
+
+
+# --- every agent's calls are judged by its own policy -------------------------------------------------
+
+
+async def test_a_worker_spec_carries_its_own_gate(tmp_path):
+    from kokua.core.agents import build_agent_specs
+
+    assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
+    specs = build_agent_specs(assistant._config, assistant._state, "assistant")
+    gate = specs["coder"]["tool_approval"]
+    assert gate.func == assistant._human.approve and gate.args == ("coder",)
+    assert specs["researcher"]["tool_approval"].args == ("researcher",)
+    assistant._state.close()
+
+
+async def test_a_workers_declared_policy_decides_its_calls(tmp_path):
+    """coder declares run_command as its only confirm entry, while the default tier gates fs_write only."""
+    from kokua.channels.web import streaming_conversation
+
+    config = _declaring(_config(tmp_path), coder=(["compute.run_command"], []))
+    config = dataclasses.replace(config, default_confirm=["fs_write"], default_review=[])
+    channel = FakeChannel()
+    assistant = await Assistant.create(config, channel, client_factory=lambda cid: MockAsyncModelClient([]))
+    await assistant.start()
+
+    # write_file is in the default tier but not in coder's own policy, so coder runs it unprompted.
+    assert await assistant._human.approve("coder", "write_file", {}) is True
+    assert channel.sent == []
+
+    token = streaming_conversation.set(assistant._active_id)
+    try:
+        task = asyncio.create_task(assistant._human.approve("coder", "run_command", {"command": "ls"}))
+        await asyncio.sleep(0.01)
+        assert assistant._human.approval.pending
+        assistant._human.approval.resolve(False)
+        assert await task is False
+        # The entry agent has the default tier, which does not gate run_command.
+        assert await assistant._human.approve("assistant", "run_command", {}) is True
+    finally:
+        streaming_conversation.reset(token)
+    assistant._state.close()
+
+
+async def test_an_unattended_turn_denies_a_workers_gated_call(tmp_path):
+    from kokua.channels.web import proactive_turn
+
+    config = _declaring(_config(tmp_path), coder=(["compute.run_command"], []))
+    channel = AlertCapturingChannel()
+    assistant = await Assistant.create(config, channel, client_factory=lambda cid: MockAsyncModelClient([]))
+    await assistant.start()
+    token = proactive_turn.set(True)
+    try:
+        assert await assistant._human.approve("coder", "run_command", {}) is False
+    finally:
+        proactive_turn.reset(token)
+    assert channel.alerts == []
+    assistant._state.close()
+
+
+async def test_a_rebuilt_agent_keeps_its_gate(tmp_path):
+    assistant = await Assistant.create(
+        _config(tmp_path), FakeChannel(), client_factory=lambda cid: MockAsyncModelClient([])
+    )
+    await assistant.start()
+    conversation = assistant._active_id
+    first = assistant._registry.get(conversation)
+    assistant._registry.drop_agent(conversation)
+    rebuilt = assistant._registry.get(conversation)
+    assert rebuilt is not first
+    assert rebuilt.tool_approval.func == assistant._human.approve
+    assert rebuilt.tool_approval.args == ("assistant",)
+    assistant._state.close()
+
+
+async def test_review_entries_prompt_when_auto_approval_is_off(tmp_path):
+    """A review entry is a gate even with no reviewer to ask: the prompt the user would have got stays."""
+    from kokua.channels.web import streaming_conversation
+
+    config = _config(tmp_path, default_confirm=[], default_review=["compute.run_command"])
+    channel = FakeChannel()
+    assistant = await Assistant.create(config, channel, client_factory=lambda cid: MockAsyncModelClient([]))
+    await assistant.start()
+    assert assistant._human.auto_approval is None
+    token = streaming_conversation.set(assistant._active_id)
+    try:
+        task = asyncio.create_task(assistant._gate_for("assistant")("run_command", {"command": "ls"}))
+        await asyncio.sleep(0.01)
+        assert assistant._human.approval.pending
+        assistant._human.approval.resolve(True)
+        assert await task is True
+    finally:
+        streaming_conversation.reset(token)
+    assistant._state.close()
+
+
+async def test_the_entry_agents_pair_may_name_a_skills_script_tool(tmp_path):
+    """The entry agent's SkillAgent holds every skill, so its pair resolves against their toolsets too."""
+    from tests.core.test_skill_toolsets import write_skill
+
+    config = _config(tmp_path, default_confirm=["fs_write"], default_review=[])
+    write_skill(config, "citation-check", "Verify a claim.", script="print('checked')\n")
+    config = _declaring(config, assistant=(["citation-check.citation_check__run"], []))
+    assistant = await Assistant.create(config, FakeChannel(), client=MockAsyncModelClient([]))
+    try:
+        policy = resolve_approval_policies(config, assistant._state, assistant._agent).for_agent("assistant")
+        assert policy.confirm == {"citation_check__run"}
+    finally:
+        assistant._state.close()
+
+
+async def test_an_unattended_turn_runs_a_tool_the_workers_own_pair_does_not_gate(tmp_path):
+    """The inverse of the denial above: the default tier gates fs_write, but coder declared only
+    run_command, so coder's write goes through even when nobody is watching."""
+    from kokua.channels.web import proactive_turn
+
+    config = _declaring(_config(tmp_path), coder=(["compute.run_command"], []))
+    config = dataclasses.replace(config, default_confirm=["fs_write"], default_review=[])
+    channel = AlertCapturingChannel()
+    assistant = await Assistant.create(config, channel, client_factory=lambda cid: MockAsyncModelClient([]))
+    await assistant.start()
+    token = proactive_turn.set(True)
+    try:
+        assert await assistant._human.approve("coder", "write_file", {}) is True
+    finally:
+        proactive_turn.reset(token)
+    assistant._state.close()

@@ -13,7 +13,7 @@ from kokua.registry.context import LiveState
 from kokua.mcp.auth import OAuthSettings
 from tests.channels import FakeChannel, _config, example_agents
 from tests.fakes import _FakeMCP, _await_value, _fake_mcp_tool, _offline_until_connected
-from tests.helpers import MockAsyncModelClient
+from tests.helpers import MockAsyncModelClient, allow_all_gates
 
 
 _MEMORY_TOOL_NAMES = {
@@ -33,7 +33,7 @@ def _specs(config, state=None) -> dict[str, dict]:
     from kokua.core.agents import build_agent_specs, build_registry
 
     if state is None:
-        state = LiveState(config=config, registry=build_registry(config))
+        state = LiveState(gate_for=allow_all_gates, config=config, registry=build_registry(config))
     return build_agent_specs(config, state, config.entry_agent)
 
 
@@ -88,8 +88,8 @@ def test_a_worker_resolves_a_group_an_mcp_server_and_a_plugin_from_one_list(tmp_
     cfg = _config(
         tmp_path,
         agents={
-            "assistant": AgentConfig(tools=["time"], delegates_to=["trader"]),
-            "trader": AgentConfig(description="Trades.", tools=["compute", "stocks", "pdf"]),
+            "assistant": AgentConfig(available=["time"], delegates_to=["trader"]),
+            "trader": AgentConfig(description="Trades.", available=["compute", "stocks", "pdf"]),
         },
         mcp_servers=[MCPServerConfig(url="https://broker/mcp", name="stocks")],
     )
@@ -99,7 +99,7 @@ def test_a_worker_resolves_a_group_an_mcp_server_and_a_plugin_from_one_list(tmp_
     # toolset's actual output.
     registry = build_registry(cfg)
     registry["pdf"] = Toolset(name="pdf", description="fake plugin", build=lambda ctx: [make_pdf])
-    state = LiveState(config=cfg, connections=connections, registry=registry)
+    state = LiveState(gate_for=allow_all_gates, config=cfg, connections=connections, registry=registry)
     names = {fn.__name__ for fn in _specs(cfg, state)["trader"]["tools"]}
     assert "stock_quote" in names  # the named MCP server's tool
     assert "make_pdf" in names  # the plugin toolset's tool
@@ -122,7 +122,7 @@ async def test_an_unknown_toolset_name_refuses_to_start(tmp_path):
     """A misspelled toolset used to leave the agent quietly smaller than the config said."""
     from kokua.config import ConfigError
 
-    cfg = _config(tmp_path, agents={"assistant": AgentConfig(tools=["bogus"])})
+    cfg = _config(tmp_path, agents={"assistant": AgentConfig(available=["bogus"])})
     with pytest.raises(ConfigError, match="bogus"):
         await Assistant.create(cfg, FakeChannel(), client=MockAsyncModelClient([]))
 
@@ -132,7 +132,7 @@ async def test_an_unresolvable_declared_model_refuses_to_start(tmp_path):
     surface mid-turn as a failed spawn rather than at startup."""
     from kokua.config import ConfigError
 
-    cfg = _config(tmp_path, agents={"assistant": AgentConfig(tools=[], model="nonsense:whatever")})
+    cfg = _config(tmp_path, agents={"assistant": AgentConfig(available=[], model="nonsense:whatever")})
     with pytest.raises(ConfigError, match=r"\[agents.assistant\].model"):
         await Assistant.create(cfg, FakeChannel(), client=MockAsyncModelClient([]))
 
@@ -204,8 +204,8 @@ async def test_a_delegation_cycle_refuses_to_start(tmp_path):
     cfg = _config(
         tmp_path,
         agents={
-            "assistant": AgentConfig(tools=["time"], delegates_to=["helper"]),
-            "helper": AgentConfig(tools=["fs"], delegates_to=["assistant"]),
+            "assistant": AgentConfig(available=["time"], delegates_to=["helper"]),
+            "helper": AgentConfig(available=["fs"], delegates_to=["assistant"]),
         },
     )
     with pytest.raises(ConfigError, match="cycle"):
@@ -220,7 +220,7 @@ async def test_a_toolset_name_two_providers_claim_refuses_to_start_as_a_config_e
 
     cfg = _config(
         tmp_path,
-        agents={"assistant": AgentConfig(tools=["shared"])},
+        agents={"assistant": AgentConfig(available=["shared"])},
         mcp_servers=[
             MCPServerConfig(url="https://one/mcp", name="shared"),
             MCPServerConfig(url="https://two/mcp", name="shared"),
@@ -298,7 +298,7 @@ def _without(*toolsets: str) -> dict[str, AgentConfig]:
     """The shipped agents with ``toolsets`` struck from the entry agent's declaration."""
     agents = example_agents()
     entry = agents["assistant"]
-    entry.tools = [name for name in entry.tools if name not in toolsets]
+    entry.available = [name for name in entry.available if name not in toolsets]
     return agents
 
 
@@ -398,11 +398,11 @@ def _trading_via(name: str, *, url: str) -> dict:
     """
     return {
         "agents": {
-            "assistant": AgentConfig(tools=["mcp", "time"], delegates_to=["trader"]),
-            "trader": AgentConfig(description="Trades.", tools=[name]),
+            "assistant": AgentConfig(available=["mcp", "time"], delegates_to=["trader"]),
+            "trader": AgentConfig(description="Trades.", available=[name]),
         },
         "mcp_servers": [MCPServerConfig(url=url, name=name)],
-        "confirm_tools": [],
+        "default_confirm": [],
     }
 
 
@@ -517,7 +517,9 @@ async def test_subagent_tool_routes_approval_to_parent(tmp_path, monkeypatch):
 
     assistant = await Assistant.create(_config(tmp_path), FakeChannel(), client=MockAsyncModelClient([]))
     await assistant.start()
-    assert captured["tool_approval"] == assistant._approve
+    gate = captured["tool_approval"]
+    # The factory-level gate is the default tier's; each worker spec carries its own, bound to its name.
+    assert gate.func == assistant._human.approve and gate.args == ("[assistant.tools]",)
 
 
 async def test_concurrent_tools_flag_reaches_agent(tmp_path):
@@ -587,7 +589,7 @@ def test_memory_toolset_tools_carry_dispatch_attrs(tmp_path):
     from kokua.core.agents import build_registry
 
     config = _config(tmp_path)
-    state = LiveState(config=config, registry=build_registry(config))
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=build_registry(config))
     ctx = ToolsetContext(state=state, agent=None, agent_name="assistant")
     tools = state.registry["memory"].build(ctx) + state.registry["documents"].build(ctx)
     assert tools
@@ -677,7 +679,7 @@ def test_make_agent_builder_wires_and_restores(tmp_path):
         config=config,
         registry=build_registry(config),
         oauth=OAuthSettings(storage_dir=config.data_dir / "mcp-oauth"),
-        tool_approval=lambda name, args: True,
+        gate_for=lambda agent: lambda name, args: True,
         reapply_config=noop,
         for_each_agent=lambda apply: None,
     )
@@ -763,10 +765,10 @@ def test_wire_agent_uses_an_injected_client_as_is(tmp_path):
 
     config = AssistantConfig(
         data_dir=tmp_path,
-        agents={"assistant": AgentConfig(tools=["time"])},
+        agents={"assistant": AgentConfig(available=["time"])},
         entry_agent="assistant",
     )
-    state = LiveState(config=config, registry=build_registry(config))
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=build_registry(config))
     client = MockAsyncModelClient([])
     client._system_message = "Injected system message."
 
@@ -794,7 +796,7 @@ def _captured_client_model(monkeypatch, config, build) -> object:
 def _live_state(config) -> LiveState:
     from kokua.core.agents import build_registry
 
-    return LiveState(config=config, registry=build_registry(config))
+    return LiveState(gate_for=allow_all_gates, config=config, registry=build_registry(config))
 
 
 def test_an_agents_client_is_built_with_the_model_it_declares(tmp_path, monkeypatch):
@@ -899,11 +901,11 @@ def test_the_entry_agent_is_built_with_its_own_resolved_cap(tmp_path):
 
     config = AssistantConfig(
         data_dir=tmp_path,
-        agents={"assistant": AgentConfig(tools=[], max_iterations=30)},
+        agents={"assistant": AgentConfig(available=[], max_iterations=30)},
         entry_agent="assistant",
         max_iterations=10,
     )
-    state = LiveState(config=config, registry=build_registry(config))
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=build_registry(config))
     agent = wire_agent(config, state, "assistant", client=MockAsyncModelClient([]))
     assert agent.max_iterations == 30
 
@@ -915,11 +917,11 @@ def test_the_entry_agent_falls_back_to_the_global_cap(tmp_path):
 
     config = AssistantConfig(
         data_dir=tmp_path,
-        agents={"assistant": AgentConfig(tools=[])},
+        agents={"assistant": AgentConfig(available=[])},
         entry_agent="assistant",
         max_iterations=15,
     )
-    state = LiveState(config=config, registry=build_registry(config))
+    state = LiveState(gate_for=allow_all_gates, config=config, registry=build_registry(config))
     agent = wire_agent(config, state, "assistant", client=MockAsyncModelClient([]))
     assert agent.max_iterations == 15
 
@@ -978,10 +980,10 @@ def test_a_toolset_is_told_which_agent_it_is_building_for(tmp_path):
         holders.append(ctx.agent_name)
         return []
 
-    cfg = _config(tmp_path, agents={"assistant": AgentConfig(tools=["probe"])})
+    cfg = _config(tmp_path, agents={"assistant": AgentConfig(available=["probe"])})
     registry = build_registry(cfg)
     registry["probe"] = Toolset(name="probe", description="records its holder", build=record)
-    state = LiveState(config=cfg, registry=registry)
+    state = LiveState(gate_for=allow_all_gates, config=cfg, registry=registry)
 
     wire_agent(cfg, state, cfg.entry_agent, client=MockAsyncModelClient([]))
 

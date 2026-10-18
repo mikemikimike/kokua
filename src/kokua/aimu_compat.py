@@ -354,7 +354,16 @@ import inspect
 from importlib.metadata import PackageNotFoundError, version
 from typing import Optional
 
-MINIMUM_AIMU = (0, 36, 0)
+MINIMUM_AIMU = (0, 37, 0)
+
+# 0.37.0 raised the floor without moving the probe. The capability Kokua uses from it is the
+# `"tool_approval"` member of `SUBAGENT_SPEC_KEYS`, the spec key `core/agents.py` writes so each worker's
+# calls are judged by its own approval policy. That key set is closed, so an AIMU predating it raises
+# `ValueError` naming the key when the spawn factory is called, which `wire_agent` reaches while building
+# a conversation's agent: loud, and at the one moment it matters. By the reasoning recorded for 0.28.0's
+# `"max_iterations"` key, the single probe slot stays on a capability that fails in silence, which is
+# `RunEvent.run_id` below. `aimu.tools.ToolGroup` also arrived in 0.37.0 and nothing calls it yet, so it
+# is the floor's job until it is used.
 
 # The surface is `aimu.events.RunEvent`'s `run_id` field. 0.36.0 gave every run event the identity of
 # the run that emitted it (`run_id`) and of the run that started that one (`parent_run_id`), and Kokua's

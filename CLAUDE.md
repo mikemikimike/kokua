@@ -41,6 +41,7 @@ uv run kokua --frontend web              # run the web UI (or `kokua-web`); `kok
 uv run kokua config init                 # scaffold $KOKUA_HOME/config.toml from the documented example
 uv run kokua skills list                 # skills bundled in ./skills (outside the package, not in the wheel)
 uv run kokua skills install [name...]    # copy them into $KOKUA_HOME/data/skills
+uv run kokua agents                      # each agent's availability, and what asks first, as the config declares it
 uv run kokua export [id-or-prefix]       # write a saved conversation to Markdown; --full, -o, -o -
 uv run --with build python -m build      # build sdist + wheel (what CI's `package` job verifies)
 ```
@@ -50,7 +51,7 @@ Line length is 120 (configured in `pyproject.toml`). Run lint + tests before com
 
 ## AIMU dependency (important)
 
-Kokua is built on the [AIMU](https://github.com/saxman/aimu) library and requires `aimu>=0.36.0`. That
+Kokua is built on the [AIMU](https://github.com/saxman/aimu) library and requires `aimu>=0.37.0`. That
 floor is the requirement that ships in the wheel. Separately, `[tool.uv.sources]` points AIMU at
 `{ path = "../aimu", editable = true }`, so `uv sync` here installs the sibling checkout live: the two
 projects are developed together and architectural changes move code across the boundary.
@@ -59,7 +60,7 @@ Consequences for working in this repo:
 
 - **The version floor does not constrain your sibling checkout.** uv installs a path source without
   checking it against the specifier (a declared `aimu>=0.99.0` installs a 0.13.1 sibling and locks it
-  without complaint), so `>=0.36.0` governs an installed Kokua and nothing about your working copy.
+  without complaint), so `>=0.37.0` governs an installed Kokua and nothing about your working copy.
   Do not read the pin as a guarantee about the AIMU you are running.
 - **So a sibling on an older branch is the failure mode to expect, and the startup preflight is what
   catches it.** `kokua.aimu_compat` checks the version floor plus one capability probe, and prints the
@@ -261,10 +262,10 @@ Consequences for working in this repo:
   `toolsets/fs_write.py` is `select(builtin.fs, include=builtin.unscoped)`, so the pair partitions one
   AIMU group by *reach* with no tool named in this repository, and a read tool AIMU adds later lands in
   the read half on its own. Two names rather than one because Kokua's config has exactly one lever for a
-  capability, an agent's `tools` list, and with a single `fs` there is no way to write down "read a file
+  capability, an agent's `available` list, and with a single `fs` there is no way to write down "read a file
   and do not write one" -- which is what the shipped `introspector` needs, holding `fs` to read a
   transcript it was asked to evaluate. `write_file` and `edit_file` join the shipped
-  `[security].confirm_tools` for the reason `run_command` is there: an ungated write beside a gated one
+  `[assistant.tools]`'s `review` (it was `[security].confirm_tools` then) for the reason `run_command` is there: an ungated write beside a gated one
   is the same outcome by a shorter route. Second, `make_document_tools` gained `edit_document` and a
   read-before-replace guard on `save_document`; `read_document` windows now, so replacing a whole
   document from a windowed read deleted everything past the window (a 3,000-line document came back 51
@@ -299,7 +300,7 @@ Consequences for working in this repo:
   learned a procedure wrong could fix its code forever and never a word of its text. The tool needs no
   agent (editing a skill's text changes none of its tools, so nothing reloads), which is why `skills`
   is still `entry_point_only` for `add_skill_script`'s sake alone. It stays out of
-  `[security].confirm_tools` on the line that put `add_skill_script` in it: a gate is for a call that
+  `[assistant.tools]`'s `confirm` (it was `[security].confirm_tools` then) on the line that put `add_skill_script` in it: a gate is for a call that
   reaches past the model, which a script does and prose does not, and gating the tool that *edits*
   instructions while leaving ungated the one that *writes* them would buy a prompt and no boundary.
   The second capability is the one a user feels, and it needed no Kokua change at all: `add_skill_script`
@@ -365,7 +366,7 @@ Consequences for working in this repo:
   spawn path honors the `"inbox"` spec key, and whether 0.33.0's host-boundary guards survived the
   rename. None of those is a name, so no name lookup reaches them. `aio.SkillAgent.run`'s `steering`
   parameter became the floor's job then, in its turn.
-  **AIMU 0.36.0 is the current floor, and it is the first one whose probe grips a dataclass field:
+  **AIMU 0.36.0 was the floor until 0.37.0, and it was the first one whose probe grips a dataclass field:
   `RunEvent.run_id`.** 0.36.0 gave every run event the identity of its run and of the run that started
   it, and Kokua's record of what each model call was sent (`core/requests.py`, issue #22) is keyed by
   it: a call pairs with its response by run, a sub-agent's rounds reach its card because its run id is
@@ -380,6 +381,15 @@ Consequences for working in this repo:
   `tool_calls` / `thinking`, `RunFinished.ended_by` / `max_iterations`, the spawn tools passing
   `parent_run_id`, and `Runner.as_tool()` parenting the runs it starts. `aimu.agents.Inbox` is the
   floor's job now, in its turn.
+  **AIMU 0.37.0 is the current floor, and it is another release whose capability did not get the probe.**
+  The capability Kokua depends on is the `"tool_approval"` entry in `SUBAGENT_SPEC_KEYS`: the spec key
+  `build_agent_specs` writes so each worker's calls reach the gate bound to its own name, and so are
+  judged by that agent's approval policy instead of its delegator's. The probe stays on `RunEvent.run_id`,
+  on the 0.28.0 reasoning: that key set is closed, so an AIMU predating the key raises `ValueError` naming
+  it when the factory is called, which is loud and arrives while a conversation's agent is built, where
+  `run_id`'s absence is silent. One probe slot goes to the capability that fails silently. `ToolGroup`
+  also shipped in 0.37.0 and nothing calls it yet, so it is the floor's job until something uses it.
+  `tests/test_aimu_compat.py` pins both. `RunEvent.run_id` is the floor's job now, in its turn.
 - **Without `../aimu`** (CI, a fresh clone, or just running Kokua), `uv sync --no-sources` resolves AIMU
   from PyPI. Nothing in `pyproject.toml` needs editing for that any more.
 - **Both console scripts route through `kokua.cli`** so they share that preflight. `kokua-web` is
@@ -409,9 +419,12 @@ change. Full rationale, with the code that backs each claim, is in
    (`register` keys on the last of those, and the key feeds only the provenance label, so a mismatch is
    otherwise silent). A `Toolset` may also carry a `Workflow`, a named turn strategy: an agent gets the
    workflow's `/`-command exactly the way it gets the toolset's tools, by naming the toolset in
-   `[agents.<name>].tools`. `planning` is the one toolset that does that and contributes no tools at all.
-   Its corollary: **a capability is declared, never defaulted.** An agent holds exactly the toolsets its
-   `[agents.<name>].tools` names, plus the delegate a non-empty `delegates_to` earns it; no code path
+   `[agents.<name>.tools].available`. `planning` is the one toolset that does that and contributes no tools at all.
+   Its corollary: **a capability is declared, never defaulted**, which in the terms of
+   [docs/explanation/tool-access.md](docs/explanation/tool-access.md) is *availability is declared, never
+   defaulted*: availability is one of three axes (what an agent may call, what is in its context, what
+   asks first), each its own key, and only the approval pair may be inherited. An agent holds exactly
+   the toolsets its `[agents.<name>.tools].available` names, plus the delegate a non-empty `delegates_to` earns it; no code path
    grants a capability the table did not declare, and no flag can disagree with one. `compose_subagent` is
    the one code path that draws from the whole registry instead of a table, and it is still entered by
    declaration: only an agent whose own table names `capabilities` holds it at all. What the rule protects
@@ -439,7 +452,9 @@ change. Full rationale, with the code that backs each claim, is in
    `config/store.py`'s `locked_by(section, key, patterns)`, which answers with the pattern that refused
    the write), because `update_config` is a tool the assistant holds and a writable agent table would
    let it widen its own reach; granting it that table takes a hand-edit removing the pattern from
-   `[security].locked_config_keys`. `[reviewers.*]` is locked by prefix for the same reason one step
+   `[security].locked_config_keys`. `[assistant.tools]` is locked as `assistant.tools.*` for the reason
+   `security.*` once locked the old `confirm_tools`: its pair is the default gate every agent without its own
+   policy inherits. `[reviewers.*]` is locked by prefix for the same reason one step
    over: a reviewer's prompt and model decide how the assistant's own work is judged, including whether
    a gated tool call reaches the user at all, so `update_config` refuses that section too.
    `[scheduling.task.*]` is locked by prefix too, but for routing rather than capability: the assistant
@@ -453,22 +468,25 @@ change. Full rationale, with the code that backs each claim, is in
    at the top of `core/turns.py`, each naming the bug it prevents. Update them in the same commit as
    any change to turn concurrency.
 6. **Security is explicit and user controlled.** Capability stays real; a control is added beside it
-   and the control is yours. Every security control is a value in `config.toml` (`[security]
-   confirm_tools`, `[security] locked_config_keys`, an agent's own `tools` list), never a constant in
-   the source. A control that would do nothing, a gate that would hold nothing back or a lock pattern
+   and the control is yours. Every security control is a value in `config.toml` (an approval
+   policy's `confirm` and `review` lists in `[assistant.tools]` or an agent's own `[agents.<name>.tools]`,
+   `[security] locked_config_keys`, an agent's `available` list), never a constant in the source. A control that would do nothing, a gate that would hold nothing back or a lock pattern
    matching no real key, is a hard startup error rather than a silent no-op, because nobody notices a
    prompt that never comes. You may loosen as well as tighten; only the key holding the lock list is
-   unconditional. **A `confirm_tools` entry speaks the same vocabulary an agent's `tools` list does:**
+   unconditional. **A `confirm` or `review` entry speaks the same vocabulary an agent's `available` list does:**
    `<toolset>` (or `<toolset>.*`) for a whole capability, `<toolset>.<tool>` for one of its tools, with
    `core` reserved for the two tools no toolset provides (`spawn_subagent`, `activate_skill`) and
-   refused as a toolset name at registration so nothing can shadow it. `core/agents.py`'s
-   `resolve_confirm_tools` turns those entries into the tool names `HumanGate.approve` matches, which is
-   why a prefix cannot discriminate at call time and is not meant to. Prefer the bare toolset where the
+   refused as a toolset name at registration so nothing can shadow it. `core/approval.py`'s
+   `resolve_approval_policies` turns those entries into one policy per agent, and the gate is bound
+   to each agent's own name (a delegated worker's through the spawn spec's `"tool_approval"` key, a
+   composed worker as `composed:<label>` on the default tier), so `HumanGate.approve` matches the calling
+   agent's own tool names, which is why a prefix cannot discriminate at call time and is not meant to. A
+   pair is declared or inherited whole, never merged per key. Prefer the bare toolset where the
    toolset is exactly the risky set: the shipped default names `fs_write` bare, so a writer a later AIMU
    adds to that group is gated on arrival, and names `compute.execute_python` explicitly, because
    `compute` also carries `calculate`. **`[security.auto_approval]` (off by default) is the one layer
    above that gate,** and it is a convenience layer rather than a boundary: a declared
-   `[reviewers.<name>]` may answer a gated call's prompt in the user's place, and its whole security
+   `[reviewers.<name>]` may answer the prompt for a call in a policy's `review` list in the user's place, and its whole security
    claim is that it can only turn a prompt into an approval. There is no deny verdict, so nothing it
    does changes what the user could have approved; `core/auto_approval.py`'s `decide` computes the
    outcome from three booleans, nine paths fail closed onto the same prompt, and an unattended turn is
@@ -477,7 +495,7 @@ change. Full rationale, with the code that backs each claim, is in
    about one call's arguments, which holds for `run_command` and `write_file` and breaks for a tool
    whose landing makes those arguments stop constraining anything, so `[security].never_auto_approve`
    floors `config.update_config`, `skills.add_skill_script`, and `mcp.add_mcp_server`, and naming one of
-   them in the gate is a startup error. The whole argument, including what this design does not do (no
+   them in a `review` list is a startup error once auto-approval is enabled. The whole argument, including what this design does not do (no
    sandbox, no shell parsing, an uncounted reviewer cost) and how other assistants build the same idea,
    is [docs/explanation/auto-approval.md](docs/explanation/auto-approval.md).
 
@@ -500,7 +518,8 @@ model's context on every configuration question. A new or changed key goes in bo
 src/kokua/
   cli.py  plugins.py  images.py  payloads.py  logging_setup.py  transcript_export.py  config.example.toml  web_static/
   core/         assistant (composition root + serve loop), conversations, turns, interaction,
-                auto_approval (the optional model reviewer over the approval gate, and `decide`),
+                approval (one resolved policy per agent), auto_approval (the optional model reviewer over the approval
+                gate, and `decide`),
                 settings_runtime, diagnostics, build, agents (build_registry, validate_agents, prompt
                 assembly, delegation), agent_registry, turn_gate, turn_registry, messages, titles,
                 errors, transcripts, metrics (what a turn cost, accumulated from AIMU's run events),
