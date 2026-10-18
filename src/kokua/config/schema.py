@@ -41,6 +41,26 @@ DEFAULT_LOCKED_CONFIG_KEYS: tuple[str, ...] = (
 )
 
 
+class AllToolsets:
+    """The declaration ``available = "all"``: every installed toolset, which config cannot enumerate.
+
+    ``config/`` is the bottom layer and cannot see the toolset registry, so it keeps the declaration
+    as this sentinel and leaves expansion to a caller that can. Iterating it raises rather than
+    yielding, so a reader that forgot to expand it fails loudly instead of walking the letters of
+    ``"all"`` or silently treating the agent as holding nothing. There is one instance,
+    ``ALL_TOOLSETS``, compared by identity.
+    """
+
+    def __iter__(self):
+        raise TypeError('available = "all" must be expanded with core.agents.available_for')
+
+    def __repr__(self) -> str:
+        return "all"
+
+
+ALL_TOOLSETS = AllToolsets()
+
+
 @dataclass
 class AgentConfig:
     """One agent, declared whole in ``config.toml``.
@@ -73,7 +93,7 @@ class AgentConfig:
     model: Optional[str] = None
     thinking: Optional[Union[bool, str]] = None
     generation: dict = field(default_factory=dict)
-    available: list[str] = field(default_factory=list)
+    available: Union[list[str], AllToolsets] = field(default_factory=list)
     confirm: Optional[list[str]] = None
     review: Optional[list[str]] = None
     # The subset of `available` whose tool schemas are sent from the first turn. None means every

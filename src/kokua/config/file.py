@@ -24,7 +24,7 @@ from typing import Any, Callable, Optional, Sequence, Union
 
 from kokua.config import paths as paths
 from kokua.config import table as runtime_settings
-from kokua.config.schema import AgentConfig, MCPServerConfig, ReviewerConfig
+from kokua.config.schema import ALL_TOOLSETS, AgentConfig, AllToolsets, MCPServerConfig, ReviewerConfig
 
 EXAMPLE_FILENAME = "config.example.toml"
 
@@ -322,13 +322,19 @@ _REMOVED_AGENT_KEYS = {"groups", "tool_packs", "mcp_servers"}
 _AGENT_TOOLS_KEYS = ("available", "confirm", "review", "resident")
 
 
-def check_resident_within_available(name: str, resident: Optional[list[str]], available: list[str]) -> None:
+def check_resident_within_available(
+    name: str, resident: Optional[list[str]], available: Union[list[str], AllToolsets]
+) -> None:
     """Refuse a ``resident`` entry that ``available`` does not hold.
 
     Shared by the file parser and ``update_config``'s dry run, which builds its candidate without going
     through the parser, so both orderings (a bad resident write, and an available write that strands an
-    existing resident) get the same refusal instead of a file the next startup rejects.
+    existing resident) get the same refusal instead of a file the next startup rejects. An
+    ``available = "all"`` declaration is not checked here: config cannot see the registry that says
+    what "all" holds, so that check happens where the expansion does.
     """
+    if available is ALL_TOOLSETS:
+        return
     for entry in resident or []:
         if entry not in available:
             raise ConfigError(
@@ -358,8 +364,22 @@ def _parse_agent_tools(name: str, value: Any) -> dict:
         raise ConfigError(f"[agents.{name}.tools] needs available = [...]: the toolsets this agent can use.")
     section = f"agents.{name}.tools"
     fields: dict = {}
+    declared_available = value["available"]
+    if declared_available == "all":
+        if "resident" not in value:
+            raise ConfigError(
+                f'[{section}].available = "all" needs a resident list: with every installed toolset '
+                "available, resident says which ones are in the agent's tools from its first turn."
+            )
+    elif not isinstance(declared_available, list) or "all" in declared_available:
+        raise ConfigError(
+            f'[{section}].available must be a list of toolset names, or the string "all" (lowercase, '
+            "not in a list) for every installed toolset."
+        )
     for key in _AGENT_TOOLS_KEYS:
-        if key in value:
+        if key == "available" and declared_available == "all":
+            fields[key] = ALL_TOOLSETS
+        elif key in value:
             if not isinstance(value[key], list):
                 raise ConfigError(f"[{section}].{key} must be a list of strings")
             fields[key] = _str_list(section, key, value[key])

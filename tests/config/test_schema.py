@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 
+import pytest
+
 from kokua.cli import build_arg_parser, resolve_config
 from kokua.config import AssistantConfig
-from kokua.config.schema import AgentConfig, ResolvedReviewer, ReviewerConfig
+from kokua.config.schema import ALL_TOOLSETS, AgentConfig, ResolvedReviewer, ReviewerConfig
 
 
 def test_sessions_path_under_data_dir(tmp_path):
@@ -161,3 +163,12 @@ def test_resident_order_never_reorders_tools():
     )
     assert config.resident_for("a") == ["memory", "time"]
     assert config.deferred_for("a") == ["web"]
+
+
+def test_the_sentinel_refuses_iteration():
+    with pytest.raises(TypeError, match="available_for"):
+        list(ALL_TOOLSETS)
+
+
+def test_the_sentinel_reprs_as_all():
+    assert repr(ALL_TOOLSETS) == "all"
