@@ -426,8 +426,8 @@ predict. Taking the pair whole costs one foot-gun: writing `confirm = ["fs_write
 drops the default's other entries, because a declared policy *replaces* the default and never merges. It
 has to replace, because [principle 6](design-principles.md#6-security-is-explicit-and-user-controlled)
 allows loosening a control as well as tightening it. Rather than change the rule, Kokua shows you the
-result: `kokua agents` prints each agent's resolved lists and where they came from, and a line per
-agent goes to stderr at startup.
+result: `kokua agents` prints each agent's resolved lists and where they came from, and startup logs a
+line per agent to `kokua.log` (printing it too when started with `--debug`).
 
 ### Each agent's gate is bound to that agent
 

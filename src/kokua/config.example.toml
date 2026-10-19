@@ -358,7 +358,8 @@ port = 8000
 
 [logging]
 # Level for the rotating log at <data_dir>/logs/kokua.log (5 files x 2 MB), which records the turn
-# lifecycle. One of DEBUG, INFO, WARNING, ERROR. For live state use the `/diag` chat command.
+# lifecycle. One of DEBUG, INFO, WARNING, ERROR; DEBUG (or --debug) also prints each agent's access at
+# startup. For live state use the `/diag` chat command.
 level = "INFO"
 
 [email]

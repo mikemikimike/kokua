@@ -870,7 +870,8 @@ inherits [`[assistant.tools]`](#assistanttools)'s pair. A declared policy *repla
 merges with it, because loosening a control is allowed as well as tightening one. The foot-gun is that
 writing `confirm = ["fs_write"]` to add a gate also drops the default's other entries and empties
 `review`; `kokua agents` prints each agent's resolved lists and which table they came from, and startup
-prints one summary line per agent, so the result is visible rather than inferred.
+logs one summary line per agent (printed too when the run logs at DEBUG), so the result is visible rather
+than inferred.
 
 Entries are checked against this agent's own `available` list, so an agent cannot gate (or claim to
 gate) a capability it does not hold. A composed worker has no table and always uses the
@@ -1101,7 +1102,9 @@ tools. Front it with something that authenticates if you need remote access.
 ### `level`
 
 Level for the rotating diagnostic log at `<data_dir>/logs/kokua.log` (5 files, 2 MB each). One of
-`DEBUG`, `INFO`, `WARNING`, `ERROR`. Default `"INFO"`.
+`DEBUG`, `INFO`, `WARNING`, `ERROR`. Default `"INFO"`. `--debug` sets `DEBUG` for one run. At `DEBUG`,
+startup also prints each agent's access summary (the lines `kokua agents` expands on) to stderr; at any
+level it is written to the log.
 
 The log records the turn lifecycle (submitted, lock acquired, done, error), so a hung turn is visible
 after the fact. It is also where a dropped generation parameter reports itself. For live state, the
@@ -1369,6 +1372,7 @@ Flags override the file for one run and are never written back.
 | `--confirm-tools NAMES` | `[assistant.tools].confirm` only, comma-separated `toolset.tool` entries; must not name anything in `review`; an empty string clears `confirm` but leaves `review` prompting |
 | `--mcp URL` | adds a server for this run, unauthenticated or OAuth |
 | `--host`, `--port` | `[web].host`, `[web].port` |
+| `--debug` | `[logging].level`, set to `DEBUG`; also prints the per-agent startup summary to stderr |
 
 Introspection, which exits without running the assistant:
 

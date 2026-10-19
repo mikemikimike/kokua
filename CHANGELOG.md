@@ -747,10 +747,12 @@ Requires Python 3.11+ and [AIMU](https://github.com/saxman/aimu) 0.37.0 or newer
   default tier's own label, so an agent named either way would collide with them. Refused at startup.
 - **`kokua agents`, and a startup summary.** `kokua agents` prints each declared agent's availability,
   residency, and `confirm` / `review` lists, marking which came from `[assistant.tools]`, reading the
-  config alone and building nothing, so it works with the model server down. Startup writes one line per
-  agent to stderr (for example `assistant: 12 available, 7 resident, 3 confirm, 3 review (from [assistant.tools])`), because a declared
+  config alone and building nothing, so it works with the model server down. Startup logs one line per
+  agent to `kokua.log` (for example `assistant: 12 available, 7 resident, 3 confirm, 3 review (from [assistant.tools])`), because a declared
   policy replacing the default silently dropping its other entries is the one foot-gun the replace-whole
-  rule leaves, and this is where it shows.
+  rule leaves, and this is where it shows. The same lines go to stderr only when the run logs at DEBUG
+  (`--debug`, or `[logging].level = "DEBUG"`), since `kokua agents` shows them in full on demand.
+- **`--debug`** logs at DEBUG for one run, overriding `[logging].level`, and prints the startup summary.
 - **The approval prompt and the auto-approval card name the agent asking** ("Allow coder to run ...",
   "<model> auto-approved coder's ..."), on the terminal and on the web card (the `approval` and
   `auto_approval` frames carry `"agent"`), since agents now hold different policies and a bare tool name no longer says whose call it is.

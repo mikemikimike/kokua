@@ -700,21 +700,55 @@ def test_agents_command_builds_no_toolset(monkeypatch, tmp_path):
     _run_main(monkeypatch, ["agents"])
 
 
-def test_startup_prints_the_summary_to_stderr_before_the_front_end_runs(monkeypatch, tmp_path, capsys):
+def _start(monkeypatch, capsys, argv: list[str]) -> tuple[str, list]:
+    """Run startup against a stub front end; return stderr as it stood when the front end ran, and the
+    config it was handed."""
     from kokua import plugins
     from kokua.plugins import FrontEnd
 
-    _write_example_config(monkeypatch, tmp_path)
     stderr_at_run: list[str] = []
+    configs: list = []
 
     async def run(config, args):
         stderr_at_run.append(capsys.readouterr().err)
+        configs.append(config)
 
     # configure_logging enables faulthandler, which needs a real stderr fileno that capture does not give.
     monkeypatch.setattr("kokua.cli.configure_logging", lambda config: None)
     monkeypatch.setattr(plugins, "get_frontend", lambda name: FrontEnd(name="stub", description="", run=run))
+    _run_main(monkeypatch, argv)
+    return stderr_at_run[0], configs
 
-    _run_main(monkeypatch, [])
 
-    assert "assistant: " in stderr_at_run[0]
-    assert "resident" in stderr_at_run[0]
+def test_startup_keeps_the_summary_off_stderr_by_default(monkeypatch, tmp_path, capsys):
+    _write_example_config(monkeypatch, tmp_path)
+
+    stderr, _ = _start(monkeypatch, capsys, [])
+
+    assert "assistant: " not in stderr
+
+
+def test_debug_flag_prints_the_summary_and_logs_at_debug(monkeypatch, tmp_path, capsys):
+    _write_example_config(monkeypatch, tmp_path)
+
+    stderr, configs = _start(monkeypatch, capsys, ["--debug"])
+
+    assert "assistant: " in stderr and "resident" in stderr
+    assert configs[0].log_level == "DEBUG"
+
+
+def test_logging_level_debug_prints_the_summary(monkeypatch, tmp_path, capsys):
+    _write_example_config(monkeypatch, tmp_path, lambda text: text.replace('level = "INFO"', 'level = "DEBUG"'))
+
+    stderr, _ = _start(monkeypatch, capsys, [])
+
+    assert "assistant: " in stderr
+
+
+def test_the_summary_is_logged_whatever_the_level(monkeypatch, tmp_path, capsys, caplog):
+    _write_example_config(monkeypatch, tmp_path)
+
+    with caplog.at_level("INFO", logger="kokua.cli"):
+        _start(monkeypatch, capsys, [])
+
+    assert any(record.getMessage().startswith("assistant: ") for record in caplog.records)

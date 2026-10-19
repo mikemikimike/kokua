@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import sys
 from pathlib import Path
 from typing import Optional
@@ -40,6 +41,8 @@ from kokua.config.store import disambiguate_name, name_from_url
 # kokua.toolsets, and registry.py itself imports no AIMU surface the preflight checks.
 from kokua.registry.registry import ToolsetError, ToolsetRegistry
 from .logging_setup import configure_logging
+
+logger = logging.getLogger(__name__)
 
 
 def build_arg_parser(prog: str = "kokua") -> argparse.ArgumentParser:
@@ -99,6 +102,12 @@ def build_arg_parser(prog: str = "kokua") -> argparse.ArgumentParser:
         "prompts. Must not name a tool already in review, or startup fails. Each entry names its "
         "toolset: 'compute' (or 'compute.*') for every tool that capability provides, "
         "'compute.execute_python' for one, with 'core' reserved for the tools no toolset provides.",
+    )
+
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Log at DEBUG for this run (overrides [logging].level) and print each agent's access summary at startup.",
     )
 
     # Web front-end binding (ignored by other front ends).
@@ -195,6 +204,7 @@ def _cli_overrides(args: argparse.Namespace) -> dict:
     take("system_message_override", args.system)
     take("mcp_servers", args.mcp, _mcp_servers_from_urls)
     take("default_confirm", args.confirm_tools, lambda v: [name.strip() for name in v.split(",") if name.strip()])
+    take("log_level", "DEBUG" if args.debug else None)
     take("frontend", args.frontend)
     take("host", args.host)
     take("port", args.port)
@@ -432,9 +442,13 @@ def access_summary_lines(config: AssistantConfig, registry: ToolsetRegistry) -> 
 
 
 def print_access_summary(config: AssistantConfig) -> None:
-    """Write the summary to stderr, so a front end's stdout (and a piped ``kokua``) stays clean.
+    """Log the summary, and also write it to stderr when the run logs at DEBUG.
 
-    Prints nothing when the registry will not assemble (two toolsets claiming one name): startup reports
+    Always logged, so the record of what each agent could reach at startup survives in kokua.log. On the
+    console it is debug output: `kokua agents` shows the same thing, in full, whenever it is wanted. Stderr
+    rather than stdout, so a front end's stdout (and a piped ``kokua``) stays clean.
+
+    Does nothing when the registry will not assemble (two toolsets claiming one name): startup reports
     that error itself a moment later, where the front end catches it.
     """
     from kokua.core.agents import build_registry
@@ -443,8 +457,11 @@ def print_access_summary(config: AssistantConfig) -> None:
         registry = build_registry(config)
     except ToolsetError:
         return
+    on_console = config.log_level.upper() == "DEBUG"
     for line in access_summary_lines(config, registry):
-        print(line, file=sys.stderr)
+        logger.info(line)
+        if on_console:
+            print(line, file=sys.stderr)
 
 
 def _print_agents(config: AssistantConfig) -> None:
