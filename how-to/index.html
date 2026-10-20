@@ -1104,6 +1104,8 @@
       
         
       
+        
+      
     
     
     
@@ -1173,6 +1175,34 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../explanation/tool-access/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool access
   
 
     
@@ -1392,9 +1422,10 @@ Kokua's core.</p>
 <p>All three share a single rule, which is the thing to understand before reading any of them. <strong>A
 capability is declared, never defaulted.</strong> Every capability an agent can hold is a named <em>toolset</em> in one
 namespace, and a built-in tool group, an installed plugin toolset, and a connected MCP server all reach an
-agent by exactly one route: an <code>[agents.&lt;name&gt;]</code> table in <code>config.toml</code> whose <code>tools</code> list names it.
-Installing or connecting something is never the last step, and no code path adds a tool an agent did not
-name. The one exception is reached by declaration too: an agent whose table names <code>capabilities</code> can
+agent by exactly one route: an <code>[agents.&lt;name&gt;.tools]</code> table in <code>config.toml</code> whose <code>available</code> list names it
+(or whose <code>available = "all"</code> declares every installed toolset at once).
+Installing or connecting something is never the last step: an agent with a list needs its name written,
+and every agent needs a restart. No code path adds a tool an agent's table did not declare. The one exception is reached by declaration too: an agent whose table names <code>capabilities</code> can
 compose a sub-agent out of anything installed, for the length of one task. Two names are out of
 reach even there: <code>skills</code>, which only the entry agent may hold, and <code>capabilities</code> itself, which
 would hand a worker a fresh composition budget.</p>

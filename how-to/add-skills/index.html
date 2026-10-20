@@ -1278,6 +1278,8 @@
       
         
       
+        
+      
     
     
     
@@ -1347,6 +1349,34 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/tool-access/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool access
   
 
     
@@ -1660,8 +1690,8 @@ shorter than it looks: there is one directory, and three ways to put something i
 <h2 id="two-things-named-skills-and-one-named-per-skill">Two things named <code>skills</code>, and one named per skill<a class="headerlink" href="#two-things-named-skills-and-one-named-per-skill" title="Permanent link">&para;</a></h2>
 <p><strong><code>skills</code> is the authoring toolset.</strong> It carries <code>author_skill</code> and <code>add_skill_script</code>, and only the
 <strong>entry agent</strong> (the one <code>[assistant].agent</code> names) can hold it:</p>
-<div class="language-toml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[agents.assistant]</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">tools</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"skills"</span><span class="p">,</span><span class="w"> </span><span class="s2">"memory"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">]</span><span class="w">      </span><span class="c1"># `kokua config init` writes this and more</span>
+<div class="language-toml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[agents.assistant.tools]</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">available</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"skills"</span><span class="p">,</span><span class="w"> </span><span class="s2">"memory"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">]</span><span class="w">      </span><span class="c1"># `kokua config init` writes this and more</span>
 </span></code></pre></div>
 <p>Declaring <code>skills</code> on any other agent is a startup error, because a spawned worker is a plain AIMU
 <code>Agent</code> rather than a <code>SkillAgent</code>, so there is nothing for skill injection to hook. The registry marks
@@ -1674,14 +1704,16 @@ from AIMU rather than from this toolset.</p>
 agent:</p>
 <div class="language-toml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">[agents.reporter]</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">description</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"Builds and mails reports."</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">tools</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"markdown-to-pdf"</span><span class="p">,</span><span class="w"> </span><span class="s2">"email-report"</span><span class="p">,</span><span class="w"> </span><span class="s2">"fs"</span><span class="p">,</span><span class="w"> </span><span class="s2">"compute"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">]</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="k">[agents.reporter.tools]</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">available</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"markdown-to-pdf"</span><span class="p">,</span><span class="w"> </span><span class="s2">"email-report"</span><span class="p">,</span><span class="w"> </span><span class="s2">"fs"</span><span class="p">,</span><span class="w"> </span><span class="s2">"compute"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">]</span>
 </span></code></pre></div>
 <p>A skill name sits beside <code>web</code> and an MCP server's name and does not say which kind it is. <code>kokua
 --list-toolsets</code> shows every skill on disk under a <code>skill:</code> group, and a name that is not there fails at
 startup listing the ones that are.</p>
 <p><strong>Give a script-carrying skill an agent that can run scripts.</strong> A worker declaring a skill gets that
 skill's <code>{skill}__{stem}</code> script tools and <code>activate_skill</code> through the registry, and the skill's own
-instructions usually tell it to run something -- so <code>fs</code> and <code>compute</code> belong in the same <code>tools</code> list.</p>
+instructions usually tell it to run something -- so <code>fs</code> and <code>compute</code> belong in the same <code>available</code> list.</p>
 <p><strong>One rule worth knowing:</strong> an agent holding the <code>skills</code> authoring toolset sees <em>every</em> skill on disk,
 not just the ones it declares. Scoping an author's catalogue would hide the skill it just wrote, and
 <code>add_skill_script</code> promises the script is callable in the same turn. A non-authoring agent's catalogue is
@@ -1734,7 +1766,7 @@ the command says where to get one.</p>
 </span></code></pre></div>
 <p>One <code>SkillManager</code> is shared by every conversation, so a skill authored in one conversation is usable in
 all of them. The flip side is that the manager caches its catalogue and only re-scans the directory when
-something refreshes it, which <code>author_skill</code> and <code>add_skill_script</code> do and a hand-written directory cannot:
+something refreshes it, which <code>author_skill</code>, <code>update_skill</code>, and <code>add_skill_script</code> do and a hand-written directory cannot:
 <strong>restart Kokua after adding a skill by hand.</strong> Starting a new conversation is not enough, since the new
 agent reads the same cached catalogue.</p>
 <h3 id="ask-the-assistant-to-write-it">Ask the assistant to write it<a class="headerlink" href="#ask-the-assistant-to-write-it" title="Permanent link">&para;</a></h3>
@@ -1745,9 +1777,17 @@ shortest path is a sentence:</p>
 <p>"That worked. Save it as a skill called <code>weekly-digest</code> so you can do it the same way next Friday."</p>
 </blockquote>
 <p><code>author_skill(name, description, body)</code> writes the <code>SKILL.md</code> and refreshes the manager, so the skill is
-usable in the same conversation. It <strong>will not overwrite</strong> an existing skill; to revise one, either edit
-the file by hand or delete the directory first. It is not gated for approval, since it only writes
-markdown.</p>
+usable in the same conversation. It is not gated for approval, since it only writes markdown. Two kinds
+of name are refused before anything is written:</p>
+<ul>
+<li><strong>An existing skill.</strong> It will not overwrite one; <code>update_skill(skill_name, description, body)</code> revises
+  a skill's prose in place, passing only the part that changes.</li>
+<li><strong>A name another toolset already holds.</strong> Skills share the one namespace every toolset does, so
+  <code>author_skill</code> refuses a toolset's name (<code>web</code>, <code>memory</code>), an MCP server's <code>name</code> in <code>config.toml</code>'s
+  <code>[[mcp.server]]</code> entries (including one <code>add_mcp_server</code> wrote this session, which nothing has
+  registered yet), and the two reserved names, <code>core</code> and <code>all</code>. Without the check, a skill named <code>web</code>
+  would be written to disk and then stop the next start, as a collision the registry refuses.</li>
+</ul>
 <h3 id="attach-a-script">Attach a script<a class="headerlink" href="#attach-a-script" title="Permanent link">&para;</a></h3>
 <p><code>add_skill_script(skill_name, filename, content)</code> writes <code>scripts/&lt;filename&gt;</code> (a <code>.py</code> or <code>.sh</code> file)
 into a skill that already exists, then reloads the agent's skills so the new tool is callable in the same
@@ -1763,7 +1803,7 @@ turn.</p>
 <li><strong>To fix a broken script, reuse the exact same filename.</strong> That overwrites in place and the tool keeps
   its name. A different filename creates a second script and leaves the broken one callable.</li>
 <li>The skill must exist first. Calling it for an unknown skill returns the list of skills that do exist.</li>
-<li>It is <strong>gated</strong> by default (<code>[security] confirm_tools</code>), so each call waits for your <code>y/N</code> in the
+<li>It is <strong>gated</strong> by default (<code>[assistant.tools].confirm</code>), so each call waits for your <code>y/N</code> in the
   terminal or Allow/Deny in the web UI.</li>
 </ul>
 <p>Scripts run as real subprocesses with your user's privileges and no sandbox. Their stdout becomes the
@@ -1772,8 +1812,40 @@ loading the skill's instructions first.</p>
 <h2 id="who-gets-skills-and-who-does-not">Who gets skills, and who does not<a class="headerlink" href="#who-gets-skills-and-who-does-not" title="Permanent link">&para;</a></h2>
 <p>The entry agent is an AIMU <code>SkillAgent</code>; every agent it spawns is a plain <code>Agent</code>, which is why the
 <code>skills</code> <em>authoring</em> toolset cannot be declared on one. A worker can still hold an individual skill: its
-script tools and <code>activate_skill</code> arrive through the registry rather than from <code>SkillAgent</code>. This
-has a practical consequence for how you write a skill:</p>
+script tools and <code>activate_skill</code> arrive through the registry rather than from <code>SkillAgent</code>.</p>
+<p>A skill written mid-session reaches each kind of agent at a different moment, because each reads skills
+from a different place:</p>
+<table>
+<thead>
+<tr>
+<th>Agent</th>
+<th>When a skill written with <code>author_skill</code>, <code>update_skill</code>, or <code>add_skill_script</code> reaches it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The entry agent</td>
+<td>Immediately, through its <code>SkillAgent</code>; a new description reaches its catalogue only in a fresh conversation, since its prompt is not rewritten mid-run</td>
+</tr>
+<tr>
+<td>A worker declaring <code>available = "all"</code></td>
+<td>Its next spawn</td>
+</tr>
+<tr>
+<td>A worker declaring a list</td>
+<td>Never as a new skill, since its list names its skills; a skill it already names reaches its next spawn as now written, new scripts included</td>
+</tr>
+<tr>
+<td>A composed worker</td>
+<td>Its next <code>compose_subagent</code></td>
+</tr>
+</tbody>
+</table>
+<p>After each write, Kokua rescans the skills folder into the registry and rebuilds every live agent's
+<code>spawn_subagent</code>, so the next worker spawned is built from the skills now on disk. Why skills arrive live
+while a new MCP server waits for a restart is in <a href="../../explanation/tool-access/#what-arrives-mid-session">Tool
+access</a>.</p>
+<p>The entry agent being the one <code>SkillAgent</code> has a practical consequence for how you write a skill:</p>
 <p>Write the procedure from the entry agent's point of view, as a plan it carries out with the tools it
 declares plus delegation. In the shipped config that agent holds only cross-cutting toolsets, so a skill
 body saying "search the web for X, then write the file" describes work it cannot do. "Delegate the lookup
@@ -1792,6 +1864,8 @@ Two things follow:</p>
   approves every future call.</li>
 <li>Proactive and backgrounded turns auto-deny every gated tool, so the assistant cannot author and run a
   new script while you are not watching. It can still call scripts that already exist.</li>
+<li>A gate naming a skill bare (<code>confirm = ["weekly-digest"]</code>) covers every script it has, including one
+  added after startup: the gate grows before any agent can call the new script.</li>
 </ul>
 <p>Review <code>~/.kokua/data/skills/*/scripts/</code> the way you would review anything else on your <code>PATH</code>.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>

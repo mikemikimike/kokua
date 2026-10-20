@@ -1256,6 +1256,8 @@
       
         
       
+        
+      
     
     
     
@@ -1325,6 +1327,34 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/tool-access/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool access
   
 
     
@@ -1613,7 +1643,7 @@ startup, or the assistant's own <code>add_mcp_server</code> tool, called mid-con
 place, and it is the step people miss:</p>
 <blockquote>
 <p>A configured server is a <strong>toolset</strong>, named by its <code>name</code>. It reaches an agent only when that agent's
-<code>tools</code> list in <code>[agents.&lt;name&gt;]</code> names it.</p>
+<code>available</code> list in <code>[agents.&lt;name&gt;.tools]</code> names it, or the agent declares <code>available = "all"</code>.</p>
 </blockquote>
 <p>Connect a server without naming it in an agent and you get a working connection nothing can use.</p>
 <h2 id="add-one-in-configtoml">Add one in <code>config.toml</code><a class="headerlink" href="#add-one-in-configtoml" title="Permanent link">&para;</a></h2>
@@ -1651,6 +1681,11 @@ place, and it is the step people miss:</p>
 <td>no</td>
 <td>Name of an <strong>environment variable</strong> holding a bearer token. Never the token itself.</td>
 </tr>
+<tr>
+<td><code>description</code></td>
+<td>no</td>
+<td>One line saying what the server's tools do: what an agent that <a href="../../reference/configuration/#resident">loads the server on demand</a> decides by. Unset, it says only where the server is.</td>
+</tr>
 </tbody>
 </table>
 <p><code>name</code> shares one namespace with every other toolset, so it must not collide with a built-in group
@@ -1660,13 +1695,18 @@ plugin toolset, or another server. A collision is a startup error naming both cl
 <p>Then give an agent the server, and restart:</p>
 <div class="language-toml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">[agents.stock-trader]</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">description</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"Looks up quotes and places trades."</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">tools</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"stocks"</span><span class="p">,</span><span class="w"> </span><span class="s2">"compute"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">]</span><span class="w">     </span><span class="c1"># "stocks" is the [[mcp.server]].name above</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="k">[agents.stock-trader.tools]</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">available</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"stocks"</span><span class="p">,</span><span class="w"> </span><span class="s2">"compute"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">]</span><span class="w">     </span><span class="c1"># "stocks" is the [[mcp.server]].name above</span>
 </span></code></pre></div>
-<p>A name in <code>tools</code> that matches no toolset is a <strong>startup error</strong> listing the available names, so a typo
+<p>A name in <code>available</code> that matches no toolset is a <strong>startup error</strong> listing the available names, so a typo
 here cannot quietly produce an agent with fewer tools than you wrote. Unknown keys and wrong types in
 <code>[[mcp.server]]</code> are hard startup errors that name the offending server, as they always were.</p>
 <p>The server's tools are resolved from the live connections when the agent is built, so a server that is
-configured but not currently connected simply contributes nothing rather than failing the build.</p>
+configured but not currently connected simply contributes nothing rather than failing the build. The
+exception is a server the agent loads on demand (left out of its <code>resident</code> list): that one refuses to
+load while it is disconnected, and stays loadable, because a load is recorded as done and an empty one
+would stay empty after the server came back.</p>
 <h2 id="authentication">Authentication<a class="headerlink" href="#authentication" title="Permanent link">&para;</a></h2>
 <p>Three modes, chosen automatically:</p>
 <ul>
@@ -1718,21 +1758,22 @@ session can present a redirect URI the provider has on file under the old port a
 <p>"Connect to https://broker.example.com/mcp and use it to check my positions."</p>
 </blockquote>
 <p><code>add_mcp_server(url, bearer_token=None)</code> connects, reports the tool names it found, and rebuilds every
-live agent's <code>spawn_subagent</code>. It is gated by <code>[security] confirm_tools</code>, so it waits for your approval
+live agent's <code>spawn_subagent</code>. It is gated by <code>[assistant.tools].confirm</code>, so it waits for your approval
 first.</p>
 <p><strong>What that connection can actually reach depends on whether the server was already in <code>config.toml</code> at
 startup, and the difference is the whole story of this section:</strong></p>
 <ul>
 <li><strong>A server already declared in <code>[[mcp.server]]</code></strong> (even one that was unreachable at startup, or that
   you disconnected earlier in the session) already has a name in the toolset namespace, so an agent's
-  <code>tools</code> may already reference it. Connecting it reaches the next <strong>worker</strong> spawned by such an agent, in
+  <code>available</code> may already reference it (and an <code>"all"</code> agent already holds it). Connecting it reaches the next <strong>worker</strong> spawned by such an agent, in
   the same turn. The agent you are talking to is the exception even here: it resolved its own tools when
   it was built, so if <em>it</em> declares the server, it picks them up only the next time it is built (a new
   conversation, or a restart).</li>
 <li><strong>A server new to this session reaches nothing at all until you restart.</strong> The toolset namespace is
-  built once, at startup, from the <code>[[mcp.server]]</code> tables as they were then. So a newly connected
-  server's name is not in that namespace, and nothing naming it resolves to anything before the next
-  start. You can write the <code>[agents.*]</code> table now, and so can the assistant if you have unlocked
+  built once, at startup, from the <code>[[mcp.server]]</code> tables as they were then (skills are the one source
+  re-read mid-session; servers never are). So a newly connected server's name is not in that namespace,
+  and nothing naming it resolves to anything before the next start, not even an agent declaring
+  <code>available = "all"</code>, which picks the server up at that restart without being told its name. You can write the <code>[agents.*]</code> table now, and so can the assistant if you have unlocked
   <code>agents.*</code> (<code>update_config</code> rereads the file, so it sees the entry <code>add_mcp_server</code> just wrote and
   accepts the name), but editing that file while Kokua runs changes nothing until it restarts.
   <code>add_mcp_server</code> has recorded the server for you; the remaining two steps are yours.</li>
@@ -1767,19 +1808,23 @@ first half and not the second.</p>
 </tr>
 </tbody>
 </table>
-<p>So a bearer-token server added at runtime is session-only by design. To keep it, add a <code>[[mcp.server]]</code>
-table with <code>token_env</code> by hand.</p>
+<p>So a bearer-token server added at runtime is session-only by design, and since it has no name on file,
+nothing can name it even this session. To keep it, add a <code>[[mcp.server]]</code> table with <code>url</code>, <code>name</code>, and
+<code>token_env</code> by hand, name the server in an agent's <code>available</code> list (or use an <code>"all"</code> agent), and
+restart.</p>
 <p>Two consequences of the runtime path being real:</p>
 <ul>
-<li><strong>Finishing a runtime add takes an edit and a restart.</strong> Since every server needs a name, the write
-  derives one from the server's host (<code>broker.example.com</code> becomes <code>broker-example-com</code>, with a numeric
-  suffix if that name is already taken), so the config it leaves behind always loads. Then:</li>
-<li>add that name (or rename it to something friendlier) to an agent's <code>tools</code> by hand. <code>[agents.*]</code> is
-     locked by default: <code>update_config</code> refuses the whole section, precisely so the assistant cannot
-     grant itself the capability it just connected;</li>
+<li><strong>Finishing a runtime add takes a restart, and for an agent with a list, an edit too.</strong> Since every
+  server needs a name, the write derives one from the server's host (<code>broker.example.com</code> becomes
+  <code>broker-example-com</code>, with a numeric suffix if that name is already taken), so the config it leaves
+  behind always loads. Then:</li>
+<li>add that name (or rename it to something friendlier) to an agent's <code>available</code> list by hand, unless
+     the agent you want declares <code>available = "all"</code>, which holds every configured server already.
+     <code>[agents.*]</code> is locked by default: <code>update_config</code> refuses the whole section, precisely so the
+     assistant cannot grant itself the capability it just connected;</li>
 <li><strong>restart Kokua</strong>, because the namespace and the agent tables are both read only at startup.</li>
 </ul>
-<p>Until you do, the server connects, reconnects on each start, and startup warns that nothing names it.
+<p>Until you do, the server connects and reconnects on each start, and no agent can call its tools.
 - <code>remove_mcp_server</code> disconnects, drops the entry, and fans the rebuild out to every live agent. A worker
   spawned after it will not have the server's tools.</p>
 <p>If you want a server the assistant can connect <em>and use</em> within one session, declare it in

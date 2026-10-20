@@ -1206,6 +1206,8 @@
       
         
       
+        
+      
     
     
     
@@ -1275,6 +1277,34 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/tool-access/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool access
   
 
     
@@ -1635,7 +1665,7 @@ between them sounds like.</p>
 <p>The rule is written down, in exactly these words:
 <a href="../../explanation/design-principles/#corollary-a-capability-is-declared-never-defaulted">a capability is declared, never
 defaulted</a>. An
-agent's capability is what its <code>[agents.&lt;name&gt;]</code> table declares: the <code>tools</code> list, plus the
+agent's capability is what its <code>[agents.&lt;name&gt;]</code> table declares: the <code>available</code> list, plus the
 <code>spawn_subagent</code> that a non-empty <code>delegates_to</code> earns. No code path adds a capability no key in that
 table asked for, and no flag can disagree with a declaration.</p>
 <p>The table is one block in
@@ -1645,8 +1675,10 @@ the transcript above is that block's behavior:</p>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="p">...</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">description</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"The assistant the user talks to."</span>
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">system_message</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"You are a personal assistant running on the user's own machine. Be concise and helpful."</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">tools</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"memory"</span><span class="p">,</span><span class="w"> </span><span class="s2">"documents"</span><span class="p">,</span><span class="w"> </span><span class="s2">"skills"</span><span class="p">,</span><span class="w"> </span><span class="s2">"config"</span><span class="p">,</span><span class="w"> </span><span class="s2">"mcp"</span><span class="p">,</span><span class="w"> </span><span class="s2">"scheduling"</span><span class="p">,</span><span class="w"> </span><span class="s2">"conversations"</span><span class="p">,</span><span class="w"> </span><span class="s2">"planning"</span><span class="p">,</span><span class="w"> </span><span class="s2">"capabilities"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">,</span><span class="w"> </span><span class="s2">"benchmark"</span><span class="p">]</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">delegates_to</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"researcher"</span><span class="p">,</span><span class="w"> </span><span class="s2">"coder"</span><span class="p">,</span><span class="w"> </span><span class="s2">"introspector"</span><span class="p">]</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">delegates_to</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"researcher"</span><span class="p">,</span><span class="w"> </span><span class="s2">"coder"</span><span class="p">,</span><span class="w"> </span><span class="s2">"introspector"</span><span class="p">]</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="k">[agents.assistant.tools]</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="n">available</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"memory"</span><span class="p">,</span><span class="w"> </span><span class="s2">"documents"</span><span class="p">,</span><span class="w"> </span><span class="s2">"skills"</span><span class="p">,</span><span class="w"> </span><span class="s2">"config"</span><span class="p">,</span><span class="w"> </span><span class="s2">"mcp"</span><span class="p">,</span><span class="w"> </span><span class="s2">"scheduling"</span><span class="p">,</span><span class="w"> </span><span class="s2">"conversations"</span><span class="p">,</span><span class="w"> </span><span class="s2">"planning"</span><span class="p">,</span><span class="w"> </span><span class="s2">"capabilities"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">,</span><span class="w"> </span><span class="s2">"benchmark"</span><span class="p">]</span>
 </span></code></pre></div>
 <p>Eleven names, no <code>fs</code>, no <code>compute</code>, no <code>web</code>. Every name is resolved against a registry built at
 startup, and an unknown one stops the process rather than shrinking the list:
@@ -1680,22 +1712,22 @@ which is the guard worth stealing:</p>
 and <code>TOOLSET.name</code> all agree, since <code>register</code> keys on the last of those while the key feeds only a
 provenance label. A mismatch would otherwise register a real toolset under a name nobody wrote.</p>
 <p><strong>Three documented exceptions, named rather than glossed.</strong></p>
-<p><em><code>delegates_to</code> grants a tool the <code>tools</code> list does not name.</em> A non-empty <code>delegates_to</code> earns the
+<p><em><code>delegates_to</code> grants a tool the <code>available</code> list does not name.</em> A non-empty <code>delegates_to</code> earns the
 agent <code>spawn_subagent(agent_type, task)</code> over exactly the agents it names, built by
 <code>make_delegation_tool</code> in
 <a href="https://github.com/saxman/kokua/blob/main/src/kokua/core/agents.py"><code>core/agents.py</code></a>. This is the
 mildest of the three, because it is still a declaration and only a different key: the assistant in the
 block above holds <code>spawn_subagent</code> because of its last line, not because of the line before it. It is
-listed here anyway, since a reader counting tools from the <code>tools</code> list alone will come up one short,
-and <a href="../delegation/">Delegation</a> shows the tool being used by an agent whose <code>tools</code> never mentions it.</p>
+listed here anyway, since a reader counting tools from the <code>available</code> list alone will come up one short,
+and <a href="../delegation/">Delegation</a> shows the tool being used by an agent whose <code>available</code> never mentions it.</p>
 <p><em>A composed sub-agent draws from the whole registry.</em> <code>compose_subagent</code>
 (<a href="https://github.com/saxman/kokua/blob/main/src/kokua/toolsets/capabilities.py"><code>toolsets/capabilities.py</code></a>)
 builds a worker from names the model picked out of the catalogue, with no table involved. It is an
-exception at one level and not at the next: only an agent whose own <code>tools</code> names <code>capabilities</code> holds
+exception at one level and not at the next: only an agent whose own <code>available</code> names <code>capabilities</code> holds
 that tool, so the exception is entered by declaration. The worker is built per call and discarded with
 the call, it may not be handed <code>capabilities</code> itself, how far composition nests is
-<code>[capabilities].max_depth</code> rather than the model's decision, and its calls still route through
-<code>[security].confirm_tools</code>. What the rule protects is a <em>persistent</em> agent's reach, and a worker
+<code>[capabilities].max_depth</code> rather than the model's decision, and its calls are still gated, as
+<code>composed:&lt;label&gt;</code> under the default <code>[assistant.tools]</code> pair. What the rule protects is a <em>persistent</em> agent's reach, and a worker
 composed for one task is not an agent the config describes. <a href="../delegation/">Delegation</a> is that
 mechanism in full.</p>
 <p><em>The entry agent gets its skills regardless.</em> The agent you talk to is an AIMU <code>SkillAgent</code>, so AIMU
@@ -1706,27 +1738,38 @@ toolset, pinned as such by that same test file.</p>
 <h2 id="what-it-costs">What it costs<a class="headerlink" href="#what-it-costs" title="Permanent link">&para;</a></h2>
 <p><strong>The forgotten declaration.</strong> You <code>uv add</code> a toolset, <code>kokua --list-toolsets</code> shows it, you ask
 the assistant to use it, and it says it cannot. Nothing errored. This silence is deliberate: Kokua used
-to warn at startup about a provisioned toolset no agent named, and the warning was removed, because
+to warn at startup about a provisioned toolset no agent named, and the warning was removed (what
+remains is a log line for a toolset whose own config section you wrote while no agent declares it),
+because
 telling a toolset somebody installed on purpose from one that merely ships would take a provenance rule
 over the whole namespace, and a line printed on every start is a line people learn to skip. So the
 diagnosis is a command rather than a warning. <code>kokua --list-toolsets</code> prints every name an
-<code>[agents.&lt;name&gt;].tools</code> list may use, grouped by provider, after reading your config, so it includes
-your MCP servers and your skills. What it does not tell you is which agent holds what: for that you
-read the tables.</p>
+<code>[agents.&lt;name&gt;.tools].available</code> list may use, grouped by provider, after reading your config, so it includes
+your MCP servers and your skills. What it does not tell you is which agent holds what: <code>kokua agents</code> does, printing each
+agent's availability, residency, and approval lists as the config declares them.</p>
 <p><strong>Declaration is per agent, and workers are the easy thing to get wrong.</strong> The shipped <code>researcher</code>
-declares <code>["web", "misc", "time"]</code>. It cannot read a file, and delegating a file-reading task to it
+declares <code>["web", "misc", "time", "messaging"]</code>. It cannot read a file, and delegating a file-reading task to it
 returns an apology rather than an error. Widening the entry agent widens nothing for its workers.</p>
-<p><strong>What is loud, so you know what to expect.</strong> An unknown name in a <code>tools</code> list fails startup. A cycle
-in <code>delegates_to</code> fails startup. A <code>[security].confirm_tools</code> entry that would gate nothing fails
+<p><strong>"Everything" is a declaration too.</strong> An agent can write <code>available = "all"</code> instead of a list, and
+hold every installed toolset. That looks like the default this page argues against, and it is not: a
+person wrote it, in that agent's table, and every other agent still holds only its list. What it buys is
+an agent that grows when you install something, on purpose. It must also say what is <code>resident</code>, so
+holding everything does not mean paying for everything on every round. <a href="../../explanation/tool-access/#available-all-every-installed-toolset-still-declared">Tool
+access</a> covers what
+it expands to, in what order, and what reaches it mid-session.</p>
+<p><strong>What is loud, so you know what to expect.</strong> An unknown name in an <code>available</code> list fails startup. A cycle
+in <code>delegates_to</code> fails startup. A <code>confirm</code> or <code>review</code> entry that would gate nothing fails
 startup, with the near misses suggested, because a gate that matches nothing prompts for nothing and
 nobody notices a prompt that never comes. Note that the gate list speaks the same vocabulary this page
 is about: an entry is <code>&lt;toolset&gt;</code> for a whole capability or <code>&lt;toolset&gt;.&lt;tool&gt;</code> for one of its tools, so
 a gate naming a toolset no agent declares is refused for the same reason a tool nothing provides is.
 The quiet failure is confined to exactly one case: installed, and never named.</p>
-<p><strong>The tax you keep paying.</strong> The declared list is not free either. The shipped entry agent's eleven
-toolsets resolve to thirty tools, plus the <code>spawn_subagent</code> its <code>delegates_to</code> earns, and all 31
-descriptions are re-sent on every round of every turn. Declaring a capability you never use costs context on each call, which is the argument
-<a href="../context-and-memory/">Context and memory</a> picks up.</p>
+<p><strong>The tax you keep paying.</strong> The declared list is not free either. The shipped entry agent's twelve
+toolsets reach thirty-six tools, plus the <code>spawn_subagent</code> its <code>delegates_to</code> earns. Its <code>resident</code> list
+keeps seven of those toolsets in context, so the descriptions re-sent on every round of every turn are
+seventeen of them plus the two tools that load the rest; a turn that loads a deferred toolset pays for
+its descriptions from then on. Declaring a capability resident that you rarely use costs context on each
+call, which is the argument <a href="../context-and-memory/">Context and memory</a> picks up.</p>
 <h2 id="go-deeper">Go deeper<a class="headerlink" href="#go-deeper" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../tool-calling/">Tool calling</a>: why every declared tool is re-sent every round, and what a schema

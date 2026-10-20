@@ -1206,6 +1206,8 @@
       
         
       
+        
+      
     
     
     
@@ -1275,6 +1277,34 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/tool-access/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool access
   
 
     
@@ -1607,7 +1637,9 @@ trip costs more than the answer, and both of that trip's ends are visible above.
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="k">[agents.researcher]</span>
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">description</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"Research specialist: gather and verify information from the web."</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">tools</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"web"</span><span class="p">,</span><span class="w"> </span><span class="s2">"misc"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">]</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="k">[agents.researcher.tools]</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">available</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"web"</span><span class="p">,</span><span class="w"> </span><span class="s2">"misc"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">,</span><span class="w"> </span><span class="s2">"messaging"</span><span class="p">]</span>
 </span></code></pre></div>
 <p>Nothing else grants that tool. The delegate is built in
 <a href="https://github.com/saxman/kokua/blob/main/src/kokua/core/agents.py"><code>core/agents.py</code></a>, and every
@@ -1615,24 +1647,28 @@ argument in it is a decision worth reading:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>    <span class="k">return</span> <span class="n">make_async_subagent_tool</span><span class="p">(</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>        <span class="n">config</span><span class="o">.</span><span class="n">default_model</span><span class="p">,</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>        <span class="n">agent_types</span><span class="o">=</span><span class="n">build_agent_specs</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">state</span><span class="p">,</span> <span class="n">delegator</span><span class="p">),</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>        <span class="n">tool_approval</span><span class="o">=</span><span class="n">state</span><span class="o">.</span><span class="n">tool_approval</span><span class="p">,</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>        <span class="n">tool_approval</span><span class="o">=</span><span class="n">state</span><span class="o">.</span><span class="n">gate_for</span><span class="p">(</span><span class="n">DEFAULT_POLICY</span><span class="p">),</span>
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>        <span class="n">observer</span><span class="o">=</span><span class="n">observer</span><span class="p">,</span>
 </span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>        <span class="n">events</span><span class="o">=</span><span class="n">record_event</span><span class="p">,</span>
 </span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="p">)</span>
 </span></code></pre></div>
 <p><code>config.default_model</code>, not the caller's own client, so a worker declaring no model runs on the
-configured default rather than inheriting whatever the delegator was pinned to. <code>tool_approval</code> is the
-same human gate the caller's own tools pass through, carried across the boundary: a worker's
-<code>execute_python</code> is routed to you, not silently allowed. <code>events=record_event</code> is what makes the
+configured default rather than inheriting whatever the delegator was pinned to. <code>tool_approval</code> here is only
+the factory-level gate, bound to the default tier; Kokua spawns by agent type, and each spec
+<code>build_agent_specs</code> writes carries its own <code>"tool_approval"</code>, the same human gate bound to that worker's
+name, so a worker's <code>execute_python</code> is judged by the worker's own approval policy and routed to you, not
+silently allowed. <code>events=record_event</code> is what makes the
 worker's model calls count into the delegating turn's cost record, which is newer than it sounds and is
 one of the capabilities Kokua's AIMU floor exists to guarantee.</p>
 <p><code>build_agent_specs</code> builds one spec per target, and the first line of each is load-bearing:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>        <span class="n">specs</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>            <span class="s2">"system_message"</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">agent</span><span class="o">.</span><span class="n">description</span><span class="w"> </span><span class="ow">or</span><span class="w"> </span><span class="n">name</span><span class="si">}</span><span class="se">\n\n</span><span class="si">{</span><span class="n">message</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>            <span class="s2">"tools"</span><span class="p">:</span> <span class="n">tools</span><span class="p">,</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>        <span class="p">}</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>            <span class="s2">"tool_approval"</span><span class="p">:</span> <span class="n">state</span><span class="o">.</span><span class="n">gate_for</span><span class="p">(</span><span class="n">name</span><span class="p">),</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>        <span class="p">}</span>
 </span></code></pre></div>
-<p>AIMU reads a spec's first line as that role's menu label, which is the line the transcript above shows
+<p>The <code>"tool_approval"</code> line binds that worker's gate to its own name, so its calls are judged by its own
+approval policy rather than its delegator's. AIMU reads a spec's first line as that role's menu label, which is the line the transcript above shows
 the model choosing between. Change a <code>description</code> in <code>config.toml</code> and you change how delegation is
 routed. Nesting is Kokua's own rather than AIMU's: a target that itself delegates gets its own spawn
 tool injected into its spec, and AIMU is called with <code>max_depth=1</code> at each level, which is why
@@ -1648,7 +1684,8 @@ exception is entered by declaration. The worker is constructed per call and dies
 widens is one task's reach and never a persistent agent's. It may not be handed <code>capabilities</code> itself,
 since a worker holding a fresh copy would read the depth budget from scratch instead of spending down
 the caller's, so <code>[capabilities].max_depth</code> (default 3, <code>0</code> off) is what governs nesting. And its calls
-route through <code>[security].confirm_tools</code> exactly as a declared worker's do.</p>
+are gated as well, under the label <code>composed:&lt;label&gt;</code> and always the default <code>[assistant.tools]</code> pair: no table
+describes a composed worker, so it takes the default rather than anything its delegator declared.</p>
 <p>A name can resolve and still give a worker nothing: <code>image</code> builds no tool until <code>AIMU_IMAGE_MODEL</code> is
 set, and <code>list_capabilities</code> lists it either way, because discovery never builds a toolset. So
 <code>compose_subagent</code> refuses a capability that builds to no tools, naming it with its description, rather
@@ -1680,7 +1717,8 @@ terminal gives you one line to look at.</p>
 config is what lets several independent <code>spawn_subagent</code> calls overlap. Without it, three delegations
 are three waits end to end.</p>
 <p><strong>The approval gate crosses the boundary, including when nobody is there.</strong> A worker's gated call is
-routed to you, so delegation cannot launder capability past <code>confirm_tools</code>. The corollary is that an
+routed to you under that worker's own approval policy, so delegation cannot launder capability past the
+gate. The corollary is that an
 unattended turn, such as a scheduled one, auto-denies those calls, so a delegation that works when you
 are watching can come back empty-handed at 3am with no error.</p>
 <p><strong>And the depth question is a real one.</strong> A worker that delegates in turn multiplies all of the above

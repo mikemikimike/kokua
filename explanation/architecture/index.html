@@ -16,7 +16,7 @@
         <link rel="prev" href="../">
       
       
-        <link rel="next" href="../auto-approval/">
+        <link rel="next" href="../tool-access/">
       
       
         
@@ -1101,6 +1101,8 @@
       
         
       
+        
+      
     
     
     
@@ -1660,6 +1662,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tool-access/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool access
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -2587,7 +2617,7 @@ omission one subsystem over), so a composed worker could not receive a message m
 now, and delivery is only half of why <code>inbox</code> is unconditional there: a run that opens no reader mints
 no address, which leaves <code>current_address</code> holding whatever its caller set, so <code>send_message</code> would
 have attributed a composed worker's message to the agent that composed it. <code>capabilities</code> and
-<code>messaging</code> are both in the shipped default <code>[agents.assistant].tools</code>, so that was reachable on a
+<code>messaging</code> are both in the shipped default <code>[agents.assistant.tools].available</code>, so that was reachable on a
 default install rather than hypothetical. A scheduled firing opens its bus in <code>_run_unattended</code>
 rather than in the body that reads it, because the body runs in a child task that copies the context at
 creation, and reaches <code>close()</code> outside the gate hold, because a follow-up turn takes a hold of its own
@@ -2653,17 +2683,22 @@ writes it as a labeled line rather than the italic machine note a loop marker ge
 the same reason.</p>
 <h2 id="agents-and-delegation">Agents and delegation<a class="headerlink" href="#agents-and-delegation" title="Permanent link">&para;</a></h2>
 <p>Every agent is declared whole in <code>config.toml</code>, as one <code>[agents.&lt;name&gt;]</code> table carrying a
-<code>description</code>, a <code>system_message</code>, a <code>tools</code> list of toolset names, and a <code>delegates_to</code> list. Nothing
-about an agent is defaulted in code. <code>[assistant].agent</code> names the <strong>entry agent</strong>: the one Kokua
+<code>description</code>, a <code>system_message</code>, a <code>[agents.&lt;name&gt;.tools]</code> subtable (an <code>available</code> list of toolset
+names, plus optionally a <code>resident</code> subset and its own <code>confirm</code> and <code>review</code>), and a <code>delegates_to</code>
+list. Nothing about an agent's availability is defaulted in code; its approval policy is the one thing that can be inherited,
+whole, from <code>[assistant.tools]</code>. <code>[assistant].agent</code> names the <strong>entry agent</strong>: the one Kokua
 constructs directly, one per conversation. Every other agent exists only as a spawn target, built when a
 delegator's <code>spawn_subagent</code> is constructed.</p>
-<p>There is one agent shape, not two. <code>build.wire_agent</code> builds any agent from its declaration -- select its
-toolsets, build their tools, attach the approval gate, attach its delegate if it has targets -- so a
-conversation's agent cannot differ from a sibling's by accident, and there is no mode to branch on.</p>
+<p>There is one agent shape, not two. <code>build.wire_agent</code> builds any agent from its declaration (select its
+toolsets, build the resident ones' tools, hand it the deferred ones as loadable groups, attach the
+approval gate, attach its delegate if it has targets), so a conversation's agent cannot differ from a
+sibling's by accident, and there is no mode to branch on.</p>
 <ul>
 <li><strong>A declaration is the only way capability is granted.</strong> A built-in group, an installed plugin toolset,
-  and a connected MCP server all reach nothing until some agent's <code>tools</code> names them, and nothing warns
-  about a name nothing references. Startup used to, for names the user had provisioned specifically to
+  and a connected MCP server all reach nothing until some agent's <code>available</code> names them (or an agent
+  declares <code>available = "all"</code>), and nothing warns
+  about a name nothing references (the one startup warning is for a toolset whose own config section
+  was written while no agent declares it, whose settings nobody then reads). Startup used to, for names the user had provisioned specifically to
   be reachable, but telling those from the ones that merely ship meant a provenance rule over the whole
   namespace, and a toolset nobody declares costs nothing to leave unnamed. A configured MCP server does
   cost something (a handshake, and a held credential), which is the case that lost a signal here; see
@@ -2671,10 +2706,11 @@ conversation's agent cannot differ from a sibling's by accident, and there is no
 <li><strong>A composed sub-agent is the one exception, and it is entered by declaration.</strong> <code>compose_subagent</code>
   (<a href="https://github.com/saxman/kokua/blob/main/src/kokua/toolsets/capabilities.py">toolsets/capabilities.py</a>) resolves a sub-agent's tools from
   names the model picked out of the registry rather than from a table, and runs one task on it through
-  AIMU's subagent machinery instead of <code>wire_agent</code>. Only an agent whose own <code>tools</code> names <code>capabilities</code>
+  AIMU's subagent machinery instead of <code>wire_agent</code>. Only an agent whose own <code>available</code> names <code>capabilities</code>
   holds that tool; it may not be handed <code>capabilities</code> itself, since how far composition nests is
   <code>[capabilities].max_depth</code>'s decision (default 3, <code>0</code> off) and not the model's; and its tools
-  still route through <code>[security].confirm_tools</code>. It is built per call and discarded with the call, so
+  still go through the approval gate, bound to the label <code>composed:&lt;label&gt;</code> and always under the default
+  <code>[assistant.tools]</code> pair. It is built per call and discarded with the call, so
   what widens is one task's reach, never a persistent agent's.</li>
 <li><strong>Delegation nesting is Kokua's, not AIMU's.</strong> AIMU's <code>max_depth</code> gives every level the same worker
   menu, which cannot express a graph where each agent has its own targets, so <code>build_agent_specs</code>
@@ -2695,59 +2731,136 @@ work to <code>researcher</code>, filesystem and compute work to <code>coder</cod
 conversation</a>). There is deliberately no catch-all role
 alongside them: a task neither specialist covers is what <code>compose_subagent</code> is for, and a <code>generalist</code>
 declared next to it would claim the same slot more cheaply and win. That keeps the always-on agent's
-tool context small, and the prompt tells it so: <code>assemble_system_message</code> adds the "you are a lean
-supervisor, you MUST delegate" clause only when every toolset the agent declared is <code>cross_cutting</code>. But
-that is a property of the config, not a law of the code. Give <code>[agents.assistant]</code> a
-<code>tools = [..., "compute"]</code> and it gets <code>execute_python</code>, loses the lean clause, and Kokua neither objects
+tool context small, and its <code>resident</code> list keeps it smaller: only the toolsets it uses on most turns
+are in its tools from the start, and the rest it loads when a turn needs them (see <a href="#the-shipped-entry-agents-inventory">the
+inventory</a>). The prompt tells it so: <code>assemble_system_message</code> adds
+the "you are a lean supervisor, you MUST delegate" clause only when every toolset the agent declared,
+resident or deferred, is <code>cross_cutting</code>. But that is a property of the config, not a law of the
+code. Give <code>[agents.assistant]</code> a
+<code>available = [..., "compute"]</code> and it gets <code>execute_python</code>, loses the lean clause, and Kokua neither objects
 nor cares. The one structural
 restriction is <code>entry_point_only</code>: <code>skills</code> works solely on the entry agent, because a spawned worker is a
 plain AIMU <code>Agent</code> rather than a <code>SkillAgent</code>, so skill injection would have nothing to hook.</p>
 <h3 id="how-an-agents-tools-resolve">How an agent's tools resolve<a class="headerlink" href="#how-an-agents-tools-resolve" title="Permanent link">&para;</a></h3>
-<p>Four steps, all in <code>toolsets/</code>. The first two run once at startup, before Kokua opens or connects to
-anything; the last two run once per agent, whenever one is built:</p>
+<p>Six steps. The first two run once at startup, before Kokua opens or connects to anything; the next
+three run once per agent, whenever one is built; the sixth runs once, after every agent is wired, and
+again for a single toolset whenever a deferred one is built. Steps 1 to 3 read an agent's <code>available</code>
+list, which is the <em>availability</em> axis of <a href="../tool-access/">Tool access</a>; step 4 is its <em>residency</em> axis,
+and step 6 its <em>approval</em> axis:</p>
 <ol>
-<li><strong>Build the namespace.</strong> <code>agents.build_registry(config)</code> collects toolsets from six labeled
-   providers: AIMU capability (<code>builtin.py</code>), core subsystem (<code>core.py</code>), MCP server (one per
-   <code>[[mcp.server]]</code>, named by its required <code>name</code>), skill (one per skill on disk, so a skill name sits in
-   the same namespace as everything else), built-in toolset, and plugin. The last two are both the
-   <code>kokua.toolsets</code> entry-point group, split by which distribution registered them: Kokua's own four
-   (<code>aimu_agents</code>, <code>benchmark</code>, <code>github_backup</code>, <code>image</code>) take the built-in label so
+<li><strong>Build the namespace.</strong> <code>agents.build_registry(config)</code> collects toolsets from four sources, each
+   with a provider label: MCP server (one per <code>[[mcp.server]]</code>, named by its required <code>name</code>), skill (one
+   per skill on disk, so a skill name sits in the same namespace as everything else), built-in toolset,
+   and plugin. The last two are both the <code>kokua.toolsets</code> entry-point group, split by which distribution
+   registered them: Kokua's own toolsets, wrappers over AIMU's groups included (<code>fs</code>, <code>compute</code>, <code>web</code>),
+   take the built-in label, and a third party's take the plugin label, so
    <code>--list-toolsets</code> can group them separately. That label is the only difference between the two, and
    every toolset keeps the <code>build</code> its author wrote: nothing is wrapped, so a toolset that fails to import or to build takes startup down
    naming itself, whichever route it arrived by. <strong>Nothing gates any of this either.</strong> Registration is unconditional because installing a
    distribution that registers an entry point is the consent, and because the switch that used to exist
    could not do what it claimed: <code>resolve_config</code> imports every entry point before the file is parsed
    (see <a href="#configuration">Configuration</a>), so withholding the names afterwards ran the
-   same code and only turned a working <code>tools</code> declaration into an unknown-toolset error.
-   <code>registry.register</code> then rejects a name two providers claim. A <code>Toolset</code> is a frozen dataclass:
+   same code and only turned a working <code>available</code> declaration into an unknown-toolset error.
+   <code>registry.register</code> then rejects a name two providers claim, and refuses two names outright, <code>core</code>
+   and <code>all</code>, which the approval vocabulary and <code>available = "all"</code> have already spent. The four labels
+   are mostly presentation, but two questions are answered from them: <code>agents.is_skill</code> tells a skill's
+   entry from any other kind, and <code>agents.TRUST_ORDER</code> ranks them (built-in toolset, plugin, skill, MCP
+   server) for <code>available = "all"</code>. Skills are the one source re-read after startup: each skill write
+   calls <code>build.refresh_skills</code>, which swaps in <code>agents.with_skill_toolsets(registry, ...)</code>, every skill
+   entry rescanned from disk and every other entry kept as startup registered it, then rebuilds every live
+   agent's <code>spawn_subagent</code>. That is why a skill reaches an <code>"all"</code> worker on its next spawn while a server
+   <code>add_mcp_server</code> connected waits for a restart. A <code>Toolset</code> is a frozen dataclass:
    <code>name</code>, <code>description</code>, <code>build</code>, <code>guidance</code>, <code>cross_cutting</code>, <code>entry_point_only</code>, <code>workflow</code>,
    <code>settings</code>.</li>
 <li><strong>Validate.</strong> <code>agents.validate_agents</code> runs before the session store is opened or any server
    connected, so an unknown toolset name, a missing entry agent, an unknown delegation target, a cycle,
-   or <code>skills</code> on a worker fails with nothing written and nothing connected.</li>
-<li><strong>Select.</strong> <code>registry.select(names, registry, agent=, entry_point=)</code> returns the declared toolsets in
-   declared order, deduplicated, raising on an unknown name (with the available ones listed) or an
+   <code>skills</code> on a worker, or an <code>"all"</code> agent's <code>resident</code> entry outside the expansion fails with nothing
+   written and nothing connected.</li>
+<li><strong>Select.</strong> The names come from <code>agents.available_for(config, registry, agent)</code>, the one reader of an
+   agent's availability: its list as written, or for <code>available = "all"</code> every registered toolset sorted
+   by <code>TRUST_ORDER</code> (registration order kept within a provider), minus <code>entry_point_only</code> toolsets on any
+   agent but the entry agent. The config holds <code>"all"</code> as the sentinel <code>ALL_TOOLSETS</code>, which raises if
+   iterated, so a reader that forgot to expand it fails loudly instead of walking the letters of <code>"all"</code>.
+   <code>registry.select(names, registry, agent=, entry_point=)</code> returns those toolsets in that
+   order, deduplicated, raising on an unknown name (with the available ones listed) or an
    <code>entry_point_only</code> toolset declared elsewhere. It never drops: dropping is what the previous per-role
-   lists did, and a typo silently produced a smaller toolset.</li>
+   lists did, and a typo silently produced a smaller toolset. For the entry agent, skill names are held
+   back first (<code>agents.without_skill_names</code>), since its <code>SkillAgent</code> already advertises every skill.</li>
+<li><strong>Split by residency.</strong> <code>agents.split_by_residency</code> divides the selection into what the agent holds
+   from its first turn (<code>agents.resident_for</code>: its <code>resident</code> list, else all of its availability)
+   and what it loads on demand, both in availability order. <code>build.tool_groups_for</code> turns the split into
+   AIMU <code>ToolGroup</code>s, handed to the agent's constructor: a resident group has no <code>build</code> and exists so
+   <code>available_tools</code> shows the whole picture, and a deferred group's <code>build</code> is <code>build.build_deferred</code>,
+   which is <code>build_tools</code> over that one toolset, so a toolset arriving late goes through exactly the call
+   a resident one does. A deferred group also carries the toolset's <code>guidance</code>, which AIMU returns as the
+   load's result, and an <code>Asks first</code> note from <code>agents.approval_note</code>. Any deferred group gives the agent
+   AIMU's <code>available_tools</code> and <code>load_tools</code>. A deferred MCP server that is not connected refuses to
+   build, and a failing build alerts the user through <code>LiveState.alert_soon</code> before AIMU turns the
+   exception into the model's <code>Could not load</code> result; the group stays loadable. A delegated worker gets
+   the same groups through its spawn spec's <code>"tool_groups"</code> key.</li>
 <li><strong>Build.</strong> <code>registry.build_tools(toolsets, ctx)</code> calls each <code>Toolset.build(ctx)</code> and concatenates,
-   deduplicating by <code>__name__</code> and keeping the first, so declared order decides a collision. <code>ctx</code> is a
+   deduplicating by <code>__name__</code> and keeping the first, so availability order (trust order, for <code>"all"</code>)
+   decides a collision among toolsets built together. A deferred toolset loaded later is settled by AIMU
+   instead, which keeps the tool the agent already holds and names the one it skipped in the load result
+   (with its holder: a group's name when the holder was loaded, <code>a tool given to this agent directly</code>
+   when it is resident). A resident collision is reported: once every startup build is done,
+   <code>agents.shadowed_tools</code> reads <code>LiveState.tools_by_toolset</code> and <code>Assistant.start</code> raises one alert per
+   hidden tool. Startup builds the entry agent and every worker reachable from it by <code>delegates_to</code>, so an
+   agent is skipped (and logged at INFO) when any of its resident toolsets was built by no agent. <code>ctx</code> is a
    <code>ToolsetContext</code>: the one process-wide <code>LiveState</code>, this agent's live object (<code>None</code> for a spawned
    worker), and its <code>agent_name</code>, which unlike the object is known at every construction site and is how
    a toolset scopes itself to its own holder (<code>benchmark</code> asks the config what <code>agent_name</code> runs on).
-   <code>build</code> must create only closures, never process state -- every shared singleton (the memory store,
-   the document store, the <code>SkillManager</code>, the <code>TaskService</code>) is a lazy property on <code>LiveState</code>, so two
-   agents declaring one toolset share one rather than constructing two, and the two stores are opened only
-   because some agent declared them. The <code>SkillManager</code> and the <code>TaskService</code> are the exceptions to that
+   At wiring this runs over the resident toolsets only; a deferred one reaches the same function later,
+   through its group. <code>build</code> must create only closures, never process state: every shared singleton
+   (the memory store, the document store, the <code>SkillManager</code>, the <code>TaskService</code>) is a lazy property on
+   <code>LiveState</code>, so two agents declaring one toolset share one rather than constructing two, and the two
+   stores are opened only because some agent declared them (and, for a deferred toolset, loaded it). The
+   <code>SkillManager</code> and the <code>TaskService</code> are the exceptions to that
    last half, and not by accident: every agent is a <code>SkillAgent</code> and so takes the manager regardless, and
    <code>tasks.arm_all()</code> has to fire a persisted scheduled task whether or not any agent can talk about
    scheduling.</li>
+<li><strong>Resolve approval.</strong> <code>core/approval.py</code>'s <code>resolve_approval_policies</code> runs from <code>Assistant.start</code>
+   after every agent is wired, because a gate entry is written as <code>&lt;toolset&gt;.&lt;tool&gt;</code> and the tool names
+   exist only once the toolsets have built them. It resolves one <code>ApprovalPolicy</code> per declared agent
+   (its own <code>confirm</code> and <code>review</code>, or <code>[assistant.tools]</code>'s pair inherited whole) plus the default tier
+   itself, and rejects any entry that gates nothing. An entry naming a deferred toolset nobody has built
+   yet cannot be resolved then, so after its shape is checked it waits in the policy's <code>pending_confirm</code>
+   or <code>pending_review</code>. <code>build_tools</code> calls <code>LiveState.toolset_built</code> for every toolset it builds, after
+   recording the tool names and before returning any tool, and <code>Assistant._on_toolset_built</code> resolves the
+   waiting entries there (<code>ApprovalPolicies.with_built</code>, and, with auto-approval enabled,
+   <code>AutoApproval.with_built</code> for <code>[security].never_auto_approve</code> entries waiting the same way). Each
+   policy keeps the entries it was written with, and the hook matches every one naming the built
+   toolset, resolved or waiting, adding names and never removing one, because a toolset's tools can grow
+   after startup: <code>refresh_skills</code> reports each skill's tools to the same hook after a script is written,
+   before it rebuilds any delegate, so <code>review = ["weekly-digest"]</code> covers a script added mid-session. Because
+   the hook sits in the one build every path shares, it holds whoever builds the toolset: a model's
+   <code>load_tools</code>, a composed worker, or a rebuilt agent's preload. An entry that still matches nothing, or
+   (with auto-approval enabled) a <code>review</code> list that now reaches the floor, raises there and refuses the
+   build, every time, so a misnamed gate fails closed. A conflict between pending entries that their text
+   alone settles (a whole toolset on one side, one of its tools or the same toolset on the other, or one
+   tool named on both) is refused at startup instead, by <code>agents.certain_overlap</code> from the same two
+   checks, <code>_refuse_overlap</code> and <code>_refuse_floor_reach</code>; the build-time check remains for an overlap
+   only the built names reveal. Both objects are swapped under one lock, since a
+   deferred build runs in a worker thread. Whether an entry waits is decided in one place,
+   <code>agents.built_toolsets</code>: every toolset a <code>build_tools</code> call has recorded, plus every skill the entry
+   agent's <code>SkillAgent</code> holds (every skill when it declares <code>skills</code>, otherwise the skills it names). AIMU builds that skills server itself, so no build ever records
+   it, yet its tools exist from the first turn; counting it as built is what keeps a gate on such a
+   skill from waiting forever, whichever agents could also load it later. (Whether an agent carries the
+   loaders at all is a separate question, <code>agents.loadable_toolsets</code>, which follows wiring in leaving
+   the entry agent's skills out of its deferred set.)
+   <code>HumanGate.approve(agent, name, arguments)</code> then looks the calling agent's policy up at call time. The
+   gate is bound to each agent's name through <code>LiveState.gate_for</code>: the entry agent gets its own, a delegated worker gets its own through the spawn
+   spec's <code>"tool_approval"</code> key (AIMU 0.37.0), and a composed worker is bound to <code>composed:&lt;label&gt;</code> and
+   always judged by the default tier. <code>:</code> and <code>[</code> are therefore reserved in agent names.</li>
 </ol>
-<p>The prompt is assembled from the same selected list, in <code>agents.assemble_system_message</code>. For the entry
+<p>The prompt is assembled from the same split, in <code>agents.assemble_system_message</code>. For the entry
 agent, a <code>--system</code> flag wins outright over its declared opener; a worker's declared opener is never
 touched by the flag. Absent an override, it is the agent's own <code>system_message</code> (falling back to
-<code>[assistant].system_message</code>, then the built-in default), then each toolset's <code>guidance</code> in declared
-order, then <code>DELEGATION_GUIDANCE</code> if <code>delegates_to</code> is non-empty, then <code>LEAN_DELEGATION_GUIDANCE</code> if every
-selected toolset is <code>cross_cutting</code>. Guidance travelling with the capability is the point: installing a toolset brings the
+<code>[assistant].system_message</code>, then the built-in default), then each <em>resident</em> toolset's <code>guidance</code> in
+availability order, then one line naming the deferred toolsets (<code>Also available, load before use: ...</code>) if
+there are any, then <code>DELEGATION_GUIDANCE</code> if <code>delegates_to</code> is non-empty, then <code>LEAN_DELEGATION_GUIDANCE</code>
+if every selected toolset, resident or deferred, is <code>cross_cutting</code>. A deferred toolset's guidance is
+not in the prompt: it rides its group and reaches the model as the result of loading it. Guidance travelling with the capability is the point: installing a toolset brings the
 instructions that make the model use it, and removing one takes them away, with no prompt constant to
 keep in step by hand.</p>
 <p>Two of those sentences exist for one failure, a model answering a question it should have looked up, and
@@ -2760,8 +2873,26 @@ second, and the shipped <code>[agents.assistant]</code> and <code>[agents.resear
 the trigger as a property of the <em>question</em> (could it have changed, could the user check it) rather than
 as the model's own confidence, which is the signal a model is worst at reporting: <code>LEAN_DELEGATION_GUIDANCE</code>
 already named the <em>activity</em> ("web research"), and naming an activity only helps once the model has
-decided the question needs the web. <code>wire_agent</code> selects once and passes the same list to both the message and the
-tools, so the two cannot resolve different toolsets for the same names.</p>
+decided the question needs the web. <code>wire_agent</code> selects and splits once and passes the same halves to
+both the message and the tools, so the two cannot resolve different toolsets for the same names.</p>
+<p><strong>A rebuilt agent preloads what its conversation loaded.</strong> The agent builder <code>make_agent_builder</code> hands
+<code>wire_agent</code> a <code>preloaded</code> list, read by <code>build.loaded_toolsets_in</code> from the stored transcript's
+<code>load_tools</code> calls in the order each name first loaded successfully, so an agent rebuilt on restart, after LRU
+eviction from <code>AgentRegistry</code> (more than eight live conversations), or after a truncation holds what the
+model had loaded. Only a call whose stored result (joined by <code>tool_call_id</code>, as replay joins one) opens
+with AIMU's <code>Loaded '&lt;name&gt;':</code> counts. AIMU stores a call whether or not it ran, so reading calls alone
+would give back, on the next rebuild, a load the approval gate refused, and a denied load has to stay
+denied; a failed load, and a call left without a result by a cancelled turn, are left out the same way.
+<code>tests/test_aimu_compat.py</code> pins that text against a real load, since Kokua now depends on it. Replaying the calls through the agent is not possible here: AIMU's load is async and
+the builder is not. So <code>wire_agent</code> builds each still-deferred name through <code>build_deferred</code>, which is
+the same connected-server check and the same approval hook a load gets, appends the tools to the
+agent's own list, and constructs the agent with those toolsets' groups marked resident; the prompt is
+rewritten so their guidance is in it and the names line lists only what is still loadable. The visible
+cost is that <code>available_tools</code> lists a preloaded toolset as <code>resident</code> rather than <code>loaded</code>. A preload
+that fails is logged at WARNING, not alerted (a rebuild happens without anybody asking, and an alert per
+conversation switch would be noise), and the agent is constructed again with that toolset left deferred
+and loadable, so the model can retry and read the real error. A preloaded tool whose name the agent
+already holds is skipped and logged, as AIMU skips one on a model-driven load.</p>
 <h4 id="what-a-skill-script-sees">What a skill script sees<a class="headerlink" href="#what-a-skill-script-sees" title="Permanent link">&para;</a></h4>
 <p>A skill's scripts run as subprocesses, and a script cannot discover where Kokua serves downloads from or
 which address it is allowed to mail. <code>LiveState.script_env()</code> is the one place those facts are turned
@@ -2779,87 +2910,110 @@ unconfigured, which is what <code>email-report</code> did on the entry agent unt
 <code>tests/core/test_build.py</code> pins it, because nothing else would notice.</p>
 <h4 id="the-shipped-entry-agents-inventory">The shipped entry agent's inventory<a class="headerlink" href="#the-shipped-entry-agents-inventory" title="Permanent link">&para;</a></h4>
 <p>All 37 tools the shipped <code>[agents.assistant]</code> table resolves to, and where each comes from. This is what
-<code>config.example.toml</code> declares, not a fixed list: a different <code>tools</code> line produces a different set.
+<code>config.example.toml</code> declares, not a fixed list: a different <code>available</code> list produces a different set.
 Fourteen of the 37 come from AIMU, more than a third, and so are not greppable in this repository (more
 once skills are installed, since AIMU injects a tool per skill script on top of this set), which is why
-this table exists rather than a naming convention alone:</p>
+this table exists rather than a naming convention alone. The table declares a <code>resident</code> list too, so
+only part of the inventory is in the agent's tools from its first turn; the rest arrives when the model
+loads it:</p>
 <table>
 <thead>
 <tr>
 <th>Tools</th>
 <th>Built by</th>
 <th>Declared as</th>
+<th>Shipped</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>author_skill</code>, <code>update_skill</code>, <code>add_skill_script</code></td>
-<td>AIMU <code>make_skill_authoring_tool</code> / <code>make_skill_update_tool</code> / <code>make_skill_script_tool</code></td>
-<td><code>skills</code> (entry agent only)</td>
-</tr>
-<tr>
 <td><code>store_memory</code>, <code>search_memories</code>, <code>list_memories</code></td>
 <td>AIMU <code>make_memory_tools</code></td>
 <td><code>memory</code></td>
-</tr>
-<tr>
-<td><code>save_document</code>, <code>read_document</code>, <code>edit_document</code>, <code>list_documents</code>, <code>search_documents</code></td>
-<td>AIMU <code>make_document_tools</code></td>
-<td><code>documents</code></td>
-</tr>
-<tr>
-<td><code>get_current_date_and_time</code>, <code>convert_time</code></td>
-<td>AIMU <code>builtin.time</code></td>
-<td><code>time</code></td>
-</tr>
-<tr>
-<td><code>add_mcp_server</code>, <code>remove_mcp_server</code></td>
-<td><code>toolsets/mcp.py</code></td>
-<td><code>mcp</code></td>
+<td>resident</td>
 </tr>
 <tr>
 <td><code>read_config</code>, <code>update_config</code></td>
 <td><code>toolsets/config.py</code></td>
 <td><code>config</code></td>
-</tr>
-<tr>
-<td><code>schedule_task</code>, <code>list_scheduled_tasks</code>, <code>get_scheduled_task</code>, <code>update_scheduled_task</code>, <code>cancel_scheduled_task</code>, <code>enable_scheduled_task</code>, <code>disable_scheduled_task</code>, <code>run_scheduled_task</code>, <code>stop_scheduled_task</code></td>
-<td><code>toolsets/scheduling.py</code></td>
-<td><code>scheduling</code></td>
+<td>resident</td>
 </tr>
 <tr>
 <td><code>list_conversations</code>, <code>read_conversation</code>, <code>search_conversations</code>, <code>rename_conversation</code>, <code>export_conversation</code></td>
 <td><code>toolsets/conversations.py</code></td>
 <td><code>conversations</code></td>
+<td>resident</td>
 </tr>
 <tr>
 <td><code>list_capabilities</code>, <code>compose_subagent</code></td>
 <td><code>toolsets/capabilities.py</code></td>
 <td><code>capabilities</code></td>
+<td>resident</td>
 </tr>
 <tr>
-<td><code>benchmark_model</code></td>
-<td><code>toolsets/benchmark.py</code></td>
-<td><code>benchmark</code></td>
+<td><code>get_current_date_and_time</code>, <code>convert_time</code></td>
+<td>AIMU <code>builtin.time</code></td>
+<td><code>time</code></td>
+<td>resident</td>
 </tr>
 <tr>
 <td><code>send_message</code>, <code>list_agents</code></td>
 <td><code>toolsets/messaging.py</code></td>
 <td><code>messaging</code></td>
+<td>resident</td>
 </tr>
 <tr>
 <td><code>spawn_subagent</code></td>
 <td>AIMU <code>make_async_subagent_tool</code></td>
 <td>implied by a non-empty <code>delegates_to</code></td>
+<td>always held</td>
+</tr>
+<tr>
+<td><code>save_document</code>, <code>read_document</code>, <code>edit_document</code>, <code>list_documents</code>, <code>search_documents</code></td>
+<td>AIMU <code>make_document_tools</code></td>
+<td><code>documents</code></td>
+<td>deferred</td>
+</tr>
+<tr>
+<td><code>author_skill</code>, <code>update_skill</code>, <code>add_skill_script</code></td>
+<td>AIMU <code>make_skill_authoring_tool</code> / <code>make_skill_update_tool</code> / <code>make_skill_script_tool</code>, wrapped by <code>toolsets/skills.py</code> to refresh the registry after each write and refuse a taken name</td>
+<td><code>skills</code> (entry agent only)</td>
+<td>deferred</td>
+</tr>
+<tr>
+<td><code>add_mcp_server</code>, <code>remove_mcp_server</code></td>
+<td><code>toolsets/mcp.py</code></td>
+<td><code>mcp</code></td>
+<td>deferred</td>
+</tr>
+<tr>
+<td><code>schedule_task</code>, <code>list_scheduled_tasks</code>, <code>get_scheduled_task</code>, <code>update_scheduled_task</code>, <code>cancel_scheduled_task</code>, <code>enable_scheduled_task</code>, <code>disable_scheduled_task</code>, <code>run_scheduled_task</code>, <code>stop_scheduled_task</code></td>
+<td><code>toolsets/scheduling.py</code></td>
+<td><code>scheduling</code></td>
+<td>deferred</td>
+</tr>
+<tr>
+<td><code>benchmark_model</code></td>
+<td><code>toolsets/benchmark.py</code></td>
+<td><code>benchmark</code></td>
+<td>deferred</td>
 </tr>
 </tbody>
 </table>
+<p><code>planning</code> is resident too and contributes no tools, only its <code>/plan</code> workflow and its guidance. Holding
+anything deferred adds AIMU's <code>available_tools</code> and <code>load_tools</code>, which no toolset provides (a gate names
+them <code>core.available_tools</code> and <code>core.load_tools</code>). So the agent starts each conversation with seventeen
+of the 37 plus those two loaders. Measured as the JSON of every tool spec it is sent, that block is
+16,244 bytes, against 30,560 bytes for all 37 tools resident: 46.8% smaller, on every round of every turn
+that loads nothing.</p>
 <p>Two conventions keep this honest. Every Kokua-side agent tool lives under <code>toolsets/</code> and nowhere else,
 so <code>grep -rl '@tool' src/kokua/</code> finds only files in that one directory. And
 <code>test_entry_agent_toolset_is_exactly_the_documented_inventory</code> in
-<code>tests/core/test_build.py</code> asserts the built agent's tool names as an <strong>exact set</strong> mirroring this table,
-so adding a tool to the entry agent fails the suite until the table is updated, and a plugin toolset
-leaking onto it fails too. Documentation alone would have rotted; the test is what makes the table
+<code>tests/core/test_build.py</code> asserts the built agent's tool names as an <strong>exact set</strong> mirroring this
+table's resident rows plus the two loaders, with every deferred tool absent, and
+<code>test_loading_every_deferred_toolset_completes_the_documented_inventory</code> loads each deferred toolset and
+asserts the whole table. So adding a tool to the entry agent fails the suite until the table is updated,
+a plugin toolset leaking onto it fails too, and so does a toolset quietly changing sides. Documentation alone would have rotted; the test is what makes the table
 trustworthy.</p>
 <p>The pattern for a new Kokua capability is two modules, split by who reads the output. The logic goes in
 the owning subsystem (<code>core/</code>, <code>config/</code>, <code>mcp/</code>, <code>scheduling/</code>) and returns data or raises a typed
@@ -3133,7 +3287,7 @@ switching controls get: it pushes a fresh conversation list, because the copy ha
 the history replay, because the page is still displaying what it was already displaying.</p>
 <h2 id="plugins">Plugins<a class="headerlink" href="#plugins" title="Permanent link">&para;</a></h2>
 <p>Two entry-point groups: <code>kokua.frontends</code> (a <code>FrontEnd</code> with <code>run(config, args)</code>) and <code>kokua.toolsets</code>
-(a <code>Toolset</code> with <code>build(ctx)</code>). The built-in <code>cli</code>/<code>web</code> front ends and the three plugin toolsets are
+(a <code>Toolset</code> with <code>build(ctx)</code>). The built-in <code>cli</code>/<code>web</code> front ends and every toolset Kokua ships are
 registered in Kokua's own <code>pyproject.toml</code> exactly as a third party would register theirs;
 <code>plugins.py</code> discovers them at runtime, and <code>kokua.plugins</code> re-exports <code>Toolset</code> and <code>ToolsetContext</code>
 as the public surface a third party imports. Add a transport or new tools as a plugin, not by editing
@@ -3380,10 +3534,17 @@ name lookup, structurally a half-step deeper than its predecessors since the sym
 now: the method has a default implementation on the ABC (read everything, keep the metadata, drop the
 messages), correct anywhere and slow where a full read is expensive, so a name lookup cannot tell
 <code>TinyDBSessionStore</code>'s override from a plain inheritance of the default.</p>
-<p>The floor is now <strong><code>aimu&gt;=0.36.0</code></strong>: every run event carries <code>run_id</code> and <code>parent_run_id</code>, which Kokua's
-request records (<code>core/requests.py</code>) are keyed by, and the probe is a signature check on the dataclass
-<code>aimu.events.RunEvent</code> for its <code>run_id</code> field (a dataclass field is a constructor parameter). Before it,
-the floor was <code>aimu&gt;=0.34.0</code>, the first one a rename alone moved: AIMU renamed its
+<p>The floor is now <strong><code>aimu&gt;=0.37.0</code></strong>: a spawned worker's spec carries a <code>"tool_approval"</code> key, which is
+what lets each agent's tool calls be judged by its own approval policy. The probe did not move: that key
+set is closed, so an older AIMU raises <code>ValueError</code> naming the key when the factory is called, and the one
+probe slot stays on a capability whose absence is silent. Residency rides the same release's
+<code>aimu.tools.ToolGroup</code> (and the <code>available_tools</code> / <code>load_tools</code> an agent gets from it), and it needs no
+probe for the same kind of reason: <code>core/build.py</code> imports <code>ToolGroup</code> at module scope, so a checkout
+without it fails with an <code>ImportError</code> the moment a front end or <code>kokua agents</code> imports the core, after
+the preflight and before any conversation exists. Loud, which is the 0.28.0 reasoning again. Before it, the floor was <code>aimu&gt;=0.36.0</code>: every
+run event carries <code>run_id</code> and <code>parent_run_id</code>, which Kokua's request records (<code>core/requests.py</code>) are
+keyed by, and the probe is a signature check on the dataclass <code>aimu.events.RunEvent</code> for its <code>run_id</code>
+field (a dataclass field is a constructor parameter). Before that, the floor was <code>aimu&gt;=0.34.0</code>, the first one a rename alone moved: AIMU renamed its
 mid-turn-message seam from <code>Steering</code> to <code>Inbox</code>, with no legacy path, and taught it which agent is
 opening each reader. <code>Inbox.reader(agent=...)</code> is called once per run, at its start, and <code>agent</code> is
 that run's own name, offered so a host can route a message to the one run it was meant for rather than
@@ -3598,12 +3759,21 @@ misreported as either server being unreachable; when the call it holds really is
 is however long the person takes to approve it, not network time, so a second server's own authorization
 link is not even posted until the first server's flow completes.</p>
 <p>Each server is also a toolset, named by its required <code>name</code>, which is how an agent
-reaches it. The runtime <code>add_mcp_server</code> tool appends reconnectable servers there via
+reaches it, and described by its optional <code>description</code>, the line an agent deferring the server reads in
+<code>available_tools</code> (unset, it says only where the server is). A deferred server that is not connected
+refuses to load rather than loading empty, since a load is recorded as done and an empty one would stay
+empty after the server returned (step 4 of <a href="#how-an-agents-tools-resolve">How an agent's tools resolve</a>).
+The runtime <code>add_mcp_server</code> tool appends reconnectable servers there via
 <code>config/store.py</code> (no secret on disk), so config.toml stays the one source; it writes a name derived
 from the server's host and disambiguated against the names already on file, so a successful add can
-never leave behind a config the registry's collision check would reject at the next boot. That derived
-name reaches no agent until a human adds it to an <code>[agents.*]</code> table, since that section is locked by
-default: the tool can connect a server but cannot grant itself the capability. <code>mcp/auth.py</code> handles OAuth
+never leave behind a config the registry's collision check would reject at the next boot. Nothing can
+use the server in the session that added it, since the registry is not rebuilt for servers (only skills
+are re-read mid-session), so the tool can connect a server but cannot grant itself the capability. After a
+restart the derived name reaches an agent declaring <code>available = "all"</code>, and any other agent once a human
+adds it to that agent's <code>[agents.*]</code> table, which is locked by default. A bearer-token server is not
+written at all, so a restart drops it. <code>author_skill</code> reads the server names on file
+(<code>config/store.py</code>'s <code>mcp_server_names</code>) as well as the registry, so a skill cannot take a name this
+session's <code>add_mcp_server</code> wrote and stop the next start on the collision. <code>mcp/auth.py</code> handles OAuth
 by posting the authorization link into the chat and persisting tokens to disk. It also carries the one
 piece of that flow a single-machine library gets to assume away: <code>OAuthSettings</code> holds where the
 provider's redirect lands, because FastMCP's default (loopback, a random port per process) sends the
@@ -3611,7 +3781,7 @@ approved browser to <em>its own</em> machine, which is the wrong one whenever Ko
 The two settings behind it are <code>[mcp].oauth_callback_host</code> / <code>oauth_callback_port</code>.</p>
 <h2 id="workflows">Workflows<a class="headerlink" href="#workflows" title="Permanent link">&para;</a></h2>
 <p>A workflow is a named turn strategy carried by a <code>Toolset</code> (its <code>workflow</code> field): declaring that
-toolset in an agent's <code>tools</code> is what gives the agent the workflow's <code>/</code>-command, resolved by
+toolset in an agent's <code>available</code> is what gives the agent the workflow's <code>/</code>-command, resolved by
 <code>toolsets.agents.build_command_map</code> from the entry agent's own declared toolsets -- the same list
 that resolves its tools, so a turn strategy is granted exactly the way a tool is. A workflow's <code>build</code>
 returns an <code>aimu.aio.AsyncRunner</code>, AIMU's abstract base for every agent and workflow, so AIMU's own
@@ -3628,8 +3798,8 @@ callable tool needs <code>AsyncRunner.as_tool()</code>, a concrete method the ba
 name Kokua looks up, so it is available only to a runner that actually subclasses <code>aio.AsyncRunner</code>,
 not one that merely matches its shape by duck-typing <code>run</code> and <code>messages</code>.</p>
 <p><code>toolsets/planning.py</code> is the first workflow, and the only toolset that carries one instead of
-tools: declaring <code>"planning"</code> in <code>[agents.&lt;name&gt;].tools</code> is what gives that agent the <code>/plan</code> command
-(the web UI's Plan toggle sends the same command, and an agent whose <code>tools</code> omits <code>"planning"</code> has
+tools: declaring <code>"planning"</code> in <code>[agents.&lt;name&gt;.tools].available</code> is what gives that agent the <code>/plan</code> command
+(the web UI's Plan toggle sends the same command, and an agent whose <code>available</code> omits <code>"planning"</code> has
 neither). Its runner, <code>PlanningWorkflow</code> (<code>workflows/planning/runner.py</code>), is rich tier -- it shows
 phases and reviewer cards, pauses for a human approve/edit/reject, and rewrites the transcript so a
 planned turn is saved as a plain user/assistant pair rather than as planner scaffolding -- and
@@ -3779,7 +3949,8 @@ wait. Boot has two halves. <code>Assistant.create</code> reads local state only:
 opens the session store, adopts the most recently updated conversation, and builds the <code>LiveState</code> and
 the agent registry, reaching no network at all. <code>Assistant.start()</code> is the remainder, and it is the
 expensive one: it connects every configured MCP server, builds the entry agent (which resolves a
-model), checks <code>confirm_tools</code> against the tools that now exist, and arms the scheduled tasks. On a
+model), resolves each agent's approval policy against the tools that now exist, and arms the scheduled
+tasks. On a
 config with two remote servers that is most of startup, and it is dominated by round trips Kokua does
 not control. So <code>serve_connection</code> sends the conversation list, the history and the settings <em>between</em>
 the two calls, and the page renders them while the servers are still being asked for their tool lists.
@@ -4027,11 +4198,11 @@ a <code>history</code> frame grows by every tool result in the conversation and 
 switch; if that becomes a problem the fix is a server-side cap in <code>replay_items</code>, the path that re-sends.</p>
 <p>Replay reaches the same card by a different route. A stored transcript splits a call from its result
 across an assistant message's <code>tool_calls</code> and a later <code>role: "tool"</code> message, joined by
-<code>tool_call_id</code>; <code>_tool_results_by_call_id</code> builds that map so each replayed call carries its own output.
+<code>tool_call_id</code>; <code>tool_results_by_call_id</code> builds that map so each replayed call carries its own output.
 The join has to be by id rather than by position, since concurrent dispatch appends results in completion
 order. A call with no matching result -- a transcript stored before results were replayed, a turn cut
 short mid-dispatch -- gets <code>response: None</code> and renders the card exactly as it always did.</p>
-<p>The flattener behind all of this, <code>replay_items</code> (with its <code>_tool_results_by_call_id</code> and
+<p>The flattener behind all of this, <code>replay_items</code> (with its <code>tool_results_by_call_id</code> and
 <code>image_refs_of</code> helpers), lives in <code>core/transcripts.py</code> rather than in this channel: <code>send_history</code>
 below is one caller, and a Markdown export of a conversation is the other, so the module both share is
 where it has to sit. <code>WebChannel</code> imports it back (locally, inside <code>send_history</code>, to avoid a cycle

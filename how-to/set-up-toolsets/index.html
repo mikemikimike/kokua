@@ -1273,6 +1273,8 @@
       
         
       
+        
+      
     
     
     
@@ -1342,6 +1344,34 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/tool-access/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool access
   
 
     
@@ -1643,7 +1673,7 @@
 <h1 id="set-up-a-toolset">Set up a toolset<a class="headerlink" href="#set-up-a-toolset" title="Permanent link">&para;</a></h1>
 <p>A <em>toolset</em> is one <strong>named capability</strong> an agent can ask for: a <code>Toolset</code> object carrying a name, a
 description, and a <code>build(ctx)</code> that returns tool callables. Every toolset an install offers, wherever it
-came from, lives in one namespace. An agent's <code>tools</code> list names toolsets from that namespace, and the
+came from, lives in one namespace. An agent's <code>available</code> list names toolsets from that namespace, and the
 tools the agent can actually call are whatever those toolsets built.</p>
 <p>A toolset can also carry a <code>Workflow</code> instead of, or alongside, its tools: a turn strategy the user
 invokes with a <code>/</code>-command (<code>/plan</code> is the shipped example -- see
@@ -1656,8 +1686,8 @@ own; two toolsets offering the same command is a startup error, not a silent sha
 and writing a toolset of your own to put something new in the namespace.</p>
 <h2 id="the-rule-that-decides-everything">The rule that decides everything<a class="headerlink" href="#the-rule-that-decides-everything" title="Permanent link">&para;</a></h2>
 <blockquote>
-<p><strong>A capability is declared, never defaulted. Nothing reaches an agent until an <code>[agents.&lt;name&gt;]</code> table
-names it in <code>tools</code>.</strong></p>
+<p><strong>A capability is declared, never defaulted. Nothing reaches an agent until its
+<code>[agents.&lt;name&gt;.tools]</code> table names it in <code>available</code>, or declares <code>available = "all"</code>.</strong></p>
 </blockquote>
 <p>There is no code path that adds a tool an agent did not name, and no flag that can disagree with a
 declaration. An installed plugin toolset does nothing on its own. A connected MCP server does nothing.
@@ -1676,7 +1706,7 @@ task rather than widening any agent your config describes.</p>
 </span></code></pre></div>
 <p><code>--list-toolsets</code> reads your config file, since the registry depends on it (which servers are configured,
 whether plugins are loaded), so run <code>kokua config init</code> first if you have no config yet. The output groups
-names by provider, because a <code>tools</code> list deliberately does not say where a name comes
+names by provider, because an <code>available</code> list deliberately does not say where a name comes
 from (<code>"stocks"</code>, not <code>"mcp:stocks"</code>), so this command is the one place provenance is visible:</p>
 <table>
 <thead>
@@ -1793,23 +1823,34 @@ keys, all optional individually; anything else is a startup error naming the key
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="k">[agents.assistant]</span>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">description</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"The assistant the user talks to."</span>
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">system_message</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"You are a personal assistant running on the user's own machine. Be concise and helpful."</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">tools</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"memory"</span><span class="p">,</span><span class="w"> </span><span class="s2">"documents"</span><span class="p">,</span><span class="w"> </span><span class="s2">"skills"</span><span class="p">,</span><span class="w"> </span><span class="s2">"config"</span><span class="p">,</span><span class="w"> </span><span class="s2">"mcp"</span><span class="p">,</span><span class="w"> </span><span class="s2">"scheduling"</span><span class="p">,</span><span class="w"> </span><span class="s2">"conversations"</span><span class="p">,</span><span class="w"> </span><span class="s2">"planning"</span><span class="p">,</span><span class="w"> </span><span class="s2">"capabilities"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">]</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">delegates_to</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"researcher"</span><span class="p">,</span><span class="w"> </span><span class="s2">"report-writer"</span><span class="p">]</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="k">[agents.researcher]</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="n">description</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"Research specialist: gather and verify information from the web."</span>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="n">tools</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"web"</span><span class="p">,</span><span class="w"> </span><span class="s2">"misc"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">]</span>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">system_message</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"""</span><span class="se">\</span>
-</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="s2">You are a research sub-agent. Investigate the task with web search and page lookups, verify claims </span><span class="se">\</span>
-</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="s2">against sources rather than memory, and return a concise findings summary that names its sources."""</span>
-</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>
-</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="k">[agents.report-writer]</span>
-</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="n">description</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"Builds and emails PDF reports."</span>
-</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="n">tools</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"markdown-to-pdf"</span><span class="p">,</span><span class="w"> </span><span class="s2">"email-report"</span><span class="p">,</span><span class="w"> </span><span class="s2">"fs"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">]</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">delegates_to</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"researcher"</span><span class="p">,</span><span class="w"> </span><span class="s2">"report-writer"</span><span class="p">]</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="k">[agents.assistant.tools]</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="n">available</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"memory"</span><span class="p">,</span><span class="w"> </span><span class="s2">"documents"</span><span class="p">,</span><span class="w"> </span><span class="s2">"skills"</span><span class="p">,</span><span class="w"> </span><span class="s2">"config"</span><span class="p">,</span><span class="w"> </span><span class="s2">"mcp"</span><span class="p">,</span><span class="w"> </span><span class="s2">"scheduling"</span><span class="p">,</span><span class="w"> </span><span class="s2">"conversations"</span><span class="p">,</span><span class="w"> </span><span class="s2">"planning"</span><span class="p">,</span><span class="w"> </span><span class="s2">"capabilities"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">]</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="k">[agents.researcher]</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">description</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"Research specialist: gather and verify information from the web."</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="n">system_message</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"""</span><span class="se">\</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="s2">You are a research sub-agent. Investigate the task with web search and page lookups, verify claims </span><span class="se">\</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="s2">against sources rather than memory, and return a concise findings summary that names its sources."""</span>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="k">[agents.researcher.tools]</span>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="n">available</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"web"</span><span class="p">,</span><span class="w"> </span><span class="s2">"misc"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">,</span><span class="w"> </span><span class="s2">"messaging"</span><span class="p">]</span>
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="k">[agents.report-writer]</span>
+</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="n">description</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"Builds and emails PDF reports."</span>
+</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>
+</span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="k">[agents.report-writer.tools]</span>
+</span><span id="__span-1-25"><a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="n">available</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"markdown-to-pdf"</span><span class="p">,</span><span class="w"> </span><span class="s2">"email-report"</span><span class="p">,</span><span class="w"> </span><span class="s2">"fs"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">]</span>
 </span></code></pre></div>
 <ul>
-<li><strong><code>tools</code></strong> is the whole capability declaration, in one flat list over the one namespace. A built-in
-  group, a core capability, a plugin toolset, and an MCP server are all named the same way.</li>
+<li><strong><code>[agents.&lt;name&gt;.tools].available</code></strong> is the whole capability declaration, in one flat list over the one
+  namespace. (The same subtable can also carry a <code>resident</code> subset, the toolsets in the agent's context
+  from its first turn with the rest loaded on demand, and the agent's own <code>confirm</code> and <code>review</code>; see
+  <a href="../../explanation/tool-access/">Tool access</a>.) A built-in
+  group, a core capability, a plugin toolset, and an MCP server are all named the same way. Instead of a
+  list, an agent can declare <code>available = "all"</code>, every installed toolset, which then requires a
+  <code>resident</code> list; see <a href="../../reference/configuration/#available-all">the reference</a>.</li>
 <li><strong><code>delegates_to</code></strong> is itself the switch: a non-empty list gives that agent a
   <code>spawn_subagent(agent_type, task)</code> tool offering <strong>exactly</strong> the agents it names, each built from its
   own table. There is no separate "enable sub-agents" setting to disagree with it. The nesting is
@@ -1823,8 +1864,13 @@ keys, all optional individually; anything else is a startup error naming the key
   declared opener.</li>
 </ul>
 <p>Two agents declaring the same toolset share the state behind it: one memory store, one set of live MCP
-connections, one skill directory. If two toolsets an agent declares contribute the same tool name, the
-one declared <strong>first</strong> wins, so declared order is meaningful.</p>
+connections, one skill directory. If two resident toolsets an agent declares contribute the same tool
+name, the one declared <strong>first</strong> wins, so declared order is meaningful, and for an agent startup builds
+(the entry agent and every worker it reaches by <code>delegates_to</code>) startup raises an alert naming the tool
+and both toolsets. An agent declaring <code>available = "all"</code> has no written order, so it uses trust
+order instead (Kokua's own toolsets, then plugins, then skills, then MCP servers), which keeps a remote
+server's tool from shadowing one Kokua ships. See <a href="../../explanation/tool-access/#which-of-two-same-named-tools-wins">Tool
+access</a>.</p>
 <p>Restart Kokua after editing. Agents are read at startup and the new declaration takes effect there.</p>
 <h3 id="guidance-travels-with-the-capability">Guidance travels with the capability<a class="headerlink" href="#guidance-travels-with-the-capability" title="Permanent link">&para;</a></h3>
 <p>A toolset can carry a <code>guidance</code> string, and it is appended to the system message of <strong>any</strong> agent that
@@ -1843,7 +1889,7 @@ agent holds to manage itself: memory, documents, skills, config, <code>mcp</code
 conversations, <code>planning</code>, <code>capabilities</code>, the clock). Give that agent one domain toolset and the lean clause disappears, since it
 would then contradict the tools the model can see.</p>
 <p>Note what <code>cross_cutting</code> is <strong>not</strong>: it is not a permission boundary. An agent whose table says
-<code>tools = ["config"]</code> really does get <code>update_config</code>. See
+<code>available = ["config"]</code> really does get <code>update_config</code>. See
 <a href="../../explanation/design-principles/#corollary-a-capability-is-declared-never-defaulted">design principles</a>
 for why that is the intended shape, and what the actual security boundary is.</p>
 <h3 id="agents-is-locked-by-default"><code>[agents.*]</code> is locked by default<a class="headerlink" href="#agents-is-locked-by-default" title="Permanent link">&para;</a></h3>
@@ -1864,7 +1910,7 @@ session store or connects to anything, so a bad config fails with nothing writte
 </thead>
 <tbody>
 <tr>
-<td>Unknown name in an agent's <code>tools</code></td>
+<td>Unknown name in an agent's <code>available</code> list</td>
 <td><strong>Startup fails</strong>, naming the agent, the name, and every available toolset.</td>
 </tr>
 <tr>
@@ -1877,7 +1923,7 @@ session store or connects to anything, so a bad config fails with nothing writte
 </tr>
 <tr>
 <td>An old per-role key (<code>groups</code>, <code>tool_packs</code>, <code>mcp_servers</code>)</td>
-<td><strong>Startup fails</strong>, telling you to list it in <code>tools</code> instead.</td>
+<td><strong>Startup fails</strong>, telling you to list it in <code>[agents.&lt;name&gt;.tools].available</code> instead.</td>
 </tr>
 <tr>
 <td><code>[assistant].agent</code> naming no table</td>
@@ -1901,20 +1947,26 @@ session store or connects to anything, so a bad config fails with nothing writte
 </tr>
 <tr>
 <td>A third-party plugin toolset or MCP server no agent names</td>
-<td>Starts fine. One warning line in the log: it reaches no agent. Kokua's own built-in toolsets and your installed skills are exempt: they ship, or sit on disk, regardless of what any agent declares.</td>
+<td>Starts fine, silently. <code>kokua --list-toolsets</code> lists it, and <code>kokua agents</code> shows no agent holding it.</td>
 </tr>
 <tr>
 <td>A toolset that fails to import, or whose <code>build</code> raises</td>
 <td><strong>Startup fails</strong>, naming the module. No source is exempt: a build failure is a bug in whoever wrote the toolset, and a log line nobody reads is not how you should find out an agent lost a capability.</td>
 </tr>
 <tr>
-<td>Two declared toolsets sharing a tool name</td>
-<td>The one declared first wins.</td>
+<td>Two resident toolsets sharing a tool name</td>
+<td>The one declared first (for <code>"all"</code>, first in trust order) wins, and for an agent startup builds, startup raises an alert naming both. A deferred toolset loaded later keeps the tool the agent already holds, and the load result says so.</td>
+</tr>
+<tr>
+<td><code>available = "all"</code> without <code>resident</code>, or written as <code>["all"]</code> or <code>"All"</code></td>
+<td><strong>Startup fails</strong>, saying how to write it.</td>
+</tr>
+<tr>
+<td>An <code>"all"</code> agent's <code>resident</code> naming a toolset outside the expansion</td>
+<td><strong>Startup fails</strong>, saying whether nothing installs it or it is <code>skills</code> on a worker.</td>
 </tr>
 </tbody>
 </table>
-<p>One of those is quiet by design, and it lands in <code>$KOKUA_HOME/data/logs/kokua.log</code>. There is no
-console log handler, so it does not appear in your terminal.</p>
 <p>The most direct check that an agent got what you meant is to ask the assistant to delegate to it and
 report its tools.</p>
 <h2 id="write-your-own-toolset">Write your own toolset<a class="headerlink" href="#write-your-own-toolset" title="Permanent link">&para;</a></h2>
@@ -1953,7 +2005,7 @@ the <code>kokua.toolsets</code> entry-point group, so your package needs no chan
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="k">[project.entry-points.</span><span class="s2">"kokua.toolsets"</span><span class="k">]</span>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">weather</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"my_weather_toolset:TOOLSET"</span>
 </span></code></pre></div>
-<p><code>pip install</code> it, confirm with <code>kokua --list-toolsets</code>, then give an agent <code>tools = ["weather", ...]</code>.
+<p><code>pip install</code> it, confirm with <code>kokua --list-toolsets</code>, then name it in an agent's <code>[agents.&lt;name&gt;.tools].available</code>.
 Installing it is not enough, for the reason at the top of this guide.</p>
 <p><strong>Every toolset Kokua ships is written exactly this way</strong>, which is the point: the shape above is not a
 simplified illustration, it is what is in the repository. Kokua's own 21 are one file each under

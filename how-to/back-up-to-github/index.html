@@ -1283,6 +1283,8 @@
       
         
       
+        
+      
     
     
     
@@ -1352,6 +1354,34 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/tool-access/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool access
   
 
     
@@ -1814,12 +1844,12 @@ setting, which means an <code>update_config</code> write reaches the file but ne
 running process is holding; <code>repo</code> is read once on top of that, when an agent's tools are assembled.</p>
 <h2 id="5-give-an-agent-the-toolset">5. Give an agent the toolset<a class="headerlink" href="#5-give-an-agent-the-toolset" title="Permanent link">&para;</a></h2>
 <p>A capability is declared, never defaulted, so installing the toolset is not enough. Add
-<code>"github_backup"</code> to the <code>tools</code> list of the agent you talk to. Add, not replace: every name in that
+<code>"github_backup"</code> to the <code>available</code> list of the agent you talk to. Add, not replace: every name in that
 list is valid on its own, so dropping one loses a capability silently rather than failing at startup.</p>
-<div class="language-toml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">[agents.assistant]</span>
+<div class="language-toml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">[agents.assistant.tools]</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c1"># what `kokua config init` writes, with one name appended</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">tools</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"memory"</span><span class="p">,</span><span class="w"> </span><span class="s2">"documents"</span><span class="p">,</span><span class="w"> </span><span class="s2">"skills"</span><span class="p">,</span><span class="w"> </span><span class="s2">"config"</span><span class="p">,</span><span class="w"> </span><span class="s2">"mcp"</span><span class="p">,</span><span class="w"> </span><span class="s2">"scheduling"</span><span class="p">,</span><span class="w"> </span><span class="s2">"conversations"</span><span class="p">,</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">         </span><span class="s2">"planning"</span><span class="p">,</span><span class="w"> </span><span class="s2">"capabilities"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">,</span><span class="w"> </span><span class="s2">"github_backup"</span><span class="p">]</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">available</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"memory"</span><span class="p">,</span><span class="w"> </span><span class="s2">"documents"</span><span class="p">,</span><span class="w"> </span><span class="s2">"skills"</span><span class="p">,</span><span class="w"> </span><span class="s2">"config"</span><span class="p">,</span><span class="w"> </span><span class="s2">"mcp"</span><span class="p">,</span><span class="w"> </span><span class="s2">"scheduling"</span><span class="p">,</span><span class="w"> </span><span class="s2">"conversations"</span><span class="p">,</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">             </span><span class="s2">"planning"</span><span class="p">,</span><span class="w"> </span><span class="s2">"capabilities"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">,</span><span class="w"> </span><span class="s2">"benchmark"</span><span class="p">,</span><span class="w"> </span><span class="s2">"messaging"</span><span class="p">,</span><span class="w"> </span><span class="s2">"github_backup"</span><span class="p">]</span>
 </span></code></pre></div>
 <p><code>[agents.*]</code> is <strong>locked by default</strong>: <code>[security].locked_config_keys</code> refuses the whole section by
 prefix, because the assistant holds <code>update_config</code> and a writable agent table would let it widen its
@@ -1868,7 +1898,7 @@ since there is nobody watching to answer the prompt. A backup tool that took a <
 argument would have to be gated (it could be pointed anywhere), and a gated backup tool cannot be
 scheduled. Because the repository, the branch, and the file list all come from <code>config.toml</code>, there is
 nothing a per-call approval would be protecting, which is what earns this tool a place outside
-<code>[security].confirm_tools</code>.</p>
+<code>[assistant.tools]</code>'s <code>confirm</code> and <code>review</code> lists.</p>
 <p>Two things follow that are worth knowing before you leave it running:</p>
 <ul>
 <li><strong>It will never hang waiting for a credential.</strong> Kokua sets <code>GIT_TERMINAL_PROMPT=0</code>, so a git command

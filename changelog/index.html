@@ -1099,6 +1099,8 @@
       
         
       
+        
+      
     
     
     
@@ -1168,6 +1170,34 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../explanation/tool-access/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool access
   
 
     
@@ -1810,7 +1840,7 @@ pymdownx.snippets so there is one file to maintain. Edit /CHANGELOG.md, not this
 installable, modular application: a small transport-agnostic core with capability pushed into plugins.
 Because there is no earlier release, this section describes what 0.1.0 <em>is</em> rather than what changed.
 The pre-release development history is in the git log.</p>
-<p>Requires Python 3.11+ and <a href="https://github.com/saxman/aimu">AIMU</a> 0.36.0 or newer. Apache-2.0.</p>
+<p>Requires Python 3.11+ and <a href="https://github.com/saxman/aimu">AIMU</a> 0.37.0 or newer. Apache-2.0.</p>
 <h3 id="package-and-entry-points">Package and entry points<a class="headerlink" href="#package-and-entry-points" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>src</code>-layout <code>kokua</code> package with two console scripts: <code>kokua</code> runs the selected front end (default
@@ -2465,6 +2495,179 @@ The pre-release development history is in the git log.</p>
   mid-turn words as the run reads them.</li>
 </ul>
 <h3 id="agents-and-tools">Agents and tools<a class="headerlink" href="#agents-and-tools" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Tool access is three axes, and the config now says so: breaking, with no migration code.</strong> What an
+  agent may call (availability), what is in its context (residency), and what asks before it runs
+  (approval) used to share one list per agent and two global lists. Availability and approval now have
+  their own keys, in one <code>[agents.&lt;name&gt;.tools]</code> subtable per agent with <code>[assistant.tools]</code> as the default
+  for the approval half, and residency has <code>resident</code> (below). The
+  explanation is <a href="https://saxman.info/kokua/explanation/tool-access/">Tool access</a>. The old keys fail
+  startup with a message naming their replacement:</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Old</th>
+<th>New</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>[agents.&lt;name&gt;].tools = [...]</code></td>
+<td><code>[agents.&lt;name&gt;.tools].available = [...]</code></td>
+</tr>
+<tr>
+<td><code>[security].confirm_tools</code></td>
+<td><code>[assistant.tools].confirm</code>, minus any entry that moves to <code>review</code></td>
+</tr>
+<tr>
+<td><code>[security.auto_approval].tools</code></td>
+<td><code>[assistant.tools].review</code>, and remove those entries from <code>confirm</code></td>
+</tr>
+</tbody>
+</table>
+<p>The shipped config splits what <code>confirm_tools</code> held: <code>skills.add_skill_script</code>, <code>mcp.add_mcp_server</code>, and
+  <code>config.update_config</code> stay in <code>confirm</code>, and <code>compute.run_command</code>, <code>compute.execute_python</code>, and
+  <code>fs_write</code> move to <code>review</code>, where they prompt you exactly as before unless you switch
+  <a href="https://saxman.info/kokua/explanation/auto-approval/">auto-approval</a> on. A config that sets neither key
+  keeps the old six-entry gate. <code>--confirm-tools</code> now overrides <code>[assistant.tools].confirm</code>, and naming a
+  tool the file's <code>review</code> also names is refused. <code>assistant.tools.*</code> joins the default
+  <code>locked_config_keys</code> for newly scaffolded configs only. An existing config writes the list out in full
+  without it (the old <code>"security.*"</code> is what covered <code>confirm_tools</code>), so add <code>"assistant.tools.*"</code> to
+  <code>[security].locked_config_keys</code> by hand, or <code>update_config</code> can rewrite the default policy; the
+  removed-key message for <code>[security].confirm_tools</code> says so.
+- <strong>Each agent's tool calls are judged by its own approval policy.</strong> <code>confirm</code> and <code>review</code> are one pair:
+  an agent whose table declares either declares its whole policy (a key it leaves out is empty), and one
+  that declares neither inherits <code>[assistant.tools]</code>'s pair whole. A declared pair replaces the default and
+  never merges with it. Policies resolve once, after every agent is wired (<code>core/approval.py</code>), and the
+  gate is bound to each agent's name: a delegated worker carries its own through AIMU 0.37.0's
+  <code>"tool_approval"</code> spec key, and a composed worker is bound to <code>composed:&lt;label&gt;</code> and always gets the
+  default tier. So a worker's <code>fs_write</code> is held to the worker's policy, where it used to be held to one
+  global list.
+  <code>review</code> entries prompt you whether or not auto-approval is on, so switching it off never ungates a call;
+  a dead <code>review</code> entry fails startup even with it off; and <code>never_auto_approve</code> is checked only when it is
+  on. <code>[security.auto_approval]</code> keeps <code>enabled</code>, <code>reviewers</code>, <code>timeout_seconds</code>, and <code>max_per_turn</code>.
+  Enabling it with no <code>review</code> entry in any policy is a startup error.
+- <strong>Residency: an agent loads part of its capability on demand.</strong> <code>[agents.&lt;name&gt;.tools].resident</code> names
+  the toolsets from <code>available</code> whose tools are in the agent's context from its first turn. The rest are
+  deferred, and the agent gets AIMU 0.37.0's <code>available_tools</code> (every toolset it holds or can load, with
+  its description and which of its tools ask first) and <code>load_tools(name)</code>. Its prompt names the deferred
+  toolsets in one line, <code>Also available, load before use: ...</code>, and a deferred toolset's guidance arrives
+  with its tools when it loads, not in the prompt. Unset, every available toolset is resident, which is
+  how every shipped worker is declared; an entry outside <code>available</code> is a startup error, and
+  <code>update_config</code>'s dry run refuses it too. The shipped entry agent keeps <code>memory</code>, <code>config</code>,
+  <code>conversations</code>, <code>planning</code>, <code>capabilities</code>, <code>time</code>, and <code>messaging</code> resident and loads <code>documents</code>,
+  <code>skills</code>, <code>mcp</code>, <code>scheduling</code>, and <code>benchmark</code> on demand. Measured as the JSON of every tool spec it is
+  sent, its tool block falls from 30,560 bytes (all 37 tools) to 16,244 bytes (nineteen: seventeen
+  resident plus the two loaders), 46.8% smaller on every round that loads nothing; a turn that needs a
+  deferred toolset pays one round to load it. <code>available = "all"</code> (below) is the one declaration that
+  requires a <code>resident</code> list. See
+  <a href="https://saxman.info/kokua/explanation/tool-access/#residency-what-is-in-context-and-what-loads-on-demand">Tool access</a>.
+- <strong>A load pays for the build, and checks approval, when it happens.</strong> A deferred toolset is built when
+  it is loaded, through the same <code>build_tools</code> call a resident one gets, so a failure surfaces at load:
+  the model reads <code>Could not load '&lt;name&gt;': &lt;error&gt;</code>, you get an alert, and the toolset stays loadable
+  for a retry. A deferred MCP server that is not connected refuses to load rather than loading empty. An
+  approval entry naming a deferred toolset is checked for shape at startup and resolved when the toolset
+  is built, by whichever path builds it (a model's load, a composed worker, a rebuilt agent's preload);
+  one that then matches nothing refuses every build of that toolset, failing closed rather than letting
+  it load ungated. A refused load reads <code>Could not load</code>, and a refused <code>compose_subagent</code> reads
+  <code>Could not compose</code>, each naming the entry, and either raises an alert. With auto-approval enabled,
+  <code>[security].never_auto_approve</code> entries for a deferred toolset wait the same way, and a build after which a policy's <code>review</code> reaches the floor is refused.
+  A conflict the pending entries' text already settles (<code>review = ["mcp"]</code> against the floor's
+  <code>mcp.add_mcp_server</code>, or one tool reached by both halves of a pair) fails startup instead of every
+  load.
+  A skill the entry agent's <code>SkillAgent</code> holds (every skill when it declares <code>skills</code>, otherwise the skills it names) exists from the first turn, so a gate on
+  it resolves at startup, even when a worker could also load that skill later. The shipped gate covers the same
+  seven tools it did: <code>skills.add_skill_script</code> and <code>mcp.add_mcp_server</code> resolve when their toolset first
+  loads.
+- <strong>A rebuilt agent preloads what its conversation loaded.</strong> On restart, when switching among more than
+  eight conversations evicts an agent, and after a truncation, the rebuilt agent builds the toolsets its
+  transcript's <code>load_tools</code> calls loaded, in order, rather than replaying the calls (the builder is
+  synchronous and AIMU's load is async). Only a load whose stored result says it succeeded comes back: a
+  load the approval gate refused stays refused, rather than returning at the next restart, and a failed
+  or cancelled one stays loadable. <code>available_tools</code> then lists those as resident rather than
+  loaded. A preload that fails is logged at WARNING, not alerted, and the toolset stays deferred and
+  loadable; a preloaded tool whose name the agent already holds is skipped and logged.
+- <strong><code>core.available_tools</code> and <code>core.load_tools</code> are gate names.</strong> Wherever some agent defers a toolset,
+  a bare <code>core</code> approval entry covers the two loaders as well as <code>spawn_subagent</code> and <code>activate_skill</code>,
+  and each can be named on its own.
+- <strong><code>[[mcp.server]].description</code>.</strong> An optional string: the server's line in <code>available_tools</code>,
+  <code>list_capabilities</code>, and <code>--list-toolsets</code>, which is what an agent deferring the server decides by.
+  Unset, it reads <code>Tools from the MCP server at &lt;url&gt;.</code>; a non-string is a startup error.
+- <strong>Agent names may not contain <code>:</code> or <code>[</code>.</strong> The gate reserves them for <code>composed:&lt;label&gt;</code> and for the
+  default tier's own label, so an agent named either way would collide with them. Refused at startup.
+- <strong><code>kokua agents</code>, and a startup summary.</strong> <code>kokua agents</code> prints each declared agent's availability,
+  residency, and <code>confirm</code> / <code>review</code> lists, marking which came from <code>[assistant.tools]</code>, reading the
+  config alone and building nothing, so it works with the model server down. Startup logs one line per
+  agent to <code>kokua.log</code> (for example <code>assistant: 12 available, 7 resident, 3 confirm, 3 review (from [assistant.tools])</code>), because a declared
+  policy replacing the default silently dropping its other entries is the one foot-gun the replace-whole
+  rule leaves, and this is where it shows. The same lines go to stderr only when the run logs at DEBUG
+  (<code>--debug</code>, or <code>[logging].level = "DEBUG"</code>), since <code>kokua agents</code> shows them in full on demand.
+- <strong><code>--debug</code></strong> logs at DEBUG for one run, overriding <code>[logging].level</code>, and prints the startup summary.
+- <strong>The approval prompt and the auto-approval card name the agent asking</strong> ("Allow coder to run ...",
+  "<model> auto-approved coder's ..."), on the terminal and on the web card (the <code>approval</code> and
+  <code>auto_approval</code> frames carry <code>"agent"</code>), since agents now hold different policies and a bare tool name no longer says whose call it is.
+- <strong>Breaking for a third-party channel: <code>RichChannel.send_approval_request</code> and <code>send_auto_approval</code> take
+  an <code>agent</code> argument.</strong> The signatures are now <code>send_approval_request(name, arguments, *, agent=None)</code>
+  and <code>send_auto_approval(..., agent=None)</code>, and <code>ChannelUI</code> always passes <code>agent=</code> (None when unknown),
+  so a channel still implementing the older form raises <code>TypeError</code> the first time a gated call asks. A
+  channel that does not show who is asking can accept and ignore it, which is what adding <code>agent=None</code>
+  to the signature does. It is keyword-only for the reason <code>send_turn_saved</code>'s <code>token</code>
+  is.
+- <strong>The AIMU floor is 0.37.0</strong>, for the spawn spec's <code>"tool_approval"</code> key and for <code>ToolGroup</code>, which
+  residency rides. See the floor history under
+  "Diagnostics and error reporting" below.
+- <strong><code>available = "all"</code>: every installed toolset, still a declaration.</strong> An agent's
+  <code>[agents.&lt;name&gt;.tools].available</code> takes the string <code>"all"</code> in place of a list. It expands, wherever
+  availability is read (<code>core/agents.py</code>'s <code>available_for</code>), to every registered toolset in trust order:
+  Kokua's own, then third-party plugins, then skills, then MCP servers, registration order kept within
+  each, so where toolsets built together offer one tool name a remote server's never shadows one Kokua
+  ships. It leaves out <code>entry_point_only</code> toolsets (<code>skills</code>) on any agent but the entry agent, never
+  covers the <code>core</code> tools (<code>spawn_subagent</code> is still earned by <code>delegates_to</code>), and requires a <code>resident</code>
+  list, each entry within the expansion; an entry nothing installs, or <code>skills</code> on a worker, fails startup
+  saying which. <code>["all"]</code>, <code>"All"</code>, and <code>"all"</code> in any casing inside a list fail startup with the fix, <code>all</code>
+  is a reserved toolset name, and <code>update_config</code> writes the string (with <code>[agents.*]</code> unlocked) and refuses
+  the same near misses. <strong>Upgrading:</strong> an existing skill, plugin, or MCP server named <code>all</code> now fails
+  startup, since the name is reserved; rename it. <code>kokua agents</code> prints <code>available: all (N): ...</code> and the startup summary
+  <code>name: all (N) available, ...</code>. The shipped config keeps every agent on a list, with a commented
+  <code># available = "all"</code> line in <code>[agents.assistant.tools]</code>. See
+  <a href="https://saxman.info/kokua/explanation/tool-access/#available-all-every-installed-toolset-still-declared">Tool access</a>.
+- <strong>A shadowed resident tool raises an alert at startup.</strong> <code>build_tools</code> keeps the first of two
+  same-named tools among toolsets built together and used to say nothing of the other. Once every startup
+  build is done, each declared agent's resident toolsets are checked, and each hidden tool raises
+  <code>{agent}: {tool} from {shadowed!r} is shadowed by {kept!r} (the earlier resident toolset keeps the
+  name).</code> "Earlier" is the agent's declared order for a list and trust order for <code>"all"</code>. The shared
+  <code>activate_skill</code> every skill carries is not counted, since a second skill offering it hides nothing.
+  Startup builds the entry agent and every worker reachable from it by <code>delegates_to</code>, so an agent is skipped,
+  and logged at INFO rather than reported as clean, when any of its resident toolsets was built by no
+  agent. A deferred toolset loaded later keeps whichever tool arrived first, and AIMU's load result names
+  the skipped tool and its holder (a group only when the holder was loaded; a resident holder reads
+  <code>a tool given to this agent directly</code>).
+- <strong>A skill written mid-session reaches workers.</strong> After each <code>author_skill</code>, <code>add_skill_script</code>, or
+  <code>update_skill</code>, the registry's skill toolsets are rescanned from disk (every other entry kept as startup
+  registered it) and every live agent's <code>spawn_subagent</code> is rebuilt, so the skill reaches an
+  <code>available = "all"</code> worker on its next spawn and <code>compose_subagent</code> on its next call. The entry agent
+  still gets it immediately through its <code>SkillAgent</code>. A worker declaring a list gains no new skill, but a
+  skill it already names reaches its next spawn as now written, new scripts included. A gate naming the
+  skill covers those new scripts: every build re-matches each <code>confirm</code>, <code>review</code>, and
+  <code>[security].never_auto_approve</code> entry naming its toolset, adding names and never removing one, and a
+  script write reports each skill's tools as a build before any delegate is rebuilt, so
+  <code>review = ["weekly-digest"]</code> holds back a script added mid-session for every agent, the entry agent
+  included. A refresh that fails for any reason is reported in the tool's result, after the write,
+  rather than raised. MCP servers added at
+  runtime still wait for a restart: a new server is a new trust path, a remote host's tools arriving after
+  a person approved only its URL, where a skill's prose and its approved scripts are not. <code>author_skill</code>
+  and <code>add_skill_script</code> both rebuild the skill tools workers use, retiring the previous skills MCP server
+  rather than closing it, since a worker spawned before may still be calling it; <code>update_skill</code> changes no
+  tools and so retires nothing.
+- <strong><code>author_skill</code> refuses a name already taken, before writing anything.</strong> A toolset's name, an MCP
+  server's <code>name</code> on file in <code>config.toml</code> (including one <code>add_mcp_server</code> wrote this session, which the
+  running registry has not seen), <code>core</code>, and <code>all</code> are refused with a sentence the model can act on.
+  Before, a skill named <code>web</code> was written and then stopped the next start as a registry collision. A
+  collision the check cannot see (a skill directory made by hand) comes back with the tool's result.
+- <strong>Composition guidance gives two reasons to compose.</strong> <code>CAPABILITIES_GUIDANCE</code> and <code>list_capabilities</code>
+  now say to compose a sub-agent when a task needs a capability you do not hold, or when its tool output
+  would flood your context. On an <code>available = "all"</code> agent only the second applies.</p>
 <ul>
 <li><strong>An individual skill is a name in the same namespace as everything else.</strong> A <code>[agents.*]</code> table lists
   <code>"citation-check"</code> beside <code>"web"</code> and <code>"stocks"</code> without saying which kind each is, and <code>--list-toolsets</code>
@@ -3489,9 +3692,12 @@ alone. The case that does cost something is a configured MCP server, which conne
   runtime <code>add_mcp_server</code>, and the startup <code>--mcp &lt;url&gt;</code> flag, both derive a name from the server's host
   and disambiguate it (shared logic) against every other name already claimed -- on file for
   <code>add_mcp_server</code>, across the flag's own URLs for <code>--mcp</code> -- so neither can produce a config, or a set of
-  servers in one run, the registry's collision check would reject. That derived name still reaches no
-  agent until a human puts it in an <code>[agents.*]</code> table, since that section is locked by default: neither
-  can grant itself the capability.</li>
+  servers in one run, the registry's collision check would reject. That derived name reaches no agent in
+  the session that added it, since servers are not re-read mid-session; after a restart it reaches an
+  agent declaring <code>available = "all"</code>, and any other only once a human puts it in an <code>[agents.*]</code> table,
+  which is locked by default: neither can grant itself the capability. A bearer-token server added at
+  runtime is not written to the file, so <code>add_mcp_server</code>'s result now says nothing can use it and its
+  token is not saved, and names the <code>[[mcp.server]]</code> entry with <code>token_env</code> that would keep it.</li>
 <li><strong>Per-server bearer tokens via environment variables.</strong> Each <code>[[mcp.server]]</code> takes a required <code>url</code>, a
   required <code>name</code>, and an optional <code>token_env</code> naming the variable holding that server's token, read
   at startup so the secret stays out of <code>config.toml</code>. A <code>token_env</code> whose variable is unset logs a
@@ -3786,9 +3992,13 @@ notice on startup.</p>
   key, whether both drivers drained all three branches a steered turn could take, whether the three
   stream consumers rendered the phase, whether the budget reset on a drained mailbox was bounded, and
   whether a misbehaving host source was caught rather than trusted. <code>Inbox</code> joins the probe's job.
-  Today the floor is <strong>0.36.0</strong>: every run event carries <code>run_id</code> and <code>parent_run_id</code>, which the request
-  records behind "what the model saw" are keyed by, and the startup check is a signature check on
-  <code>aimu.events.RunEvent</code> for its <code>run_id</code> field. Before it the floor was <strong>0.34.0</strong>, the first one a rename alone moved: AIMU renamed its
+  Today the floor is <strong>0.37.0</strong>: a spawned worker's spec carries a <code>"tool_approval"</code> key, which is what lets
+  each agent's tool calls be judged by its own approval policy; its absence raises loudly, so the startup
+  check stays where it was. Residency rides the same release's <code>ToolGroup</code>, and the check skips it for the
+  same reason: the core imports it at module scope, so an AIMU without it fails at import, after the
+  check and before any conversation. Before it the floor was <strong>0.36.0</strong>: every run event carries <code>run_id</code> and
+  <code>parent_run_id</code>, which the request records behind "what the model saw" are keyed by, and the startup
+  check is a signature check on <code>aimu.events.RunEvent</code> for its <code>run_id</code> field. Before that it was <strong>0.34.0</strong>, the first one a rename alone moved: AIMU renamed its
   mid-turn-message seam from <code>Steering</code> to <code>Inbox</code>, with no legacy path, and taught it which agent is
   opening each reader. <code>Inbox.reader(agent=...)</code> is called once per run, at its start, and <code>agent</code> is
   that run's own name, offered so a host can route a message to the one run it was meant for rather than

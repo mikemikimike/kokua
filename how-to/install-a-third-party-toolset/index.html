@@ -1239,6 +1239,8 @@
       
         
       
+        
+      
     
     
     
@@ -1308,6 +1310,34 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/tool-access/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool access
   
 
     
@@ -1582,7 +1612,8 @@ four steps apply to any third-party toolset, and jobme is simply carried through
 example.</p>
 <blockquote>
 <p>A toolset that is installed, even one that is connected or running, does nothing until an
-<code>[agents.&lt;name&gt;].tools</code> list names it. Installing it is never the last step.</p>
+<code>[agents.&lt;name&gt;.tools].available</code> list names it, or an agent declares <code>available = "all"</code> (from the
+next start). Installing it is never the last step.</p>
 </blockquote>
 <h2 id="what-kokua-sees-when-you-install-one">What Kokua sees when you install one<a class="headerlink" href="#what-kokua-sees-when-you-install-one" title="Permanent link">&para;</a></h2>
 <p>Kokua discovers toolsets at startup with <code>kokua.plugins.discover_toolsets</code>, which reads every entry
@@ -1596,7 +1627,7 @@ group is found the moment it is installed into the environment Kokua runs in.</p
 </span></code></pre></div>
 <p>The key on the left, <code>jobme</code>, is the name that lands in Kokua's one toolset namespace, alongside <code>web</code>,
 <code>memory</code>, an MCP server's own name, and every built-in. It is also the exact name you write into
-<code>[agents.&lt;name&gt;].tools</code> below, and it must equal the <code>Toolset.name</code> the entry points at: Kokua's own
+<code>[agents.&lt;name&gt;.tools].available</code> below, and it must equal the <code>Toolset.name</code> the entry points at: Kokua's own
 built-ins are pinned against that agreement by <code>tests/toolsets/test_registration.py</code>, but a third-party
 package has no such test running against it, so a mismatched name here would register a plugin silently
 under the wrong word. An entry point is inert until something loads its group, which is why jobme's own
@@ -1649,11 +1680,11 @@ which is how <code>--list-toolsets</code> answers "where did this name come from
 package is not installed into the environment Kokua is actually running from, a different mistake from
 anything covered further down this page.</p>
 <h2 id="declare-it-on-an-agent">Declare it on an agent<a class="headerlink" href="#declare-it-on-an-agent" title="Permanent link">&para;</a></h2>
-<p>Installing jobme grants nothing by itself. Add its name to the <code>tools</code> list of the agent that should
+<p>Installing jobme grants nothing by itself. Add its name to the <code>available</code> list of the agent that should
 hold it, most often the entry agent:</p>
-<div class="language-toml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">[agents.assistant]</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">tools</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"memory"</span><span class="p">,</span><span class="w"> </span><span class="s2">"documents"</span><span class="p">,</span><span class="w"> </span><span class="s2">"skills"</span><span class="p">,</span><span class="w"> </span><span class="s2">"config"</span><span class="p">,</span><span class="w"> </span><span class="s2">"mcp"</span><span class="p">,</span><span class="w"> </span><span class="s2">"scheduling"</span><span class="p">,</span><span class="w"> </span><span class="s2">"conversations"</span><span class="p">,</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">         </span><span class="s2">"planning"</span><span class="p">,</span><span class="w"> </span><span class="s2">"capabilities"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">,</span><span class="w"> </span><span class="s2">"jobme"</span><span class="p">]</span>
+<div class="language-toml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">[agents.assistant.tools]</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">available</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"memory"</span><span class="p">,</span><span class="w"> </span><span class="s2">"documents"</span><span class="p">,</span><span class="w"> </span><span class="s2">"skills"</span><span class="p">,</span><span class="w"> </span><span class="s2">"config"</span><span class="p">,</span><span class="w"> </span><span class="s2">"mcp"</span><span class="p">,</span><span class="w"> </span><span class="s2">"scheduling"</span><span class="p">,</span><span class="w"> </span><span class="s2">"conversations"</span><span class="p">,</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">             </span><span class="s2">"planning"</span><span class="p">,</span><span class="w"> </span><span class="s2">"capabilities"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">,</span><span class="w"> </span><span class="s2">"benchmark"</span><span class="p">,</span><span class="w"> </span><span class="s2">"messaging"</span><span class="p">,</span><span class="w"> </span><span class="s2">"jobme"</span><span class="p">]</span>
 </span></code></pre></div>
 <p>Restart Kokua. Agent tables are read at startup, so the edit takes effect on the next process, not the
 next message. Once it does, that agent holds jobme's two tools, <code>tailor_application</code> and
@@ -1677,14 +1708,19 @@ written. None of jobme's four keys are marked hot, so, like the declaration abov
 restart before the running assistant reads it.</p>
 <h2 id="gate-the-expensive-tool">Gate the expensive tool<a class="headerlink" href="#gate-the-expensive-tool" title="Permanent link">&para;</a></h2>
 <p><code>tailor_application</code> runs the whole pipeline: several minutes, and real provider spend on every call.
-That is exactly what <code>[security].confirm_tools</code> exists for, so add it there:</p>
-<div class="language-toml highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">[security]</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">confirm_tools</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"compute.execute_python"</span><span class="p">,</span><span class="w"> </span><span class="s2">"compute.run_command"</span><span class="p">,</span><span class="w"> </span><span class="s2">"config.update_config"</span><span class="p">,</span><span class="w"> </span><span class="s2">"jobme.tailor_application"</span><span class="p">]</span>
+That is exactly what an approval policy exists for, so add it to <code>confirm</code> in <code>[assistant.tools]</code>
+(the default every agent without its own policy inherits; see <a href="../../explanation/tool-access/">Tool access</a>).
+Declaring <code>confirm</code> replaces the default pair whole, so write out the entries you want to keep, and keep
+<code>review</code> too, or its entries stop being gated at all:</p>
+<div class="language-toml highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">[assistant.tools]</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">confirm</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"skills.add_skill_script"</span><span class="p">,</span><span class="w"> </span><span class="s2">"mcp.add_mcp_server"</span><span class="p">,</span><span class="w"> </span><span class="s2">"config.update_config"</span><span class="p">,</span><span class="w"> </span><span class="s2">"jobme.tailor_application"</span><span class="p">]</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">review</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"compute.run_command"</span><span class="p">,</span><span class="w"> </span><span class="s2">"compute.execute_python"</span><span class="p">,</span><span class="w"> </span><span class="s2">"fs_write"</span><span class="p">]</span>
 </span></code></pre></div>
 <p>Every entry names the toolset providing the tool, which for a third party's is the same name your agent
 declared: <code>jobme.tailor_application</code> for the one tool, or a bare <code>jobme</code> for everything the toolset
-offers. Make the two edits in this order. <code>confirm_tools</code> is checked against every tool this config
-actually builds, so an entry naming a toolset no agent declares fails startup and says so; jobme has to
+offers. Make the two edits in this order. A gate entry is checked against the tools the config actually builds
+(the default tier against every agent's, an agent's own pair against its own <code>available</code> list), so an
+entry naming a toolset no agent declares fails startup and says so; jobme has to
 be declared on some agent first, whether in the same file or an earlier run, before
 <code>tailor_application</code> exists for this list to name at all.</p>
 <p>The consequence worth knowing before you lean on it: a proactive turn, meaning a scheduled task or
@@ -1744,8 +1780,8 @@ skill on disk rather than a scoped list.</p>
   why installing, or even connecting, is never the last step.</li>
 <li><a href="../../reference/configuration/#toolset-sections">Configuration reference</a>: how any toolset's <code>[&lt;name&gt;]</code>
   section is validated, and what a name collision with a core section does.</li>
-<li><a href="../../reference/configuration/#confirm_tools">Configuration reference</a>: the full behavior of
-  <code>[security].confirm_tools</code>, including the three entry forms and the four ways an entry can gate
+<li><a href="../../reference/configuration/#assistanttools">Configuration reference</a>: the full behavior of
+  <code>[assistant.tools]</code>, including the three entry forms and the five ways an entry can gate
   nothing.</li>
 </ul>
 

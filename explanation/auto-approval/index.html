@@ -13,7 +13,7 @@
         <link rel="canonical" href="https://saxman.info/kokua/explanation/auto-approval/">
       
       
-        <link rel="prev" href="../architecture/">
+        <link rel="prev" href="../tool-access/">
       
       
         <link rel="next" href="../design-principles/">
@@ -1101,6 +1101,8 @@
       
         
       
+        
+      
     
     
     
@@ -1173,6 +1175,34 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tool-access/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool access
   
 
     
@@ -1639,13 +1669,17 @@
 
 
 <h1 id="auto-approval">Auto-approval<a class="headerlink" href="#auto-approval" title="Permanent link">&para;</a></h1>
-<p>Kokua stops and asks you before it runs a shell command, executes Python, or writes a file. That is
-<a href="../../reference/configuration/#confirm_tools"><code>[security].confirm_tools</code></a>, and it is the control that
-makes a real assistant with real machine access something you can leave running. It is also the
-control you get tired of. A turn that reads six files and runs four commands is ten prompts, and a
+<p>Kokua stops and asks you before it runs a shell command, executes Python, or writes a file. That is each
+agent's approval policy, the <code>confirm</code> and <code>review</code> lists of
+<a href="../../reference/configuration/#assistanttools"><code>[assistant.tools]</code></a> or of the agent's own
+<a href="../../reference/configuration/#agentsnametools"><code>[agents.&lt;name&gt;.tools]</code></a> (the approval axis in
+<a href="../tool-access/">Tool access</a>), and it is the control that makes a real assistant with real machine
+access something you can leave running. It is also the control you get tired of. A turn that reads six files and runs four commands is ten prompts, and a
 prompt you answer without reading is worse than no prompt at all.</p>
 <p>Auto-approval is an optional layer over that gate: a declared model reviewer, running on its own model
-with a prompt you wrote, may answer some of those prompts in your place. It ships <strong>off</strong>, and this
+with a prompt you wrote, may answer the prompts for calls in a policy's <code>review</code> list in your place. Which
+calls those are is declared per agent, in the same table as the rest of its approval policy, so a <code>coder</code>
+can have a reviewer on <code>fs_write</code> while a <code>researcher</code> has none. It ships <strong>off</strong>, and this
 page is meant to be read before you switch it on.</p>
 <h2 id="the-security-claim-in-one-sentence">The security claim, in one sentence<a class="headerlink" href="#the-security-claim-in-one-sentence" title="Permanent link">&para;</a></h2>
 <p><strong>A review can only turn a prompt into an approval, never widen what you could have approved
@@ -1718,12 +1752,15 @@ constraining anything.</p>
 <a href="../../reference/configuration/#never_auto_approve"><code>[security].never_auto_approve</code></a>, and no reviewer
 may ever answer for them:</p>
 <ul>
-<li><code>config.update_config</code> can widen <code>[security].confirm_tools</code>, or <code>never_auto_approve</code> itself.</li>
+<li><code>config.update_config</code> can widen an approval policy's <code>confirm</code> or <code>review</code> lists, or <code>never_auto_approve</code>
+  itself.</li>
 <li><code>skills.add_skill_script</code> writes a script that becomes a tool the next turn can call.</li>
 <li><code>mcp.add_mcp_server</code> adds a whole source of tools.</li>
 </ul>
-<p>Naming one of them in <code>[security.auto_approval].tools</code> is a startup error, not a warning. The list is
-yours to empty by hand, like every control in that section, and what emptying it buys is a reviewer
+<p>Naming one of them in any policy's <code>review</code> list is a startup error, not a warning, whether by the
+tool itself or by its whole toolset (<code>mcp</code>, <code>mcp.*</code>), and even while that toolset is still waiting to be
+loaded, though only when auto-approval is enabled: with it off nothing consults the floor, so there is nothing for the entry to
+fail to hold back. The list is yours to empty by hand, like every control in that section, and what emptying it buys is a reviewer
 that can approve a capability grant.</p>
 <p>Everything else a gate holds back is eligible, and the shipped list is worth reading as an argument
 rather than a setting. It names both <code>compute</code> execution tools, which looks like the less cautious
@@ -1823,8 +1860,8 @@ turn a withheld answer into an approval.</p>
 <p><strong>The agent being reviewed can read the reviewer's prompt.</strong> <code>config.toml</code> is the single source of
 settings and it is yours, so the assistant's own <code>read_config</code> hands back the file unredacted; the
 shipped <code>[agents.assistant]</code> holds the <code>config</code> toolset, so the agent whose calls are being reviewed
-can read <code>[reviewers.approval].system_message</code> verbatim, along with <code>[security.auto_approval].tools</code>
-and <code>max_per_turn</code>. <code>[security].confirm_tools</code> was already readable the same way, and this is the same
+can read <code>[reviewers.approval].system_message</code> verbatim, along with its own <code>review</code> list and
+<code>max_per_turn</code>. The <code>confirm</code> list was already readable the same way, and this is the same
 consequence of the same principle rather than a new one. It is a different claim from the admission
 above: that one is about <em>you</em> editing the standard, this one is about the reviewed model knowing which
 standard it will be held to, which tools it is worth trying, and how many attempts the budget allows.
@@ -1843,7 +1880,7 @@ exercising your own budget. The whole of that rule is one sender test in <code>M
 <p>Worth reading even if you never turn this on, because the differences are design decisions rather than
 details. What follows describes each project as its own documentation and configuration had it in
 September 2026, when this page was written. None of it can be checked from inside this repository, so
-every figure and every enumerated rule below is attributed to whoever published it. All three projects
+every figure and every enumerated rule below is attributed to whoever published it. All of these projects
 move faster than this page will: treat a claim here as a pointer to their documentation rather than as
 its current state.</p>
 <p><strong>OpenClaw</strong> ships the closest analogue, <code>tools.exec.mode: "auto"</code>. A static policy runs first, only
@@ -1862,6 +1899,12 @@ reporting about the feature rather than from Cursor's own documentation, which d
 read it as the order of magnitude a sandboxed, allowlist-first design reached and not as a number to
 hold anyone to. Cursor states plainly that the classifier is best-effort convenience and explicitly not
 a security boundary.</p>
+<p><strong>Managed Agents</strong> (Anthropic) has the same three-way split Kokua's policy has, under other names: a
+tool's permission policy is <code>always_allow</code>, <code>always_ask</code>, or <code>auto</code>. The first two are Kokua's "no entry"
+and <code>confirm</code>; <code>auto</code> is the one that resembles <code>review</code>, and the difference is the one this page
+is about. Under <code>auto</code> the model's verdict stands, so a reviewer can both approve and refuse. In Kokua a
+<code>review</code> reviewer can only approve, and a withheld answer arrives at your prompt, so there is no bucket in
+which a model's no is final.</p>
 <p><strong>Hermes Agent</strong> deliberately does not do this at all. Its Tirith layer is documented as four static
 risk tiers plus human approval, with a hardline blocklist that trips before the approval layer sees a
 command and has no override flag. That is a considered rejection rather than an absence, and it is the
@@ -1878,28 +1921,34 @@ support than either.</p>
 <p>Kokua's <a href="../design-principles/">design principles</a> say capability should arrive as a plugin, so a
 feature landing in <code>core/</code> owes an argument. This one is not a capability: it is a change to how an
 existing human decision point behaves, inside the one function that owns that decision
-(<code>HumanGate.approve</code>). A toolset cannot express it, because a toolset contributes tools and settings,
+(<code>HumanGate.approve</code>, which takes the asking agent's name and judges the call by that agent's own
+policy). A toolset cannot express it, because a toolset contributes tools and settings,
 not a fork in the gate every tool passes through.</p>
 <p>It also lands squarely inside principle 6 (security is explicit and user controlled) rather than beside
-it. Every part of it is a value in <code>config.toml</code> you can read: which tools, which reviewers, which
-prompt, how long to wait, how many per turn. A control that would do nothing (a reviewer nobody
+it. Every part of it is a value in <code>config.toml</code> you can read: which tools (each policy's <code>review</code> list),
+which reviewers, which prompt, how long to wait, how many per turn. A control that would do nothing (a reviewer nobody
 declared, a tool nothing gates, a prompt nobody wrote) is a hard startup error, because the symptom of
 a broken gate is the absence of a symptom.</p>
 <h2 id="turning-it-on">Turning it on<a class="headerlink" href="#turning-it-on" title="Permanent link">&para;</a></h2>
-<p>Read <a href="../../reference/configuration/#securityauto_approval"><code>[security.auto_approval]</code></a> and
+<p>Move the entries you want reviewed from <code>confirm</code> into <code>review</code> (see
+<a href="../../reference/configuration/#assistanttools"><code>[assistant.tools]</code></a>; enabling the feature with no <code>review</code>
+entry anywhere is a startup error). Read
+<a href="../../reference/configuration/#securityauto_approval"><code>[security.auto_approval]</code></a> and
 <a href="../../reference/configuration/#reviewersname"><code>[reviewers.&lt;name&gt;]</code></a> for every key, then edit
-<code>config.toml</code> by hand (the whole <code>[security]</code> section is locked against the assistant's own
-<code>update_config</code>, and this table is startup-only, so a hand-edit and a restart is the only route).</p>
+<code>config.toml</code> by hand (the whole <code>[security]</code> section and <code>[assistant.tools]</code> are locked against the
+assistant's own <code>update_config</code>, and both are startup-only, so a hand-edit and a restart is the only
+route).</p>
 <p>The shipped
 <a href="https://github.com/saxman/kokua/blob/main/src/kokua/config.example.toml"><code>config.example.toml</code></a>
 already carries a <code>[reviewers.approval]</code> table with a real prompt, so switching on is <code>enabled = true</code>
-plus a decision about which tools and which model. Two suggestions worth taking:</p>
+plus a decision about which tools go in <code>review</code> and which model. Two suggestions worth taking:</p>
 <ul>
 <li><strong>Point the reviewer at a different model from <code>[assistant].model</code>.</strong> A reviewer running the same
   model as the agent it reviews can be talked out of the same judgement by the same text. Startup warns
   when the two match.</li>
-<li><strong>Start with one tool.</strong> <code>tools = ["fs_write"]</code> on a machine where you have backups tells you what
-  the reviewer's judgement is actually like, at a cost you can see.</li>
+<li><strong>Start with one tool.</strong> <code>review = ["fs_write"]</code> in <code>[assistant.tools]</code> (with the rest moved to
+  <code>confirm</code>) on a machine where you have backups tells you what the reviewer's judgement is actually like,
+  at a cost you can see.</li>
 </ul>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>

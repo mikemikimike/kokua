@@ -1206,6 +1206,8 @@
       
         
       
+        
+      
     
     
     
@@ -1275,6 +1277,34 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/tool-access/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool access
   
 
     
@@ -1728,7 +1758,7 @@ way AIMU's spawn tool labels it.</p>
 <p><strong>The capability is two tools, declared like every other.</strong>
 <a href="https://github.com/saxman/kokua/blob/main/src/kokua/toolsets/messaging.py"><code>toolsets/messaging.py</code></a>
 registers <code>send_message(to, text)</code> and <code>list_agents()</code> through the <code>kokua.toolsets</code> entry point, and an
-agent holds them because its <code>[agents.&lt;name&gt;].tools</code> names <code>messaging</code>. The shipped config names it on
+agent holds them because its <code>[agents.&lt;name&gt;.tools].available</code> names <code>messaging</code>. The shipped config names it on
 the entry agent and on all three shipped workers, and the two cases are declared for different reasons,
 which is worth separating because it is easy to say "both directions need it" and be wrong. <strong>Being a
 recipient needs no toolset at all</strong>: a worker receives because the loop drains the reader its spec
@@ -1741,11 +1771,11 @@ sends reach nobody. It marks the caller's own line <code>(you)</code> (the captu
 mirror-image failure: a worker that cannot tell its own address from a sibling's will message itself.
 One did, asking <code>report-writer#1</code> to check a file it believed <code>report-writer#1</code> had written, while being
 <code>report-writer#1</code>; its own words came back on the next drain, and it read them as an echo.</p>
-<div class="language-toml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">[agents.assistant]</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">tools</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"memory"</span><span class="p">,</span><span class="w"> </span><span class="s2">"documents"</span><span class="p">,</span><span class="w"> </span><span class="s2">"skills"</span><span class="p">,</span><span class="w"> </span><span class="s2">"config"</span><span class="p">,</span><span class="w"> </span><span class="s2">"mcp"</span><span class="p">,</span><span class="w"> </span><span class="s2">"scheduling"</span><span class="p">,</span><span class="w"> </span><span class="s2">"conversations"</span><span class="p">,</span><span class="w"> </span><span class="s2">"planning"</span><span class="p">,</span><span class="w"> </span><span class="s2">"capabilities"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">,</span><span class="w"> </span><span class="s2">"benchmark"</span><span class="p">,</span><span class="w"> </span><span class="s2">"messaging"</span><span class="p">]</span>
+<div class="language-toml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">[agents.assistant.tools]</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">available</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"memory"</span><span class="p">,</span><span class="w"> </span><span class="s2">"documents"</span><span class="p">,</span><span class="w"> </span><span class="s2">"skills"</span><span class="p">,</span><span class="w"> </span><span class="s2">"config"</span><span class="p">,</span><span class="w"> </span><span class="s2">"mcp"</span><span class="p">,</span><span class="w"> </span><span class="s2">"scheduling"</span><span class="p">,</span><span class="w"> </span><span class="s2">"conversations"</span><span class="p">,</span><span class="w"> </span><span class="s2">"planning"</span><span class="p">,</span><span class="w"> </span><span class="s2">"capabilities"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">,</span><span class="w"> </span><span class="s2">"benchmark"</span><span class="p">,</span><span class="w"> </span><span class="s2">"messaging"</span><span class="p">]</span>
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="k">[agents.researcher]</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">tools</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"web"</span><span class="p">,</span><span class="w"> </span><span class="s2">"misc"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">,</span><span class="w"> </span><span class="s2">"messaging"</span><span class="p">]</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="k">[agents.researcher.tools]</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">available</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"web"</span><span class="p">,</span><span class="w"> </span><span class="s2">"misc"</span><span class="p">,</span><span class="w"> </span><span class="s2">"time"</span><span class="p">,</span><span class="w"> </span><span class="s2">"messaging"</span><span class="p">]</span>
 </span></code></pre></div>
 <p><strong>The sender's own address is not an argument, and cannot be.</strong> A tool is a plain callable; nothing in
 its arguments or its call stack names the run invoking it. So <code>send_message</code> reads a <code>current_address</code>
@@ -1865,7 +1895,7 @@ which is also why its answer grows as the turn goes on rather than describing a 
   the bus, the two cursors, invariants 9 and 10, and what each channel does with a delivery.</li>
 <li><a href="../../explanation/auto-approval/">Auto-approval</a>: the reviewer whose view of the request an agent's
   message is kept out of.</li>
-<li><a href="../../reference/configuration/#tools">Configuration reference</a>: the <code>tools</code> list, and
+<li><a href="../../reference/configuration/#agentsnametools">Configuration reference</a>: the <code>available</code> list, and
   <a href="../../reference/configuration/#agentsname"><code>[agents.&lt;name&gt;]</code></a> for the two names an agent may not be
   given, because the bus already uses them.</li>
 </ul>

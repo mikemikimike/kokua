@@ -1101,6 +1101,8 @@
       
         
       
+        
+      
     
     
     
@@ -1173,6 +1175,34 @@
     
   
     Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tool-access/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool access
   
 
     
@@ -1759,7 +1789,7 @@ Kokua's own (<code>benchmark</code>, <code>github_backup</code>, <code>image</co
 different route than any other, which is what makes the claim above testable rather than aspirational.
 <code>kokua --list-toolsets</code> prints the namespace grouped by provider, and from the outside the grouping is
 the only way to tell a shipped toolset from a third party's, a configured server, or a skill: an agent's
-<code>tools</code> list names <code>"scheduling"</code>, <code>"image"</code> and a skill's own name identically, so a capability can
+<code>available</code> list names <code>"scheduling"</code>, <code>"image"</code> and a skill's own name identically, so a capability can
 change provider without touching an agent.
 Inside, no asymmetry remains: every toolset keeps the <code>build</code> its author wrote, and one that fails to
 import or to build stops startup naming itself, whoever wrote it. Kokua ships no third-party code, so it
@@ -1770,8 +1800,20 @@ rather than assumed. The short version is that it contributes no capability: it 
 existing human decision point behaves, inside the single function that owns that decision, and a
 toolset contributes tools and settings rather than a fork in the gate every tool passes through.</p>
 <h3 id="corollary-a-capability-is-declared-never-defaulted">Corollary: a capability is declared, never defaulted<a class="headerlink" href="#corollary-a-capability-is-declared-never-defaulted" title="Permanent link">&para;</a></h3>
-<p>An agent's capability is exactly what its <code>[agents.&lt;name&gt;].tools</code> table declares. <strong>No code path adds a
-tool an agent did not name, and no flag can disagree with a declaration.</strong></p>
+<p><strong>Availability is declared, never defaulted; <code>"all"</code> is one value a declaration can take.</strong> An agent's
+capability is exactly what its <code>[agents.&lt;name&gt;.tools].available</code> key declares: a list of toolset names,
+or the string <code>"all"</code> for every installed toolset. <strong>No code path adds a tool an agent did not declare,
+and no flag can disagree with a declaration.</strong> Availability is one of three questions Kokua keeps apart
+(see <a href="../tool-access/">Tool access</a>), and it is the only one with this rule: what an agent <em>may call</em> is
+never inferred, while what asks first is an inherited default an agent may override whole.</p>
+<p><code>"all"</code> is not an exception to the rule, and the difference is worth stating. A default is what an agent
+gets because nobody wrote anything; <code>"all"</code> is written, by a person, in the agent's own table, which is
+locked against the assistant's <code>update_config</code> by default. What it changes is how that one agent fails
+on growth: a plugin you install or a skill the assistant writes reaches it, because you said so, while
+every agent with a list still grows only by an edit. It also cannot reach past what a declaration
+reaches anyway: not the <code>core</code> tools, not <code>skills</code> on a worker, and not an MCP server added at runtime
+until a restart (see <a href="../tool-access/#available-all-every-installed-toolset-still-declared">Tool
+access</a>).</p>
 <p><em>How this cashes out:</em> <code>[assistant].memory</code> and the <code>--memory</code> / <code>--tools</code> flags were removed rather
 than kept alongside the <code>memory</code> and <code>documents</code> toolsets, because a second switch for one capability
 means one of the two is lying. <code>time</code> is a toolset every agent that wants a clock declares, where it
@@ -1787,25 +1829,26 @@ an exception at one level and not at the next: only an agent whose own table nam
 tool at all, so the exception is still entered by declaration. What the rule protects is a <em>persistent</em>
 agent's reach, and a sub-agent composed for one task is not an agent the config describes. Its reach is
 constructed per call and dies with the call. The call-time gate does not move either: a composed
-sub-agent's
-<code>execute_python</code> is routed to the user by <code>[security] confirm_tools</code> exactly as a declared worker's is.</p>
+sub-agent's tools are gated too, under the default <code>[assistant.tools]</code> pair, since no table describes it
+and a worker built from the whole registry for one call is never less governed than the default.</p>
 <p><strong><code>cross_cutting</code> is not an authorization boundary,</strong> and reading it as one would be a false security
 conclusion. It decides exactly one sentence of prompt guidance (whether an agent is told it is a lean
-supervisor that must delegate) and nothing else. A worker whose table declares <code>tools = ["config"]</code>
+supervisor that must delegate) and nothing else. A worker whose table declares <code>available = ["config"]</code>
 really does get <code>update_config</code>; a worker declaring <code>compute</code> really does get <code>execute_python</code>. That is
 intentional: filtering a declaration in code is precisely the behavior this design removes. The security
 boundary is elsewhere, and it is two things: <code>[agents.*]</code> is locked by default in
 <code>[security].locked_config_keys</code>, so a human writing the table <em>is</em> the consent under the shipped policy,
-and <code>[security] confirm_tools</code> gates the dangerous calls at call time no matter which agent makes them
-(a worker's gated call is routed to the user for approval, and an unattended turn auto-denies).</p>
+and each agent's own approval policy (<code>confirm</code> and <code>review</code> in <code>[assistant.tools]</code> or the agent's
+<code>[agents.&lt;name&gt;.tools]</code>) gates the dangerous calls at call time no matter which agent makes them (a
+worker's gated call is routed to the user for approval, and an unattended turn auto-denies).</p>
 <p><code>update_config</code> refusing to touch <code>[agents.*]</code> by default is not the only thing standing between it and
 being rewritten by the assistant itself: the entry agent's <code>add_skill_script</code> and a <code>compute</code> worker's
 <code>execute_python</code> both have the machine access to overwrite <code>config.toml</code> directly, bypassing
-<code>update_config</code>'s refusal entirely. <code>confirm_tools</code> gating both by default is what makes "locked by
+<code>update_config</code>'s refusal entirely. The default policy gating both is what makes "locked by
 default" hold in practice rather than only in <code>update_config</code>'s own code, and it is why
-<code>[security] confirm_tools</code> is itself one of the locked-by-default keys. <code>config.example.toml</code> documents
-<code>confirm_tools = []</code> as the way to turn approval off, so this backstop is a default a user can remove,
-not a wall.</p>
+<code>[assistant.tools]</code> is itself one of the locked-by-default sections (<code>assistant.tools.*</code>).
+Emptying both <code>confirm</code> and <code>review</code> in <code>[assistant.tools]</code> turns the default approvals off (emptying
+<code>confirm</code> alone leaves <code>review</code> prompting), so this backstop is a default a user can remove, not a wall.</p>
 <h2 id="3-configtoml-is-the-single-source-of-settings-and-the-app-writes-it">3. <code>config.toml</code> is the single source of settings, and the app writes it<a class="headerlink" href="#3-configtoml-is-the-single-source-of-settings-and-the-app-writes-it" title="Permanent link">&para;</a></h2>
 <p>One settings file, hand-authorable and app-writable, with its comments preserved across the app's own
 writes. No parallel store, no process-only overrides, no settings that exist in memory and nowhere
@@ -1815,13 +1858,15 @@ else. One file is also what makes a running system's whole configuration legible
 <code>tomlkit</code> writes; two writers (<code>add_mcp_server</code> and the assistant's own <code>update_config</code> tool) land in
 that one file. A <code>runtime-settings.json</code> store used to exist and was
 retired in favour of the file itself. <code>[security].locked_config_keys</code> is a user-set list of patterns
-naming what <code>update_config</code> refuses even behind the approval prompt, and it ships with seven patterns.
+naming what <code>update_config</code> refuses even behind the approval prompt, and it ships with eight patterns.
 The first is the whole <code>[security]</code> section rather than any one key in it, which is the pattern worth
-reading closely, because what that section holds has grown: the approval gate (<code>confirm_tools</code>), the
-<code>[security.auto_approval]</code> sub-table and the <code>never_auto_approve</code> floor beneath it, and the lock list
-itself. Every control this principle is about is therefore hand-edit-only by default, not just the one
-that was there first. The rest are <code>[email] to</code> (the locked recipient), <code>[paths] data_dir</code> (where all
-state lives), the whole <code>[agents.*]</code> and <code>[reviewers.*]</code> sections, <code>[scheduling.task.*]</code> (see below,
+reading closely, because what that section holds has grown: the <code>[security.auto_approval]</code> sub-table,
+the <code>never_auto_approve</code> floor beneath it, and the lock list itself. The approval policy itself moved out
+of <code>[security]</code> into <code>[assistant.tools]</code>, so that table has a pattern of its own, <code>assistant.tools.*</code>,
+taking over the lock <code>security.*</code> once gave the old <code>confirm_tools</code>. Every control this principle is about
+is therefore hand-edit-only by default, not just the one that was there first. The rest are <code>[email] to</code>
+(the locked recipient), <code>[paths] data_dir</code> (where all state lives), the whole <code>[agents.*]</code> (which includes
+each agent's <code>[agents.&lt;name&gt;.tools]</code> and so its own approval pair) and <code>[reviewers.*]</code> sections, <code>[scheduling.task.*]</code> (see below,
 where the reason is routing rather than capability), and <code>[compute] command_env_passthrough</code>, which
 decides which environment variables a <code>run_command</code> child can see. The two section patterns are matched
 by prefix rather than by a key entry, since agent and reviewer names cannot be enumerated ahead of
@@ -1902,32 +1947,41 @@ removing capability. It is bought by putting a control beside every dangerous th
 control yours: declared where you can see it, bounded by a value you wrote, and loud when it is doing
 nothing. That balance is the principle. Capability is not reduced; control is added next to it.</p>
 <p><strong>A security control is a value in <code>config.toml</code>, never a constant in the source.</strong> Which tools need
-your confirmation before each call is <code>[security] confirm_tools</code>. Which keys the assistant's own
-<code>update_config</code> may not write is <code>[security] locked_config_keys</code>, a list you author. What any agent may
-call at all is that agent's own <code>tools</code> list. Kokua ships a default for each, but a default in a file
+your confirmation before each call is <code>confirm</code> in <code>[assistant.tools]</code>, or in an agent's own
+<code>[agents.&lt;name&gt;.tools]</code>, and which ask a reviewer first is the <code>review</code> beside it. Which keys the
+assistant's own <code>update_config</code> may not write is <code>[security] locked_config_keys</code>, a list you author. What
+any agent may call at all is that agent's own <code>available</code> list. Kokua ships a default for each, but a default in a file
 you can read and edit is not the same thing as a rule compiled in.</p>
 <p><strong>A control that would do nothing fails startup.</strong> This is the failure mode a security setting has and
 an ordinary setting does not: silence. A gate naming a tool that does not exist prompts for nothing, and
 a lock pattern matching no real key locks nothing. You notice a prompt you did not expect; nobody
 notices a prompt that never comes. Both are hard startup errors naming the offending entry, because the
 alternative is a user who believes they are covered and is not.</p>
+<p>One gate entry cannot be judged at startup: one naming a toolset an agent loads on demand and no
+agent holds resident (see
+<a href="../tool-access/#residency-what-is-in-context-and-what-loads-on-demand">residency</a>), whose tool names do
+not exist until it is built. Startup checks its shape, and the build checks the rest before it returns a
+single tool, whoever triggered it. An entry that still matches nothing, typically a misnamed tool,
+refuses that build and every later one, so the toolset cannot load until the entry is fixed and
+Kokua restarted. That is the same rule applied at the first moment it can be, and it fails closed: a misspelled gate holds the capability back rather than
+letting it arrive ungated.</p>
 <p><strong>A capability the config cannot describe is a capability you do not control.</strong> That sounds abstract
 until a dependency makes it concrete, which AIMU 0.31.0 did: it added <code>write_file</code> and <code>edit_file</code> into
 the <code>fs</code> tool group Kokua had been handing out whole, so an upgrade alone would have given every agent
-declaring <code>fs</code> a write that no <code>tools</code> list ever asked for. The answer was not a flag: <code>fs</code> reads and
+declaring <code>fs</code> a write that no <code>available</code> list ever asked for. The answer was not a flag: <code>fs</code> reads and
 <code>fs_write</code> writes, as two names, because with one name there is no way to <em>write down</em> "read a file and
 do not write one". The shipped <code>introspector</code> declares <code>fs</code> to read a transcript it was asked to
 evaluate, and its inability to rewrite that transcript is now a property of the config rather than a
-hope about the group's contents. The writers are gated in <code>confirm_tools</code> beside <code>run_command</code> for a
+hope about the group's contents. The writers are gated in <code>review</code> beside <code>run_command</code> for a
 related reason: <code>coder</code> holds a shell that can write a file, so an ungated <code>write_file</code> next to it would
 be the same outcome by a shorter route, with the gate approving the long way round and waving the short
 one through.</p>
 <p><strong>A control may sit above the gate as well as beside it, and it says which it is.</strong>
-<code>[security.auto_approval]</code> (off by default) lets a declared reviewer answer a gated call's prompt in the
-user's place, and it is a convenience layer rather than a boundary: its whole security claim is that a
+<code>[security.auto_approval]</code> (off by default) lets a declared reviewer answer the prompt for a call in a
+policy's <code>review</code> list in the user's place, and it is a convenience layer rather than a boundary: its whole security claim is that a
 review can only turn a prompt into an approval, never widen what the user could have approved
 themselves. The reason it belongs under this principle rather than beside it is that every part of it is
-a value in the file (which tools, which reviewers, which prompt, how long to wait, how many per turn),
+a value in the file (which tools via each <code>review</code> list, which reviewers, which prompt, how long to wait, how many per turn),
 and a part that would do nothing is a startup error like any other control here. What a review can be
 about is one <em>action</em>, never a capability, so <code>[security].never_auto_approve</code> floors the three tools
 whose landing makes the reviewed arguments stop constraining anything. See
@@ -1939,16 +1993,18 @@ yours. The one exception is the key holding that list, locked whatever the list 
 assistant can rewrite for itself is not a policy.</p>
 <p><em>How this cashes out:</em> <a href="https://github.com/saxman/kokua/blob/main/src/kokua/config/store.py"><code>config/store.py</code></a>'s <code>locked_by</code> matches a
 write against the user's own patterns, and <code>LOCK_AXIOM</code> beside it is the single unconditional lock.
-<a href="https://github.com/saxman/kokua/blob/main/src/kokua/core/interaction.py"><code>core/interaction.py</code></a>'s <code>HumanGate.approve</code> is a bare name match
-against the tool names startup resolved <code>confirm_tools</code> down to, which is what gates a worker's call
-identically to the entry agent's, and a proactive turn auto-denies rather than running a gated tool
-unattended. A <code>confirm_tools</code> entry names a toolset (<code>compute</code>, or <code>compute.execute_python</code>), so the
+<a href="https://github.com/saxman/kokua/blob/main/src/kokua/core/interaction.py"><code>core/interaction.py</code></a>'s <code>HumanGate.approve</code> is a name match
+against the tool names startup resolved <em>the calling agent's own</em> policy down to, so a worker's call is
+judged by the worker's policy (the gate is bound to each agent's name, and carried to a delegated worker
+by its spawn spec's <code>"tool_approval"</code> key), and a proactive turn auto-denies rather than running a gated
+tool unattended. A <code>confirm</code> or <code>review</code> entry names a toolset (<code>compute</code>, or <code>compute.execute_python</code>), so the
 resolution is what turns a capability the user declared into the names the gate matches; the prefix
 buys a gate that can name a whole capability and an error that can point at the right one, not a
 discriminator at the moment of the call.
-<a href="https://github.com/saxman/kokua/blob/main/src/kokua/core/agents.py"><code>core/agents.py</code></a>'s <code>resolve_confirm_tools</code> and
+<a href="https://github.com/saxman/kokua/blob/main/src/kokua/core/approval.py"><code>core/approval.py</code></a>'s <code>resolve_approval_policies</code> and
 <a href="https://github.com/saxman/kokua/blob/main/src/kokua/config/file.py"><code>config/file.py</code></a>'s lock-pattern checks are the two startup errors
-above. <a href="https://github.com/saxman/kokua/blob/main/SECURITY.md"><code>SECURITY.md</code></a> names which barrier a vulnerability report is about, and which
+above, and <code>ApprovalPolicies.with_built</code>, called from the hook every <code>build_tools</code> call runs before it
+returns a tool, is the same check for a toolset built later. <a href="https://github.com/saxman/kokua/blob/main/SECURITY.md"><code>SECURITY.md</code></a> names which barrier a vulnerability report is about, and which
 behavior is the program working as documented.</p>
 <h2 id="what-follows-from-these-principles">What follows from these principles<a class="headerlink" href="#what-follows-from-these-principles" title="Permanent link">&para;</a></h2>
 <p>Each one excludes things, and most of what is absent from Kokua is absent for a reason on this list.</p>
@@ -1997,7 +2053,7 @@ here:</p>
 failures it was first written about now hold to it: a malformed <code>config.toml</code>, a model string naming an
 unknown provider, or a model the provider does not have each stop Kokua with one line naming the
 problem and what is available instead. What nobody has established is that everything <em>after</em> startup
-does the same, and at least one case does not: an agent whose <code>tools</code> list names a capability that
+does the same, and at least one case does not: an agent whose <code>available</code> list names a capability that
 builds no tools on this machine simply runs without it, with nothing said anywhere
 (<a href="https://github.com/saxman/kokua/issues/16">#16</a>). Auditing the rest is on the
 <a href="https://github.com/saxman/kokua/issues/17">backlog</a> rather than done, which is why it is here and not
